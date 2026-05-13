@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rate-limiter"
+version = "0.1.0"
+description = "A Python rate limiter library supporting multiple algorithms, configurable rules, and both local and distributed backends."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [
+    { name = "Rate Limiter Authors" },
+]
+keywords = ["rate-limit", "throttle", "redis", "fastapi", "flask", "middleware"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "redis",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "flask",
+    "fastapi",
+    "uvicorn",
+    "httpx",
+    "fakeredis",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rate_limiter"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
