@@ -9,12 +9,12 @@ Production-quality Python implementations of system design concepts from the boo
 | Chapter | Topic | Status | Description |
 |---------|-------|--------|-------------|
 | 05 | [Rate Limiter](./rate-limiter/) | ✅ Done | 5 algorithms, Redis/memory backends, FastAPI/Flask integration |
+| 06 | [Consistent Hashing](./consistent-hashing/) | ✅ Done | Virtual nodes, O(log N) lookup, distribution statistics |
 
 ## Planned
 
 | Chapter | Topic | Status |
 |---------|-------|--------|
-| 06 | Consistent Hashing | 📋 Planned |
 | 07 | Key-Value Store | 📋 Planned |
 | 08 | Unique ID Generator | 📋 Planned |
 | 09 | URL Shortener | 📋 Planned |
@@ -33,13 +33,20 @@ sdi-implement/
 ├── System Design Interview.md   # Book content reference
 ├── rate-limiter/                # Ch.05: Rate Limiter
 │   ├── README.md               # Usage documentation
-│   ├── ARCHITECTURE.md         # Architecture design (Chinese)
+│   ├── README_CN.md            # Chinese Usage documentation
 │   ├── pyproject.toml           # Package configuration
 │   ├── src/rate_limiter/       # Source code
 │   ├── tests/                  # Tests (180 tests)
 │   ├── examples/               # Usage examples
 │   └── docs/                   # Design spec documents
-├── <next-project>/             # Next implementation...
+├── consistent-hashing/          # Ch.06: Consistent Hashing
+│   ├── README.md               # Usage documentation
+│   ├── README_CN.md            # Chinese documentation
+│   ├── pyproject.toml          # Package configuration
+│   ├── src/consistent_hashing/ # Source code
+│   ├── tests/                  # Tests (77 tests)
+│   ├── examples/               # Usage examples
+│   └── docs/                   # Design spec documents
 └── .gitignore
 ```
 

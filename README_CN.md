@@ -7,12 +7,12 @@
 | 章节 | 主题 | 状态 | 说明 |
 |------|------|------|------|
 | 05 | [Rate Limiter](./rate-limiter/) | ✅ 完成 | 支持 5 种算法、Redis/内存后端、FastAPI/Flask 集成 |
+| 06 | [Consistent Hashing](./consistent-hashing/) | ✅ 完成 | 虚拟节点、O(log N) 查找、分布统计 |
 
 ## 计划实现
 
 | 章节 | 主题 | 状态 |
 |------|------|------|
-| 06 | Consistent Hashing | 📋 待实现 |
 | 07 | Key-Value Store | 📋 待实现 |
 | 08 | Unique ID Generator | 📋 待实现 |
 | 09 | URL Shortener | 📋 待实现 |
@@ -29,14 +29,21 @@ sdi-implement/
 ├── README.md                    # 本文件
 ├── System Design Interview.md   # 原书内容参考
 ├── rate-limiter/                # 第05章：限流器
-│   ├── README.md               # 使用文档
-│   ├── ARCHITECTURE.md         # 架构设计文档（中文）
+│   ├── README.md               # 英文使用文档
+│   ├── README_CN.md            # 中文使用文档
 │   ├── pyproject.toml          # 项目配置
 │   ├── src/rate_limiter/       # 源代码
 │   ├── tests/                  # 测试
 │   ├── examples/               # 使用示例
 │   └── docs/                   # 设计规格文档
-├── <next-project>/             # 下一个实现...
+├── consistent-hashing/          # 第06章：一致性哈希
+│   ├── README.md               # 英文使用文档
+│   ├── README_CN.md            # 中文使用文档
+│   ├── pyproject.toml          # 项目配置
+│   ├── src/consistent_hashing/ # 源代码
+│   ├── tests/                  # 测试
+│   ├── examples/               # 使用示例
+│   └── docs/                   # 设计规格文档
 └── .gitignore
 ```
 
