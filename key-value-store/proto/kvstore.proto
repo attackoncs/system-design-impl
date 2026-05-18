@@ -1,0 +1,139 @@
+syntax = "proto3";
+
+package kvstore;
+
+// KVStoreService defines the gRPC interface for the distributed key-value store.
+// It includes client-facing CRUD operations, inter-node replication,
+// gossip-based membership exchange, hinted handoff, and anti-entropy sync.
+service KVStoreService {
+  // Client-facing CRUD operations
+  rpc Put(PutRequest) returns (PutResponse);
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+
+  // Inter-node replication of writes
+  rpc Replicate(ReplicateRequest) returns (ReplicateResponse);
+
+  // Membership list exchange between nodes (gossip protocol)
+  rpc GossipExchange(GossipMessage) returns (GossipMessage);
+
+  // Pushing hinted data back to recovered nodes
+  rpc HintedHandoff(HintedHandoffRequest) returns (HintedHandoffResponse);
+
+  // Anti-entropy synchronization between replicas
+  rpc MerkleTreeSync(MerkleTreeSyncRequest) returns (MerkleTreeSyncResponse);
+}
+
+// Vector clock messages
+
+message VectorClockEntry {
+  string node_id = 1;
+  int64 counter = 2;
+}
+
+message VectorClockProto {
+  repeated VectorClockEntry entries = 1;
+}
+
+// Client-facing request/response messages
+
+message PutRequest {
+  string key = 1;
+  bytes value = 2;
+  VectorClockProto vector_clock = 3;
+  string consistency_level = 4;
+}
+
+message PutResponse {
+  bool success = 1;
+  VectorClockProto vector_clock = 2;
+}
+
+message GetRequest {
+  string key = 1;
+  string consistency_level = 2;
+}
+
+message ConflictingValue {
+  bytes value = 1;
+  VectorClockProto vector_clock = 2;
+}
+
+message GetResponse {
+  bool found = 1;
+  bytes value = 2;
+  VectorClockProto vector_clock = 3;
+  bool has_conflict = 4;
+  repeated ConflictingValue conflicting_values = 5;
+}
+
+message DeleteRequest {
+  string key = 1;
+  VectorClockProto vector_clock = 2;
+  string consistency_level = 3;
+}
+
+message DeleteResponse {
+  bool success = 1;
+  VectorClockProto vector_clock = 2;
+}
+
+// Inter-node replication messages
+
+message ReplicateRequest {
+  string key = 1;
+  bytes value = 2;
+  VectorClockProto vector_clock = 3;
+  double timestamp = 4;
+  bool is_tombstone = 5;
+}
+
+message ReplicateResponse {
+  bool success = 1;
+}
+
+// Gossip protocol messages
+
+message MemberInfoProto {
+  string node_id = 1;
+  string address = 2;
+  int64 heartbeat_counter = 3;
+  string status = 4;
+}
+
+message GossipMessage {
+  repeated MemberInfoProto members = 1;
+}
+
+// Hinted handoff messages
+
+message HintedHandoffRequest {
+  string target_node_id = 1;
+  string key = 2;
+  bytes value = 3;
+  VectorClockProto vector_clock = 4;
+  double timestamp = 5;
+  bool is_tombstone = 6;
+}
+
+message HintedHandoffResponse {
+  bool success = 1;
+}
+
+// Anti-entropy (Merkle tree) sync messages
+
+message KeyValuePair {
+  string key = 1;
+  bytes value = 2;
+  double timestamp = 3;
+  bool is_tombstone = 4;
+}
+
+message MerkleTreeSyncRequest {
+  map<int32, string> bucket_hashes = 1;
+}
+
+message MerkleTreeSyncResponse {
+  repeated int32 differing_buckets = 1;
+  repeated KeyValuePair key_value_pairs = 2;
+}

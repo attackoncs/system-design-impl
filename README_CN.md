@@ -8,12 +8,12 @@
 |------|------|------|------|
 | 05 | [Rate Limiter](./rate-limiter/) | ✅ 完成 | 支持 5 种算法、Redis/内存后端、FastAPI/Flask 集成 |
 | 06 | [Consistent Hashing](./consistent-hashing/) | ✅ 完成 | 虚拟节点、O(log N) 查找、分布统计 |
+| 07 | [Key-Value Store](./key-value-store/) | ✅ 完成 | Dynamo 风格、LSM-tree 存储、仲裁一致性、Gossip 协议、gRPC |
 
 ## 计划实现
 
 | 章节 | 主题 | 状态 |
 |------|------|------|
-| 07 | Key-Value Store | 📋 待实现 |
 | 08 | Unique ID Generator | 📋 待实现 |
 | 09 | URL Shortener | 📋 待实现 |
 | 10 | Web Crawler | 📋 待实现 |
@@ -42,6 +42,15 @@ sdi-implement/
 │   ├── pyproject.toml          # 项目配置
 │   ├── src/consistent_hashing/ # 源代码
 │   ├── tests/                  # 测试
+│   ├── examples/               # 使用示例
+│   └── docs/                   # 设计规格文档
+├── key-value-store/             # 第07章：分布式键值存储
+│   ├── README.md               # 英文使用文档
+│   ├── README_CN.md            # 中文使用文档
+│   ├── pyproject.toml          # 项目配置
+│   ├── proto/                  # Protobuf 服务定义
+│   ├── src/kv_store/           # 源代码
+│   ├── tests/                  # 测试（单元、集成、属性测试）
 │   ├── examples/               # 使用示例
 │   └── docs/                   # 设计规格文档
 └── .gitignore
