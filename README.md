@@ -11,12 +11,12 @@ Production-quality Python implementations of system design concepts from the boo
 | 05 | [Rate Limiter](./rate-limiter/) | ✅ Done | 5 algorithms, Redis/memory backends, FastAPI/Flask integration |
 | 06 | [Consistent Hashing](./consistent-hashing/) | ✅ Done | Virtual nodes, O(log N) lookup, distribution statistics |
 | 07 | [Key-Value Store](./key-value-store/) | ✅ Done | Dynamo-style, LSM-tree storage, quorum consensus, gossip protocol, gRPC |
+| 08 | [Unique ID Generator](./unique-id-generator/) | ✅ Done | Twitter Snowflake algorithm, configurable bit layout, thread-safe, ID parsing |
 
 ## Planned
 
 | Chapter | Topic | Status |
 |---------|-------|--------|
-| 08 | Unique ID Generator | 📋 Planned |
 | 09 | URL Shortener | 📋 Planned |
 | 10 | Web Crawler | 📋 Planned |
 | 11 | Notification System | 📋 Planned |
@@ -54,6 +54,14 @@ sdi-implement/
 │   ├── proto/                  # Protobuf service definitions
 │   ├── src/kv_store/           # Source code
 │   ├── tests/                  # Tests (unit, integration, property-based)
+│   ├── examples/               # Usage examples
+│   └── docs/                   # Design spec documents
+├── unique-id-generator/         # Ch.08: Unique ID Generator
+│   ├── README.md               # Usage documentation
+│   ├── README_CN.md            # Chinese documentation
+│   ├── pyproject.toml          # Package configuration
+│   ├── src/unique_id/          # Source code
+│   ├── tests/                  # Tests (75 tests)
 │   ├── examples/               # Usage examples
 │   └── docs/                   # Design spec documents
 └── .gitignore

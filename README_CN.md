@@ -9,12 +9,12 @@
 | 05 | [Rate Limiter](./rate-limiter/) | ✅ 完成 | 支持 5 种算法、Redis/内存后端、FastAPI/Flask 集成 |
 | 06 | [Consistent Hashing](./consistent-hashing/) | ✅ 完成 | 虚拟节点、O(log N) 查找、分布统计 |
 | 07 | [Key-Value Store](./key-value-store/) | ✅ 完成 | Dynamo 风格、LSM-tree 存储、仲裁一致性、Gossip 协议、gRPC |
+| 08 | [Unique ID Generator](./unique-id-generator/) | ✅ 完成 | Twitter Snowflake 算法、可配置位布局、线程安全、ID 解析 |
 
 ## 计划实现
 
 | 章节 | 主题 | 状态 |
 |------|------|------|
-| 08 | Unique ID Generator | 📋 待实现 |
 | 09 | URL Shortener | 📋 待实现 |
 | 10 | Web Crawler | 📋 待实现 |
 | 11 | Notification System | 📋 待实现 |
@@ -51,6 +51,14 @@ sdi-implement/
 │   ├── proto/                  # Protobuf 服务定义
 │   ├── src/kv_store/           # 源代码
 │   ├── tests/                  # 测试（单元、集成、属性测试）
+│   ├── examples/               # 使用示例
+│   └── docs/                   # 设计规格文档
+├── unique-id-generator/         # 第08章：唯一 ID 生成器
+│   ├── README.md               # 英文使用文档
+│   ├── README_CN.md            # 中文使用文档
+│   ├── pyproject.toml          # 项目配置
+│   ├── src/unique_id/          # 源代码
+│   ├── tests/                  # 测试（75 个测试）
 │   ├── examples/               # 使用示例
 │   └── docs/                   # 设计规格文档
 └── .gitignore
