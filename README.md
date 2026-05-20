@@ -12,12 +12,12 @@ Production-quality Python implementations of system design concepts from the boo
 | 06 | [Consistent Hashing](./consistent-hashing/) | ✅ Done | Virtual nodes, O(log N) lookup, distribution statistics |
 | 07 | [Key-Value Store](./key-value-store/) | ✅ Done | Dynamo-style, LSM-tree storage, quorum consensus, gossip protocol, gRPC |
 | 08 | [Unique ID Generator](./unique-id-generator/) | ✅ Done | Twitter Snowflake algorithm, configurable bit layout, thread-safe, ID parsing |
+| 09 | [URL Shortener](./url-shortener/) | ✅ Done | Pluggable hash strategies, base-62 conversion, click tracking, stdlib HTTP demo |
 
 ## Planned
 
 | Chapter | Topic | Status |
 |---------|-------|--------|
-| 09 | URL Shortener | 📋 Planned |
 | 10 | Web Crawler | 📋 Planned |
 | 11 | Notification System | 📋 Planned |
 | 12 | News Feed System | 📋 Planned |
@@ -63,6 +63,14 @@ sdi-implement/
 │   ├── src/unique_id/          # Source code
 │   ├── tests/                  # Tests (75 tests)
 │   ├── examples/               # Usage examples
+│   └── docs/                   # Design spec documents
+├── url-shortener/               # Ch.09: URL Shortener
+│   ├── README.md               # Usage documentation
+│   ├── README_CN.md            # Chinese documentation
+│   ├── pyproject.toml          # Package configuration
+│   ├── src/url_shortener/      # Source code
+│   ├── tests/                  # Tests (unit + property-based)
+│   ├── examples/               # Demo server
 │   └── docs/                   # Design spec documents
 └── .gitignore
 ```
