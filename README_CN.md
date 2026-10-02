@@ -11,14 +11,14 @@
 | 07 | [Key-Value Store](./key-value-store/) | ✅ 完成 | Dynamo 风格、LSM-tree 存储、仲裁一致性、Gossip 协议、gRPC |
 | 08 | [Unique ID Generator](./unique-id-generator/) | ✅ 完成 | Twitter Snowflake 算法、可配置位布局、线程安全、ID 解析 |
 | 09 | [URL Shortener](./url-shortener/) | ✅ 完成 | 可插拔哈希策略、Base-62 转换、点击追踪、标准库 HTTP 演示 |
+| 10 | [Web Crawler](./web-crawler/) | ✅ 完成 | 异步爬取、优先级与礼貌性 URL 队列、robots.txt 校验、URL 与内容去重 |
+| 11 | [Notification System](./notification-system/) | ✅ 完成 | 多渠道异步流水线、限流、去重、指数退避重试、生命周期追踪 |
+| 12 | [News Feed System](./news-feed-system/) | ✅ 完成 | 推拉混合扇出、异步工作池、五层缓存架构、可插拔社交图谱 |
 
 ## 计划实现
 
 | 章节 | 主题 | 状态 |
 |------|------|------|
-| 10 | Web Crawler | 📋 待实现 |
-| 11 | Notification System | 📋 待实现 |
-| 12 | News Feed System | 📋 待实现 |
 | 13 | Chat System | 📋 待实现 |
 | 14 | Search Autocomplete | 📋 待实现 |
 
@@ -69,6 +69,27 @@ sdi-implement/
 │   ├── tests/                  # 测试（单元 + 属性测试）
 │   ├── examples/               # 演示服务器
 │   └── docs/                   # 设计规格文档
+├── web-crawler/                 # 第10章：网络爬虫
+│   ├── README.md                # 使用文档
+│   ├── pyproject.toml           # 项目配置
+│   ├── src/web_crawler/         # 源代码
+│   ├── tests/                   # 单元与属性测试
+│   ├── examples/basic_crawl.py  # 爬取示例
+│   └── docs/design.md           # 设计文档
+├── notification-system/         # 第11章：通知系统
+│   ├── README.md                # 使用文档
+│   ├── pyproject.toml           # 项目配置
+│   ├── src/notification_system/ # 源代码
+│   ├── tests/                   # 单元与属性测试
+│   ├── examples/demo_server.py  # 演示服务器
+│   └── docs/design.md           # 设计文档
+├── news-feed-system/            # 第12章：新闻动态系统
+│   ├── README.md                # 英文使用文档
+│   ├── README_CN.md             # 中文使用文档
+│   ├── pyproject.toml           # 项目配置
+│   ├── src/news_feed_system/    # 源代码
+│   ├── tests/                   # 测试
+│   └── examples/                # 后续示例占位目录
 └── .gitignore
 ```
 

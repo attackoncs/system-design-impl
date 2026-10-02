@@ -13,14 +13,14 @@ Production-quality Python implementations of system design concepts from the boo
 | 07 | [Key-Value Store](./key-value-store/) | ✅ Done | Dynamo-style, LSM-tree storage, quorum consensus, gossip protocol, gRPC |
 | 08 | [Unique ID Generator](./unique-id-generator/) | ✅ Done | Twitter Snowflake algorithm, configurable bit layout, thread-safe, ID parsing |
 | 09 | [URL Shortener](./url-shortener/) | ✅ Done | Pluggable hash strategies, base-62 conversion, click tracking, stdlib HTTP demo |
+| 10 | [Web Crawler](./web-crawler/) | ✅ Done | Async crawling, priority/politeness frontier, robots.txt compliance, URL/content deduplication |
+| 11 | [Notification System](./notification-system/) | ✅ Done | Multi-channel async pipeline, rate limiting, deduplication, exponential-backoff retry, lifecycle tracking |
+| 12 | [News Feed System](./news-feed-system/) | ✅ Done | Hybrid push/pull fanout, async workers, five-layer cache architecture, pluggable social graph |
 
 ## Planned
 
 | Chapter | Topic | Status |
 |---------|-------|--------|
-| 10 | Web Crawler | 📋 Planned |
-| 11 | Notification System | 📋 Planned |
-| 12 | News Feed System | 📋 Planned |
 | 13 | Chat System | 📋 Planned |
 | 14 | Search Autocomplete | 📋 Planned |
 
@@ -72,6 +72,27 @@ sdi-implement/
 │   ├── tests/                  # Tests (unit + property-based)
 │   ├── examples/               # Demo server
 │   └── docs/                   # Design spec documents
+├── web-crawler/                 # Ch.10: Web Crawler
+│   ├── README.md                # Usage documentation
+│   ├── pyproject.toml           # Package configuration
+│   ├── src/web_crawler/         # Source code
+│   ├── tests/                   # Unit and property-based tests
+│   ├── examples/basic_crawl.py  # Crawl example
+│   └── docs/design.md           # Design document
+├── notification-system/         # Ch.11: Notification System
+│   ├── README.md                # Usage documentation
+│   ├── pyproject.toml           # Package configuration
+│   ├── src/notification_system/ # Source code
+│   ├── tests/                   # Unit and property-based tests
+│   ├── examples/demo_server.py  # Demo server
+│   └── docs/design.md           # Design document
+├── news-feed-system/            # Ch.12: News Feed System
+│   ├── README.md                # Usage documentation
+│   ├── README_CN.md             # Chinese documentation
+│   ├── pyproject.toml           # Package configuration
+│   ├── src/news_feed_system/    # Source code
+│   ├── tests/                   # Tests
+│   └── examples/                # Placeholder for future examples
 └── .gitignore
 ```
 
