@@ -17,6 +17,7 @@ Production-quality Python implementations of system design concepts from the boo
 | 11 | [Notification System](./notification-system/) | ✅ Done | Multi-channel async pipeline, rate limiting, deduplication, exponential-backoff retry, lifecycle tracking |
 | 12 | [News Feed System](./news-feed-system/) | ✅ Done | Hybrid push/pull fanout, async workers, five-layer cache architecture, pluggable social graph |
 | 13 | [Chat System](./chat-system/) | ✅ Done | Direct/group chat, Redis multi-node routing, Sentinel failover, shared presence, durable push retries, reconnect sync, measured load/fault tests |
+| 15 | [Video Streaming](./video-streaming-system/) | ✅ Done | Resumable uploads, real FFmpeg/encrypted HLS, PostgreSQL failover, S3 shared storage, measured recovery |
 
 ## Planned
 

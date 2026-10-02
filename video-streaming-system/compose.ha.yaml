@@ -1,0 +1,135 @@
+# One-machine lab. Deploy members on separate hosts/failure domains in production.
+x-etcd: &etcd
+  image: quay.io/coreos/etcd:v3.5.16
+  restart: unless-stopped
+  entrypoint: /usr/local/bin/etcd
+  environment: &etcd-env
+    ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+    ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
+    ETCD_INITIAL_CLUSTER: etcd-1=http://etcd-1:2380,etcd-2=http://etcd-2:2380,etcd-3=http://etcd-3:2380
+    ETCD_INITIAL_CLUSTER_TOKEN: video-lab
+    ETCD_DATA_DIR: /etcd-data
+x-db: &db
+  build:
+    context: ./deploy
+    dockerfile: Dockerfile.postgres
+  restart: unless-stopped
+  environment: &db-env
+    PATRONI_SUPERUSER_PASSWORD: ${VIDEO_DB_PASSWORD:?Set VIDEO_DB_PASSWORD to a random hex secret}
+    PATRONI_REPLICATION_PASSWORD: ${VIDEO_REPLICATION_PASSWORD:?Set VIDEO_REPLICATION_PASSWORD}
+    PATRONI_RESTAPI_USERNAME: operator
+    PATRONI_RESTAPI_PASSWORD: ${VIDEO_PATRONI_PASSWORD:?Set VIDEO_PATRONI_PASSWORD}
+  depends_on: [etcd-1, etcd-2, etcd-3]
+x-app: &app
+  build: .
+  restart: unless-stopped
+  environment: &app-env
+    VIDEO_DATABASE_DSN: host=pg-1,pg-2,pg-3 port=5432 dbname=postgres user=postgres password=${VIDEO_DB_PASSWORD} target_session_attrs=read-write
+    VIDEO_S3_BUCKET: videos
+    VIDEO_S3_ENDPOINT: http://s3:8333
+    VIDEO_S3_PREFIX: video/
+    AWS_ACCESS_KEY_ID: ${VIDEO_S3_USER:?Set VIDEO_S3_USER}
+    AWS_SECRET_ACCESS_KEY: ${VIDEO_S3_PASSWORD:?Set VIDEO_S3_PASSWORD}
+  depends_on:
+    pg-1: {condition: service_started}
+    pg-2: {condition: service_started}
+    pg-3: {condition: service_started}
+    bucket-init: {condition: service_completed_successfully}
+services:
+  etcd-1:
+    <<: *etcd
+    environment:
+      <<: *etcd-env
+      ETCD_NAME: etcd-1
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd-1:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd-1:2380
+    volumes: ["etcd-1:/etcd-data"]
+  etcd-2:
+    <<: *etcd
+    environment:
+      <<: *etcd-env
+      ETCD_NAME: etcd-2
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd-2:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd-2:2380
+    volumes: ["etcd-2:/etcd-data"]
+  etcd-3:
+    <<: *etcd
+    environment:
+      <<: *etcd-env
+      ETCD_NAME: etcd-3
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd-3:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd-3:2380
+    volumes: ["etcd-3:/etcd-data"]
+  pg-1:
+    <<: *db
+    environment:
+      <<: *db-env
+      PATRONI_NAME: pg-1
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: pg-1:5432
+      PATRONI_RESTAPI_CONNECT_ADDRESS: pg-1:8008
+    volumes: ["pg-1:/var/lib/postgresql/data"]
+  pg-2:
+    <<: *db
+    environment:
+      <<: *db-env
+      PATRONI_NAME: pg-2
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: pg-2:5432
+      PATRONI_RESTAPI_CONNECT_ADDRESS: pg-2:8008
+    volumes: ["pg-2:/var/lib/postgresql/data"]
+  pg-3:
+    <<: *db
+    environment:
+      <<: *db-env
+      PATRONI_NAME: pg-3
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: pg-3:5432
+      PATRONI_RESTAPI_CONNECT_ADDRESS: pg-3:8008
+    volumes: ["pg-3:/var/lib/postgresql/data"]
+  config-init:
+    build: .
+    user: root
+    entrypoint: ["python", "/app/deploy/storage_init.py", "config"]
+    environment:
+      AWS_ACCESS_KEY_ID: ${VIDEO_S3_USER}
+      AWS_SECRET_ACCESS_KEY: ${VIDEO_S3_PASSWORD}
+    volumes: ["s3-config:/config"]
+  s3:
+    image: chrislusf/seaweedfs:4.48
+    command: ["server", "-dir=/data", "-ip=s3", "-ip.bind=0.0.0.0", "-s3", "-s3.config=/config/s3.json", "-volume.max=100", "-master.volumeSizeLimitMB=64"]
+    depends_on:
+      config-init: {condition: service_completed_successfully}
+    volumes: ["objects:/data", "s3-config:/config:ro"]
+    restart: unless-stopped
+  bucket-init:
+    build: .
+    entrypoint: ["python", "/app/deploy/storage_init.py", "bucket"]
+    depends_on: [s3]
+    environment:
+      VIDEO_S3_BUCKET: videos
+      VIDEO_S3_ENDPOINT: http://s3:8333
+      AWS_ACCESS_KEY_ID: ${VIDEO_S3_USER}
+      AWS_SECRET_ACCESS_KEY: ${VIDEO_S3_PASSWORD}
+  api:
+    <<: *app
+    command: ["api", "--host", "0.0.0.0", "--port", "8080"]
+    ports: ["127.0.0.1:8080:8080"]
+    volumes: ["api-work:/runtime"]
+  worker-a:
+    <<: *app
+    command: ["worker", "--name", "worker-a"]
+    volumes: ["worker-a-work:/runtime"]
+  worker-b:
+    <<: *app
+    command: ["worker", "--name", "worker-b"]
+    volumes: ["worker-b-work:/runtime"]
+volumes:
+  etcd-1:
+  etcd-2:
+  etcd-3:
+  pg-1:
+  pg-2:
+  pg-3:
+  objects:
+  s3-config:
+  api-work:
+  worker-a-work:
+  worker-b-work:

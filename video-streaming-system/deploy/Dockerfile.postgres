@@ -1,0 +1,9 @@
+FROM postgres:18
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends python3-venv && \
+    python3 -m venv /opt/patroni && /opt/patroni/bin/pip install --no-cache-dir 'patroni[etcd3]>=4,<5' psycopg2-binary && \
+    rm -rf /var/lib/apt/lists/*
+COPY patroni.yml /etc/patroni.yml
+ENV PATH="/opt/patroni/bin:${PATH}"
+USER postgres
+ENTRYPOINT ["patroni", "/etc/patroni.yml"]

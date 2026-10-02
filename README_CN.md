@@ -15,6 +15,7 @@
 | 11 | [Notification System](./notification-system/) | ✅ 完成 | 多渠道异步流水线、限流、去重、指数退避重试、生命周期追踪 |
 | 12 | [News Feed System](./news-feed-system/) | ✅ 完成 | 推拉混合扇出、异步工作池、五层缓存架构、可插拔社交图谱 |
 | 13 | [Chat System](./chat-system/) | ✅ 完成 | 单聊群聊、Redis 多节点路由、Sentinel 主备切换、共享在线状态、持久化推送重试、重连同步及容量故障实测 |
+| 15 | [Video Streaming](./video-streaming-system/) | ✅ 参考实现完成 | 分片续传、真实 FFmpeg/加密 HLS、PostgreSQL 自动切换、S3 共享存储、故障实测 |
 
 ## 计划实现
 

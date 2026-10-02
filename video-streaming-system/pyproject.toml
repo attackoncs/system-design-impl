@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "video-streaming-system"
+version = "0.1.0"
+description = "Resumable uploads, leased transcode DAG and authenticated encrypted HLS."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+media = ["imageio-ffmpeg>=0.6,<0.7"]
+distributed = ["psycopg[binary]>=3.2,<4", "boto3>=1.35,<2"]
+integration = ["pytest>=8", "moto[server]>=5,<6", "psycopg[binary]>=3.2,<4", "boto3>=1.35,<2", "pyyaml>=6,<7", "imageio-ffmpeg>=0.6,<0.7"]
+dev = ["pytest>=8", "imageio-ffmpeg>=0.6,<0.7"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/video_streaming"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "tools"]
