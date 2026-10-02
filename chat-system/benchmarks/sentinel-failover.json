@@ -1,0 +1,8 @@
+{
+  "old_primary": 17379,
+  "new_primary": 17380,
+  "recovery_seconds": 2.41,
+  "confirmed_messages_preserved": true,
+  "retry_duplicates": 0,
+  "unconfirmed_retry_rejected": true
+}

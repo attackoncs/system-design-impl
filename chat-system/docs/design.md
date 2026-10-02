@@ -157,9 +157,9 @@ external providers determine duplicate suppression.
 
 Redis must run with AOF enabled and persistent storage. Scripts use keys in one
 hash-tag namespace to preserve atomicity; this reference mode uses a shared primary
-and is not a sharded 50-million-user deployment. Redis primary/replica failover and
-cross-region quorum storage are separate operational work, not implemented by node
-lease failover. Redis outage causes requests to fail rather than accept volatile writes.
+and is not a sharded 50-million-user deployment. The optional Sentinel deployment
+below supplies Redis primary failover. Cross-region quorum storage remains outside
+this reference implementation. Redis outage causes requests to fail rather than accept volatile writes.
 
 Distributed source modules: `redis_backend.py`, `distributed.py`, `push.py`,
 `cluster.py`, and `client.py`. CLI: `python -m chat_system.cluster`. Existing local
@@ -169,3 +169,40 @@ service methods, and network tests exercise separate processes through real sock
 Redis API references: [Lua atomic execution](https://redis.io/docs/latest/develop/programmability/eval-intro/),
 [pending stream entry recovery](https://redis.io/docs/latest/commands/xautoclaim/),
 and [async client lifecycle](https://redis.readthedocs.io/en/stable/examples/asyncio_examples.html).
+
+## Sentinel and capacity extension
+
+Optional Sentinel configuration replaces the direct Redis URL with an async
+`master_for` client. Reads and writes use the discovered primary; promotion causes
+the connection pool to refresh its target. Three Sentinel voters (quorum two) and
+two Redis replicas accompany the primary. All three data nodes use AOF and persistent
+volumes. Sentinel state files are writable and retained. Production voters must
+run in independent failure domains; a local compose is a reproducible topology only.
+
+Configured replica acknowledgement uses a nontransactional pipeline containing
+the write, a short-lived replication barrier, and `WAIT` on the same connection.
+The barrier also confirms existing state when an idempotent retry makes no change.
+A failed acknowledgement is an uncertain
+result, not a rollback: clients retry the stable key. This narrows asynchronous
+replication loss windows but does not make Sentinel a consensus database or guarantee
+zero loss under simultaneous failures. Keep at least one healthy replica available
+and configure primary write safeguards for partition scenarios.
+
+Per-node capacity indexes are scoped by node instance, with atomic removal from the
+previous node on device replacement. Sorted-set counts replace per-login scans.
+Expired session records are pruned in bounded batches; ephemeral indexes have TTLs.
+Discovery examines live node records and counts their indexes, rather than all devices.
+Message fanout looks up only local sessions belonging to channel members. Each
+stream batch validates distinct recipients through bounded pipelines and checkpoints
+only after every event in that batch is queued. Crash replay can repeat up to 100
+live hints; clients deduplicate and recover using the durable inbox. Idle-session
+validation also uses bounded pipelines.
+
+The capacity harness drives actual WebSocket endpoints, maintains heartbeats,
+collects acknowledgements and delivery IDs, and produces a JSON/Markdown report
+with configured/admitted connections, exact successful/missing counts, throughput,
+and p50/p95/p99 latencies. Fault testing kills the owned Redis primary and verifies
+promotion and continued chat. Capacity reports describe measured local scale only.
+
+References: [Sentinel failover](https://redis.io/docs/latest/operate/oss_and_stack/management/sentinel/)
+and [WAIT replication acknowledgement](https://redis.io/docs/latest/commands/wait/).

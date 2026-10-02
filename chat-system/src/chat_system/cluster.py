@@ -57,7 +57,7 @@ class DiscoveryHTTPServer:
 
 
 async def run(args):
-    backend = RedisBackend.from_url(args.redis_url, args.namespace)
+    backend = make_backend(args)
     service = None
     try:
         if args.command == "token":
@@ -100,6 +100,11 @@ def parser():
     root = argparse.ArgumentParser(description=__doc__)
     root.add_argument("--redis-url", default=os.environ.get("CHAT_REDIS_URL", "redis://127.0.0.1:6379/0"))
     root.add_argument("--namespace", default=os.environ.get("CHAT_NAMESPACE", "chat"))
+    root.add_argument("--sentinels", default=os.environ.get("CHAT_REDIS_SENTINELS", ""),
+                      help="comma separated host:port endpoints")
+    root.add_argument("--master-name", default=os.environ.get("CHAT_REDIS_MASTER", "chat-primary"))
+    root.add_argument("--wait-replicas", type=int, default=None)
+    root.add_argument("--wait-timeout-ms", type=int, default=1000)
     commands = root.add_subparsers(dest="command", required=True)
     commands.add_parser("token").add_argument("user")
     commands.add_parser("revoke")
@@ -123,6 +128,21 @@ def parser():
     worker.add_argument("--retry-base", type=float, default=1)
     worker.add_argument("--max-attempts", type=int, default=5)
     return root
+
+
+def make_backend(args):
+    replicas = args.wait_replicas
+    if args.sentinels:
+        endpoints = []
+        for value in args.sentinels.split(","):
+            host, port = value.strip().rsplit(":", 1)
+            endpoints.append((host, int(port)))
+        return RedisBackend.from_sentinel(endpoints, args.master_name, args.namespace,
+            password=os.environ.get("CHAT_REDIS_PASSWORD"),
+            sentinel_password=os.environ.get("CHAT_SENTINEL_PASSWORD"),
+            wait_replicas=1 if replicas is None else replicas, wait_timeout_ms=args.wait_timeout_ms)
+    return RedisBackend.from_url(args.redis_url, args.namespace,
+        wait_replicas=0 if replicas is None else replicas, wait_timeout_ms=args.wait_timeout_ms)
 
 
 def main():

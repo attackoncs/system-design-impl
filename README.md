@@ -16,7 +16,7 @@ Production-quality Python implementations of system design concepts from the boo
 | 10 | [Web Crawler](./web-crawler/) | ✅ Done | Async crawling, priority/politeness frontier, robots.txt compliance, URL/content deduplication |
 | 11 | [Notification System](./notification-system/) | ✅ Done | Multi-channel async pipeline, rate limiting, deduplication, exponential-backoff retry, lifecycle tracking |
 | 12 | [News Feed System](./news-feed-system/) | ✅ Done | Hybrid push/pull fanout, async workers, five-layer cache architecture, pluggable social graph |
-| 13 | [Chat System](./chat-system/) | ✅ Done | Direct/group chat, Redis multi-node routing, leased discovery, shared presence, durable push retries, reconnect sync |
+| 13 | [Chat System](./chat-system/) | ✅ Done | Direct/group chat, Redis multi-node routing, Sentinel failover, shared presence, durable push retries, reconnect sync, measured load/fault tests |
 
 ## Planned
 

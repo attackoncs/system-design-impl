@@ -24,6 +24,7 @@ class DistributedChatService:
         self.node_lease, self.poll_interval = node_lease, poll_interval
         self.config = config or ChatConfig()
         self._sessions = {}
+        self._user_sessions = {}
         self._subscriptions = {}
         self._tasks = []
         self.background_error = None
@@ -65,6 +66,11 @@ class DistributedChatService:
         key = (session.user_id, session.device_id)
         if self._sessions.get(key) is session:
             self._sessions.pop(key, None)
+        devices = self._user_sessions.get(session.user_id)
+        if devices is not None:
+            devices.discard(session)
+            if not devices:
+                self._user_sessions.pop(session.user_id, None)
         self._subscriptions.pop(session, None)
         while not session.queue.empty():
             session.queue.get_nowait()
@@ -93,23 +99,24 @@ class DistributedChatService:
         if previous:
             self._local_close(previous)
         self._sessions[(user, device_id)] = session
+        self._user_sessions.setdefault(user, set()).add(session)
         return session
 
     async def _require(self, session):
         if session.closed or self._sessions.get((session.user_id, session.device_id)) is not session:
             raise AuthenticationError("session closed")
-        if await self.auth.authenticate(session.token) != session.user_id:
-            raise AuthenticationError("invalid session")
         valid = await self.backend.session_operation(session.user_id, session.device_id,
-                    session.session_id, self.node_id)
+                    session.session_id, self.node_id, instance=self.instance, token=session.token)
         if not valid:
             self._local_close(session)
             raise AuthenticationError("expired or replaced session")
 
     async def heartbeat(self, session):
-        await self._require(session)
+        if session.closed or self._sessions.get((session.user_id, session.device_id)) is not session:
+            raise AuthenticationError("session closed")
         valid = await self.backend.session_operation(session.user_id, session.device_id,
-                    session.session_id, self.node_id, "heartbeat", self.config.heartbeat_timeout)
+                    session.session_id, self.node_id, "heartbeat", self.config.heartbeat_timeout,
+                    instance=self.instance, token=session.token)
         if not valid:
             self._local_close(session)
             raise AuthenticationError("expired or replaced session")
@@ -118,15 +125,15 @@ class DistributedChatService:
         if not session.closed:
             try:
                 await self.backend.session_operation(session.user_id, session.device_id, session.session_id,
-                                                     self.node_id, "close")
+                                                     self.node_id, "close", instance=self.instance)
             finally:
                 self._local_close(session)
 
     async def expire_sessions(self):
-        for session in list(self._sessions.values()):
-            try:
-                await self._require(session)
-            except AuthenticationError:
+        sessions = list(self._sessions.values())
+        valid = await self.backend.check_sessions(sessions, self.node_id, self.instance)
+        for session, alive in zip(sessions, valid):
+            if not alive:
                 await self.disconnect(session)
 
     async def is_online(self, user):
@@ -177,20 +184,32 @@ class DistributedChatService:
                 batches = await self.backend.redis.xread({self.backend.key("events"): self.cursor},
                                                          count=100, block=1000)
                 for _, entries in batches:
+                    deliveries = []
+                    recipients = set()
                     for event_id, fields in entries:
                         message = message_from_json(fields["data"])
                         members = set(json.loads(fields["members"]))
-                        for session in list(self._sessions.values()):
-                            if session.user_id in members:
-                                try:
-                                    await self._require(session)
-                                except AuthenticationError:
-                                    continue
+                        sessions = []
+                        for member in members:
+                            sessions.extend(self._user_sessions.get(member, ()))
+                        recipients.update(sessions)
+                        deliveries.append((message, sessions))
+                    recipients = list(recipients)
+                    checks = await self.backend.check_sessions(recipients, self.node_id, self.instance)
+                    valid = {session for session, alive in zip(recipients, checks) if alive}
+                    for session, alive in zip(recipients, checks):
+                        if not alive:
+                            await self.disconnect(session)
+                    for message, sessions in deliveries:
+                        for session in sessions:
+                            if session in valid:
                                 await self._enqueue(session, {"type": "message", "message": asdict(message)})
-                        # Checkpoint only after fanout. A crash can replay, never skip an unqueued event.
-                        if not await self.backend.checkpoint(self.node_id, self.instance, event_id):
-                            return
-                        self.cursor = event_id
+                    # Checkpoint after the entire bounded batch. A crash may replay
+                    # up to 100 hints; the durable inbox remains authoritative.
+                    event_id = entries[-1][0]
+                    if not await self.backend.checkpoint(self.node_id, self.instance, event_id):
+                        raise ChatError("node lease unavailable; retry after renewal")
+                    self.cursor = event_id
                 self.background_error = None
             except asyncio.CancelledError:
                 raise
@@ -206,6 +225,7 @@ class DistributedChatService:
                         self._local_close(session)
                     return
                 await self.expire_sessions()
+                await self.backend.prune_sessions()
                 for session, snapshot in list(self._subscriptions.items()):
                     for user, old in list(snapshot.items()):
                         online = await self.is_online(user)

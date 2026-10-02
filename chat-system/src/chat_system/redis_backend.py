@@ -27,6 +27,10 @@ def message_from_json(raw):
     return Message(**value)
 
 
+class WriteUncertainError(ConnectionError):
+    """The primary applied a write, but required replica confirmation was not obtained."""
+
+
 _APPEND = """
 if ARGV[8] ~= '' then
     local time=redis.call('TIME'); local now=tonumber(time[1])+tonumber(time[2])/1000000
@@ -101,23 +105,19 @@ local time = redis.call('TIME'); local now = tonumber(time[1])+tonumber(time[2])
 local raw = redis.call('HGET', KEYS[1], ARGV[1])
 if not raw or cjson.decode(raw).instance ~= ARGV[2] then return 0 end
 if tonumber(redis.call('ZSCORE', KEYS[2], ARGV[1]) or '0') <= now then return 0 end
-redis.call('ZREMRANGEBYSCORE', KEYS[5], '-inf', now)
 local old = redis.call('HGET', KEYS[3], ARGV[3])
-local count=0
-for _, device in ipairs(redis.call('ZRANGE',KEYS[5],0,-1)) do
-    local sraw=redis.call('HGET',KEYS[3],device)
-    if sraw then
-        local s=cjson.decode(sraw)
-        if s.node==ARGV[1] and s.instance==ARGV[2] and s.expires>now and device~=ARGV[3] then
-            count=count+1
-        end
-    end
-end
+if (old or '') ~= ARGV[7] then return -1 end
+local count=redis.call('ZCOUNT',KEYS[5],'('..now,'+inf')
+if tonumber(redis.call('ZSCORE',KEYS[5],ARGV[3]) or '0')>now then count=count-1 end
 if count >= tonumber(ARGV[6]) then return 0 end
+if old then redis.call('ZREM',KEYS[6],ARGV[3]) end
 local record = cjson.decode(ARGV[4]); record.expires = now+tonumber(ARGV[5])
 redis.call('HSET', KEYS[3], ARGV[3], cjson.encode(record))
 redis.call('ZADD', KEYS[4], record.expires, ARGV[3])
 redis.call('ZADD', KEYS[5], record.expires, ARGV[3])
+redis.call('ZADD', KEYS[7], record.expires, ARGV[3])
+redis.call('EXPIRE',KEYS[4],math.ceil(tonumber(ARGV[5])*2))
+redis.call('EXPIRE',KEYS[5],math.ceil(tonumber(ARGV[5])*2))
 return 1
 """
 
@@ -129,8 +129,9 @@ local s = cjson.decode(raw)
 if s.session ~= ARGV[2] then return 0 end
 if ARGV[3] == 'close' then
     redis.call('HDEL', KEYS[1], ARGV[1]); redis.call('ZREM', KEYS[2], ARGV[1])
-    redis.call('ZREM', KEYS[3], ARGV[1]); return 1
+    redis.call('ZREM', KEYS[3], ARGV[1]); redis.call('ZREM',KEYS[6],ARGV[1]); return 1
 end
+if ARGV[5]~='' and redis.call('HGET',KEYS[7],ARGV[5])~=s.user then return 0 end
 if s.expires <= now then return 0 end
 local node = redis.call('HGET', KEYS[4], s.node)
 if not node or cjson.decode(node).instance ~= s.instance then return 0 end
@@ -140,6 +141,9 @@ if ARGV[3] == 'heartbeat' then
     redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(s))
     redis.call('ZADD', KEYS[2], s.expires, ARGV[1])
     redis.call('ZADD', KEYS[3], s.expires, ARGV[1])
+    redis.call('ZADD', KEYS[6], s.expires, ARGV[1])
+    redis.call('EXPIRE',KEYS[2],math.ceil(tonumber(ARGV[4])*2))
+    redis.call('EXPIRE',KEYS[3],math.ceil(tonumber(ARGV[4])*2))
 elseif ARGV[3] == 'close' then
     redis.call('HDEL', KEYS[1], ARGV[1]); redis.call('ZREM', KEYS[2], ARGV[1])
     redis.call('ZREM', KEYS[3], ARGV[1])
@@ -164,17 +168,53 @@ return 0
 
 
 class RedisBackend:
-    def __init__(self, client, namespace="chat"):
+    def __init__(self, client, namespace="chat", wait_replicas=0, wait_timeout_ms=1000):
         if not namespace or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for c in namespace):
             raise ValueError("invalid Redis namespace")
         self.redis = client
         self.prefix = "{" + namespace + "}:"
+        if type(wait_replicas) is not int or wait_replicas < 0 or wait_timeout_ms < 1:
+            raise ValueError("invalid replication confirmation settings")
+        self.wait_replicas, self.wait_timeout_ms = wait_replicas, wait_timeout_ms
+        self._sentinel = None
 
     @classmethod
-    def from_url(cls, url="redis://127.0.0.1:6379/0", namespace="chat"):
+    def from_url(cls, url="redis://127.0.0.1:6379/0", namespace="chat", wait_replicas=0, wait_timeout_ms=1000):
         from redis.asyncio import Redis
         return cls(Redis.from_url(url, decode_responses=True, socket_connect_timeout=3,
-                                 socket_timeout=5, health_check_interval=15), namespace)
+                                 socket_timeout=max(5, wait_timeout_ms / 1000 + 1), health_check_interval=15),
+                   namespace, wait_replicas, wait_timeout_ms)
+
+    @classmethod
+    def from_sentinel(cls, endpoints, master_name="chat-primary", namespace="chat",
+                      password=None, sentinel_password=None, wait_replicas=1, wait_timeout_ms=1000):
+        from redis.asyncio.sentinel import Sentinel
+        if not endpoints or not master_name:
+            raise ValueError("Sentinel endpoints and master name are required")
+        manager = Sentinel(endpoints, sentinel_kwargs={"password": sentinel_password,
+                           "socket_connect_timeout": 2, "socket_timeout": 2})
+        client = manager.master_for(master_name, decode_responses=True, password=password,
+                                    socket_connect_timeout=3,
+                                    socket_timeout=max(5, wait_timeout_ms / 1000 + 1), health_check_interval=15)
+        backend = cls(client, namespace, wait_replicas, wait_timeout_ms)
+        backend._sentinel = manager
+        return backend
+
+    async def write_confirmed(self, command, *args, **kwargs):
+        if not self.wait_replicas:
+            return await getattr(self.redis, command)(*args, **kwargs)
+        # Both commands share one connection. A separate redis.wait() could refer to
+        # another pooled connection's replication offset and would not confirm this write.
+        async with self.redis.pipeline(transaction=False) as pipeline:
+            getattr(pipeline, command)(*args, **kwargs)
+            # A retry can be a no-op (HSETNX/HDEL or an existing message). Force a
+            # replication offset on this connection so WAIT also covers that state.
+            pipeline.set(self.key("replication_barrier"), uuid.uuid4().hex, ex=60)
+            pipeline.wait(self.wait_replicas, self.wait_timeout_ms)
+            result, _, replicas = await pipeline.execute()
+        if replicas < self.wait_replicas:
+            raise WriteUncertainError("replica confirmation unavailable; retry the same message key")
+        return result
 
     def key(self, name):
         return self.prefix + name
@@ -192,11 +232,14 @@ class RedisBackend:
 
     async def close(self):
         await self.redis.aclose()
+        if self._sentinel:
+            for client in self._sentinel.sentinels:
+                await client.aclose()
 
     async def issue(self, user_id):
         identifier(user_id)
         token = secrets.token_urlsafe(32)
-        await self.redis.hset(self.key("credentials"), digest(token), user_id)
+        await self.write_confirmed("hset", self.key("credentials"), digest(token), user_id)
         return token
 
     async def authenticate(self, token):
@@ -208,7 +251,7 @@ class RedisBackend:
         return user
 
     async def revoke(self, token):
-        await self.redis.hdel(self.key("credentials"), digest(token))
+        await self.write_confirmed("hdel", self.key("credentials"), digest(token))
 
     async def _channel_raw(self, channel_id):
         raw = await self.redis.hget(self.key("channels"), identifier(channel_id))
@@ -234,11 +277,11 @@ class RedisBackend:
         channel_id = ("direct-" + digest(json.dumps(users, ensure_ascii=False))
                       if kind == "direct" else "group-" + uuid.uuid4().hex)
         channel = Channel(channel_id, owner_id, kind, users)
-        await self.redis.hsetnx(self.key("channels"), channel_id, json.dumps(asdict(channel)))
+        await self.write_confirmed("hsetnx", self.key("channels"), channel_id, json.dumps(asdict(channel)))
         return await self.get_channel(channel_id)
 
     async def add_member(self, channel_id, actor, user_id, limit):
-        result = await self.redis.eval(_ADD_MEMBER, 1, self.key("channels"),
+        result = await self.write_confirmed("eval", _ADD_MEMBER, 1, self.key("channels"),
                                        identifier(channel_id), identifier(actor), identifier(user_id), limit)
         if result[0] != "OK":
             raise ChatError("member addition denied")
@@ -257,7 +300,7 @@ class RedisBackend:
             keys += [self.key("history:" + channel_id)]
             keys += [self.key(n) for n in ("sessions", "nodes", "node_expiry", "credentials")]
             keys += [self.user_key("inbox", u) for u in channel.members]
-            result = await self.redis.eval(_APPEND, len(keys), *keys, raw, channel_id,
+            result = await self.write_confirmed("eval", _APPEND, len(keys), *keys, raw, channel_id,
                                            sender_id, content, client_message_id, retry_key, template,
                                            self.device_key(sender_id, session.device_id) if session else "",
                                            session.session_id if session else "", instance or "",
@@ -334,15 +377,62 @@ class RedisBackend:
     async def admit(self, user, device, session_id, node, instance, ttl, capacity):
         device_key = self.device_key(user, device)
         record = json.dumps({"user": user, "device": device, "session": session_id,
-                             "node": node, "instance": instance})
-        return bool(await self.redis.eval(_ADMIT, 5, self.key("nodes"), self.key("node_expiry"),
-                    self.key("sessions"), self.user_key("devices", user), self.key("node_devices:" + node),
-                    node, instance, device_key, record, ttl, capacity))
+                             "node": node, "instance": instance,
+                             "user_index": self.user_key("devices", user)})
+        for _ in range(10):
+            old = await self.redis.hget(self.key("sessions"), device_key)
+            previous = json.loads(old) if old else {"node": node, "instance": instance}
+            result = await self.redis.eval(_ADMIT, 7, self.key("nodes"), self.key("node_expiry"),
+                self.key("sessions"), self.user_key("devices", user),
+                self.key("node_devices:" + node + ":" + instance),
+                self.key("node_devices:" + previous["node"] + ":" + previous["instance"]),
+                self.key("sessions_expiry"), node, instance, device_key, record, ttl, capacity, old or "")
+            if result != -1:
+                return bool(result)
+        raise ChatError("device moved repeatedly; retry")
 
-    async def session_operation(self, user, device, session_id, node, operation="check", ttl=30):
-        return bool(await self.redis.eval(_SESSION, 5, self.key("sessions"), self.user_key("devices", user),
-                    self.key("node_devices:" + node), self.key("nodes"), self.key("node_expiry"),
-                    self.device_key(user, device), session_id, operation, ttl))
+    async def session_operation(self, user, device, session_id, node, operation="check", ttl=30,
+                                instance=None, token=None):
+        if instance is None:
+            raw = await self.redis.hget(self.key("sessions"), self.device_key(user, device))
+            if not raw:
+                return False
+            instance = json.loads(raw)["instance"]
+        return bool(await self.redis.eval(_SESSION, 7, self.key("sessions"), self.user_key("devices", user),
+                    self.key("node_devices:" + node + ":" + instance), self.key("nodes"), self.key("node_expiry"),
+                    self.key("sessions_expiry"), self.key("credentials"),
+                    self.device_key(user, device), session_id, operation, ttl, digest(token) if token else ""))
+
+    async def prune_sessions(self, limit=500):
+        """Bound work per maintenance tick; renewed records cannot be deleted by a stale scan."""
+        return await self.redis.eval("""
+            local t=redis.call('TIME'); local now=tonumber(t[1])+tonumber(t[2])/1000000
+            local expired=redis.call('ZRANGEBYSCORE',KEYS[1],'-inf',now,'LIMIT',0,ARGV[1])
+            for _, device in ipairs(expired) do
+                local raw=redis.call('HGET',KEYS[2],device)
+                if raw then
+                    local s=cjson.decode(raw)
+                    redis.call('ZREM',ARGV[2]..'node_devices:'..s.node..':'..s.instance,device)
+                    if s.user_index then redis.call('ZREM',s.user_index,device) end
+                end
+                redis.call('HDEL',KEYS[2],device); redis.call('ZREM',KEYS[1],device)
+            end
+            return #expired
+        """, 2, self.key("sessions_expiry"), self.key("sessions"), limit, self.prefix)
+
+    async def check_sessions(self, sessions, node, instance):
+        """Bounded pipelines avoid a network round trip for every idle connection."""
+        results = []
+        for start in range(0, len(sessions), 100):
+            async with self.redis.pipeline(transaction=False) as pipeline:
+                for session in sessions[start:start + 100]:
+                    pipeline.eval(_SESSION, 7, self.key("sessions"), self.user_key("devices", session.user_id),
+                        self.key("node_devices:" + node + ":" + instance), self.key("nodes"),
+                        self.key("node_expiry"), self.key("sessions_expiry"), self.key("credentials"),
+                        self.device_key(session.user_id, session.device_id), session.session_id,
+                        "check", 30, digest(session.token))
+                results.extend(bool(value) for value in await pipeline.execute())
+        return results
 
     async def is_online(self, user):
         return bool(await self.redis.eval(_ONLINE, 4, self.user_key("devices", user), self.key("sessions"),
@@ -358,15 +448,8 @@ class RedisBackend:
             if not raw:
                 continue
             value = json.loads(raw)
-            # Filter fenced devices left in a former node's capacity index.
-            devices = await self.redis.zrangebyscore(self.key("node_devices:" + node), f"({now}", "+inf")
-            connections = 0
-            for device in devices:
-                record = await self.redis.hget(self.key("sessions"), device)
-                if record:
-                    s = json.loads(record)
-                    if s["node"] == node and s["instance"] == value["instance"]:
-                        connections += 1
+            connections = await self.redis.zcount(
+                self.key("node_devices:" + node + ":" + value["instance"]), f"({now}", "+inf")
             if connections < value["capacity"]:
                 servers.append(Server(node, value["url"], value["region"], value["capacity"], connections))
         if not servers:

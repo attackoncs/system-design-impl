@@ -17,6 +17,8 @@ WebSocket adapter provides actual network communication.
 - Pluggable offline push integration and region/capacity-aware reference discovery.
 - Redis-backed independent chat nodes, durable stream fanout, shared device presence,
   fenced sessions, leased discovery, reconnect recovery, and retrying push workers.
+- Optional three-Sentinel Redis failover, same-connection replica confirmation,
+  and a configurable real-WebSocket capacity/fault harness.
 
 中文文档：[README_CN.md](./README_CN.md)。Architecture and guarantees:
 [docs/design.md](./docs/design.md).
@@ -187,9 +189,9 @@ is checked at processing time; a job for an online user is acknowledged without 
 - All Redis keys use one hash-tag namespace. This preserves atomic operations but
   does not provide storage sharding or unlimited throughput. Streams and chat history
   are retained; production operators need a retention/archive policy.
-- Chat-node failure recovery is implemented. Redis-primary automatic failover,
-  replication/quorum durability, and geographically replicated storage are not included
-  in the supplied composition. Use an appropriately managed Redis endpoint for those needs.
+- Chat-node recovery and optional Sentinel primary failover are implemented.
+  Replica confirmation reduces the loss window but does not provide consensus or
+  guarantee zero loss under simultaneous failures. Geographic quorum storage is not supplied.
 - A Redis outage fails requests with a controlled unavailable response; messages are
   not acknowledged using volatile fallback storage.
 - The compose endpoints bind to localhost. Public deployment needs TLS, authenticated
@@ -208,6 +210,58 @@ pytest -q
 Without that variable the real-Redis tests are explicitly skipped. Each test uses
 and deletes only its own random namespace; it never flushes a Redis database.
 Container execution is separate from the directly exercised process tests.
+
+## Redis high availability and capacity validation
+
+Start the standalone HA composition instead of the basic composition:
+
+```bash
+docker compose -f compose.ha.yaml up --build -d
+docker compose -f compose.ha.yaml run --rm node-a token alice
+```
+
+It includes one primary, two replicas, three Sentinel voters (quorum two), and the
+four application services. Redis and Sentinel ports are internal; writable state
+files and AOF data persist in separate volumes so promotion survives restarts.
+Applications retry startup through their restart policy while replication is readying.
+This is a local demonstration; deploy voters/data nodes in separate failure domains
+and configure authentication/TLS for production. The HA network has no Redis password
+by default, so untrusted containers must not join it.
+
+Without Docker, set `CHAT_REDIS_SENTINELS=host1:26379,host2:26379,host3:26379` and
+`CHAT_REDIS_MASTER=chat-primary` before using the existing cluster commands.
+`CHAT_REDIS_PASSWORD` and `CHAT_SENTINEL_PASSWORD` configure endpoint credentials.
+Global `--wait-replicas` defaults to one for Sentinel and zero for a direct URL;
+`--wait-timeout-ms` defaults to 1000. Writes and `WAIT` use the same connection.
+Confirmation failure is uncertain: the write can already exist, so retry the same
+message key. Reads use the current primary. A disconnected/stale primary cannot
+fall back to in-memory acknowledgement. The HA primary also requires a live replica
+(`min-replicas-to-write 1`). Two replicas allow that safeguard after one promotion.
+
+Run measured load against your own Redis endpoint; the tool creates/stops two chat
+child processes, drives actual WebSockets, and cleans only its random namespace:
+
+```bash
+python tools/load_test.py --connections 1000 --messages 10000 --output .runtime/load.json
+python tools/load_test.py --connections 1000 --messages 10000 --kill-node --output .runtime/fault.json
+```
+
+Pass `--redis-url` or `--sentinels` to override the environment. Adjustable options
+include `--concurrency`, `--payload-bytes`, and `--delivery-timeout`. Fault mode kills
+only its own second chat process, reconnects its clients, and verifies every
+acknowledged message through durable sync. Lost live hints during failure are allowed;
+missing durable messages fail the run. JSON reports include p50/p95/p99, duplicates,
+errors and admission counts. See [the measured report](./benchmarks/results.md).
+
+For a disposable real primary-crash test, on Linux/macOS run
+`python tools/redis_lab.py --directory .runtime/lab`, then set
+`CHAT_TEST_REDIS_LAB` to its absolute directory and run `pytest tests/test_ha.py -q`.
+The lab requires a Redis server executable; set `--binary` if it is not on PATH.
+It binds only to loopback. The failover test deliberately kills its owned primary;
+finish by writing `{"stop":true}` to `control.json` in the lab directory.
+On WSL, store Redis data on the Linux filesystem and use `--control-directory`
+for a separate Windows-visible control/report directory. A fresh lab is needed for
+each primary-crash test. Missing lab configuration explicitly skips that test.
 
 ## Design references
 

@@ -1,0 +1,69 @@
+# Standalone local HA demonstration. Redis/Sentinel ports are internal only.
+x-redis: &redis
+  image: redis:8.0
+  entrypoint: ["sh", "/deploy/redis-entrypoint.sh"]
+  restart: unless-stopped
+x-app: &app
+  build: .
+  environment: &environment
+    CHAT_REDIS_SENTINELS: sentinel-1:26379,sentinel-2:26379,sentinel-3:26379
+    CHAT_REDIS_MASTER: chat-primary
+  restart: unless-stopped
+services:
+  redis-1:
+    <<: *redis
+    environment: {REDIS_HOST: redis-1, REDIS_ROLE: server}
+    volumes: ["redis-1:/data", "./deploy:/deploy:ro"]
+  redis-2:
+    <<: *redis
+    environment: {REDIS_HOST: redis-2, REDIS_ROLE: replica}
+    volumes: ["redis-2:/data", "./deploy:/deploy:ro"]
+  redis-3:
+    <<: *redis
+    environment: {REDIS_HOST: redis-3, REDIS_ROLE: replica}
+    volumes: ["redis-3:/data", "./deploy:/deploy:ro"]
+  sentinel-1:
+    <<: *redis
+    environment: {REDIS_HOST: sentinel-1, REDIS_ROLE: sentinel}
+    volumes: ["sentinel-1:/data", "./deploy:/deploy:ro"]
+    depends_on: [redis-1, redis-2, redis-3]
+  sentinel-2:
+    <<: *redis
+    environment: {REDIS_HOST: sentinel-2, REDIS_ROLE: sentinel}
+    volumes: ["sentinel-2:/data", "./deploy:/deploy:ro"]
+    depends_on: [redis-1, redis-2, redis-3]
+  sentinel-3:
+    <<: *redis
+    environment: {REDIS_HOST: sentinel-3, REDIS_ROLE: sentinel}
+    volumes: ["sentinel-3:/data", "./deploy:/deploy:ro"]
+    depends_on: [redis-1, redis-2, redis-3]
+  node-a:
+    <<: *app
+    command: ["node", "--node-id", "node-a", "--host", "0.0.0.0", "--port", "8765", "--public-url", "ws://127.0.0.1:8765"]
+    ports: ["127.0.0.1:8765:8765"]
+    depends_on: [sentinel-1, sentinel-2, sentinel-3]
+  node-b:
+    <<: *app
+    command: ["node", "--node-id", "node-b", "--host", "0.0.0.0", "--port", "8766", "--public-url", "ws://127.0.0.1:8766"]
+    ports: ["127.0.0.1:8766:8766"]
+    depends_on: [sentinel-1, sentinel-2, sentinel-3]
+  discovery:
+    <<: *app
+    command: ["discovery", "--host", "0.0.0.0", "--port", "8080"]
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on: [sentinel-1, sentinel-2, sentinel-3]
+  push-worker:
+    <<: *app
+    environment:
+      <<: *environment
+      CHAT_PUSH_URL: ${CHAT_PUSH_URL:-}
+      CHAT_PUSH_TOKEN: ${CHAT_PUSH_TOKEN:-}
+    command: ["worker"]
+    depends_on: [sentinel-1, sentinel-2, sentinel-3]
+volumes:
+  redis-1:
+  redis-2:
+  redis-3:
+  sentinel-1:
+  sentinel-2:
+  sentinel-3:

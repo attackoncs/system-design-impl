@@ -170,7 +170,54 @@ pytest -q
 客户端以持久化游标恢复并按消息 ID 去重。Redis 不可用时返回服务不可用，不回退到
 内存并错误确认发送成功。
 
-当前实现了聊天节点故障恢复，但提供的容器组合没有自动 Redis 主备切换或跨地域
-复制。所有 Redis 键位于同一哈希槽，未实现存储分片，也未验证五千万日活容量。
+当前实现了聊天节点故障恢复及可选的 Sentinel 自动 Redis 主备切换。所有 Redis 键
+位于同一哈希槽，未实现存储分片、跨地域仲裁，也未验证五千万日活容量。
 消息与事件默认保留，生产部署需配置归档策略。远程部署还需要 TLS、Redis 认证及
 可从客户端访问的节点地址。容器组合文件与直接多进程测试的验证范围分开说明。
+
+## Redis 自动主备切换与容量测试
+
+高可用组合包含一个主节点、两个副本、三个 Sentinel（仲裁数为二），以及聊天、
+发现和推送服务。替代基础组合运行：
+
+```bash
+docker compose -f compose.ha.yaml up --build -d
+docker compose -f compose.ha.yaml run --rm node-a token alice
+```
+
+Redis 与 Sentinel 端口仅供容器内部访问。数据节点的 AOF 与 Sentinel 的可写配置
+分别持久化，主备角色切换后重启沿用已改写的配置。容器启动时依靠重启策略等待
+主备复制就绪。本地组合用于演示，生产部署需要独立故障域、认证和 TLS；默认
+内部 Redis 网络未配置密码，不应允许不可信容器加入。
+
+直接运行时设置 `CHAT_REDIS_SENTINELS=host1:26379,host2:26379,host3:26379`，
+`CHAT_REDIS_MASTER=chat-primary`。Redis、Sentinel 的密码分别使用
+`CHAT_REDIS_PASSWORD`、`CHAT_SENTINEL_PASSWORD`。程序通过 Sentinel 找到当前
+主节点并恢复连接，读取也使用主节点，避免从旧副本读取历史。
+
+全局参数 `--wait-replicas` 在 Sentinel 模式默认一，在直连模式默认零；
+`--wait-timeout-ms` 默认 1000。写入与 `WAIT` 在同一连接执行，确认不足时返回
+不确定结果，调用方需用原消息键重试；这时写入可能已经发生。部署还要求主节点
+至少有一个健康副本才能写入。副本确认可缩小丢失窗口，但不保证同时发生多个
+故障时零丢失，也不等同于强一致仲裁数据库。
+
+容量工具实际启动两个独立聊天子进程并建立 WebSocket 连接，输出确认延迟、
+投递延迟的 p50/p95/p99、吞吐、缺失、重复和错误数。它只清理自己的随机命名空间：
+
+```bash
+python tools/load_test.py --connections 1000 --messages 10000 --output .runtime/load.json
+python tools/load_test.py --connections 1000 --messages 10000 --kill-node --output .runtime/fault.json
+```
+
+可用 `--redis-url`、`--sentinels` 指定 Redis，使用 `--concurrency`、
+`--payload-bytes`、`--delivery-timeout` 调节负载。故障模式只终止工具自建的第二个
+聊天节点，将其客户端连接到存活节点，再通过同步验证所有已确认消息。故障期间
+实时提示允许缺失，持久化消息缺失会判为失败。实测结果见 [压测报告](benchmarks/results.md)。
+
+Redis 主节点崩溃测试使用 `tools/redis_lab.py` 创建的专用实验环境（Linux/macOS，
+需要 Redis 可执行文件）。设置 `CHAT_TEST_REDIS_LAB` 为控制目录的绝对路径后运行
+`pytest tests/test_ha.py -q`。该测试会终止实验环境自己的主节点，验证自动选主、
+继续聊天和重试去重。结束后向控制目录的 `control.json` 写入 `{"stop":true}`，
+关闭全部自建子进程。WSL 的 Redis 数据须放在 Linux 文件系统，可用
+`--control-directory` 将控制及报告文件放在 Windows 可读目录。每次崩溃测试需
+新建实验环境；未配置该环境时测试会明确跳过。

@@ -14,7 +14,7 @@
 | 10 | [Web Crawler](./web-crawler/) | ✅ 完成 | 异步爬取、优先级与礼貌性 URL 队列、robots.txt 校验、URL 与内容去重 |
 | 11 | [Notification System](./notification-system/) | ✅ 完成 | 多渠道异步流水线、限流、去重、指数退避重试、生命周期追踪 |
 | 12 | [News Feed System](./news-feed-system/) | ✅ 完成 | 推拉混合扇出、异步工作池、五层缓存架构、可插拔社交图谱 |
-| 13 | [Chat System](./chat-system/) | ✅ 完成 | 单聊群聊、Redis 多节点路由、租约发现、共享在线状态、持久化推送重试及重连同步 |
+| 13 | [Chat System](./chat-system/) | ✅ 完成 | 单聊群聊、Redis 多节点路由、Sentinel 主备切换、共享在线状态、持久化推送重试、重连同步及容量故障实测 |
 
 ## 计划实现
 
