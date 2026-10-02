@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "chat-system"
+version = "0.1.0"
+description = "Persistent text chat with device synchronization, presence, and a WebSocket adapter."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+dependencies = []
+
+[project.optional-dependencies]
+websocket = ["websockets>=14,<17"]
+distributed = ["redis>=5,<7", "websockets>=14,<17"]
+dev = ["pytest>=8", "websockets>=14,<17", "redis>=5,<7"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/chat_system"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

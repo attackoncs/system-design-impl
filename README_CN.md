@@ -14,12 +14,12 @@
 | 10 | [Web Crawler](./web-crawler/) | ✅ 完成 | 异步爬取、优先级与礼貌性 URL 队列、robots.txt 校验、URL 与内容去重 |
 | 11 | [Notification System](./notification-system/) | ✅ 完成 | 多渠道异步流水线、限流、去重、指数退避重试、生命周期追踪 |
 | 12 | [News Feed System](./news-feed-system/) | ✅ 完成 | 推拉混合扇出、异步工作池、五层缓存架构、可插拔社交图谱 |
+| 13 | [Chat System](./chat-system/) | ✅ 完成 | 单聊群聊、Redis 多节点路由、租约发现、共享在线状态、持久化推送重试及重连同步 |
 
 ## 计划实现
 
 | 章节 | 主题 | 状态 |
 |------|------|------|
-| 13 | Chat System | 📋 待实现 |
 | 14 | Search Autocomplete | 📋 待实现 |
 
 ## 项目结构
@@ -90,6 +90,15 @@ sdi-implement/
 │   ├── src/news_feed_system/    # 源代码
 │   ├── tests/                   # 测试
 │   └── examples/                # 后续示例占位目录
+├── chat-system/                 # 第13章：聊天系统
+│   ├── README.md                # 英文使用文档
+│   ├── README_CN.md             # 中文使用文档
+│   ├── pyproject.toml           # 项目配置
+│   ├── src/chat_system/         # 核心代码与可选 WebSocket 适配层
+│   ├── compose.yaml             # Redis、聊天节点、发现服务、推送工作进程
+│   ├── tests/                   # 核心、WebSocket 及真实多进程测试
+│   ├── examples/                # 本地示例与自动重连客户端
+│   └── docs/design.md           # 设计文档
 └── .gitignore
 ```
 

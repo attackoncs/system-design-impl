@@ -1,0 +1,59 @@
+services:
+  redis:
+    image: redis:8.0
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "always"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 1s
+      retries: 20
+  node-a:
+    build: .
+    environment:
+      CHAT_REDIS_URL: redis://redis:6379/0
+    command: ["node", "--node-id", "node-a", "--host", "0.0.0.0", "--port", "8765", "--public-url", "ws://127.0.0.1:8765", "--region", "east"]
+    ports:
+      - "127.0.0.1:8765:8765"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+  node-b:
+    build: .
+    environment:
+      CHAT_REDIS_URL: redis://redis:6379/0
+    command: ["node", "--node-id", "node-b", "--host", "0.0.0.0", "--port", "8766", "--public-url", "ws://127.0.0.1:8766", "--region", "west"]
+    ports:
+      - "127.0.0.1:8766:8766"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+  discovery:
+    build: .
+    environment:
+      CHAT_REDIS_URL: redis://redis:6379/0
+    command: ["discovery", "--host", "0.0.0.0", "--port", "8080"]
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+  push-worker:
+    build: .
+    environment:
+      CHAT_REDIS_URL: redis://redis:6379/0
+      CHAT_PUSH_URL: ${CHAT_PUSH_URL:-}
+      CHAT_PUSH_TOKEN: ${CHAT_PUSH_TOKEN:-}
+    command: ["worker"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+volumes:
+  redis-data:

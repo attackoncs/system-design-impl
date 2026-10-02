@@ -16,12 +16,12 @@ Production-quality Python implementations of system design concepts from the boo
 | 10 | [Web Crawler](./web-crawler/) | ✅ Done | Async crawling, priority/politeness frontier, robots.txt compliance, URL/content deduplication |
 | 11 | [Notification System](./notification-system/) | ✅ Done | Multi-channel async pipeline, rate limiting, deduplication, exponential-backoff retry, lifecycle tracking |
 | 12 | [News Feed System](./news-feed-system/) | ✅ Done | Hybrid push/pull fanout, async workers, five-layer cache architecture, pluggable social graph |
+| 13 | [Chat System](./chat-system/) | ✅ Done | Direct/group chat, Redis multi-node routing, leased discovery, shared presence, durable push retries, reconnect sync |
 
 ## Planned
 
 | Chapter | Topic | Status |
 |---------|-------|--------|
-| 13 | Chat System | 📋 Planned |
 | 14 | Search Autocomplete | 📋 Planned |
 
 ## Project Structure
@@ -93,6 +93,15 @@ sdi-implement/
 │   ├── src/news_feed_system/    # Source code
 │   ├── tests/                   # Tests
 │   └── examples/                # Placeholder for future examples
+├── chat-system/                 # Ch.13: Chat System
+│   ├── README.md                # Usage documentation
+│   ├── README_CN.md             # Chinese documentation
+│   ├── pyproject.toml           # Package configuration
+│   ├── src/chat_system/         # Source code and optional WebSocket adapter
+│   ├── compose.yaml             # Redis, chat nodes, discovery, push worker
+│   ├── tests/                   # Core, WebSocket and real multi-process tests
+│   ├── examples/                # Local demos and reconnecting client
+│   └── docs/design.md           # Design document
 └── .gitignore
 ```
 
