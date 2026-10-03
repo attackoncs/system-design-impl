@@ -103,6 +103,14 @@ sdi-implement/
 │   ├── tests/                   # Core, WebSocket and real multi-process tests
 │   ├── examples/                # Local demos and reconnecting client
 │   └── docs/design.md           # Design document
+├── video-streaming-system/      # Ch.15: Video Streaming
+│   ├── README.md                # Usage and distributed deployment
+│   ├── README_CN.md             # Chinese documentation
+│   ├── src/video_streaming/     # Upload, DAG workers, PostgreSQL and S3
+│   ├── compose.ha.yaml          # Patroni/etcd cluster and private S3 lab
+│   ├── tests/                  # 40 tests, including real remote services
+│   ├── benchmarks/             # Media measurements and failover evidence
+│   └── docs/design.md          # Architecture and deployment boundaries
 └── .gitignore
 ```
 

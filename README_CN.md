@@ -100,6 +100,14 @@ sdi-implement/
 │   ├── tests/                   # 核心、WebSocket 及真实多进程测试
 │   ├── examples/                # 本地示例与自动重连客户端
 │   └── docs/design.md           # 设计文档
+├── video-streaming-system/      # 第15章：视频系统
+│   ├── README.md                # 使用与分布式部署说明
+│   ├── README_CN.md             # 中文说明
+│   ├── src/video_streaming/     # 上传、转码任务、PostgreSQL 与 S3
+│   ├── compose.ha.yaml          # Patroni/etcd 主备与私有 S3 实验
+│   ├── tests/                  # 40 项测试，含真实远端服务
+│   ├── benchmarks/             # 媒体实测和故障恢复报告
+│   └── docs/design.md          # 架构及部署边界
 └── .gitignore
 ```
 
