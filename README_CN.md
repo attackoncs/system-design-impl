@@ -15,13 +15,14 @@
 | 11 | [Notification System](./notification-system/) | ✅ 完成 | 多渠道异步流水线、限流、去重、指数退避重试、生命周期追踪 |
 | 12 | [News Feed System](./news-feed-system/) | ✅ 完成 | 推拉混合扇出、异步工作池、五层缓存架构、可插拔社交图谱 |
 | 13 | [Chat System](./chat-system/) | ✅ 完成 | 单聊群聊、Redis 多节点路由、Sentinel 主备切换、共享在线状态、持久化推送重试、重连同步及容量故障实测 |
+| 14 | [Search Autocomplete](./search-autocomplete-system/) | ✅ 完成 | 前缀树 Top 5、批聚合快照、即时过滤、范围分片、HTTP 副本恢复 |
 | 15 | [Video Streaming](./video-streaming-system/) | ✅ 参考实现完成 | 分片续传、真实 FFmpeg/加密 HLS、PostgreSQL 自动切换、S3 共享存储、故障实测 |
 
 ## 计划实现
 
 | 章节 | 主题 | 状态 |
 |------|------|------|
-| 14 | Search Autocomplete | 📋 待实现 |
+| 16–29 | 后续章节任务 | 📋 已规划 |
 
 ## 项目结构
 
@@ -100,6 +101,14 @@ sdi-implement/
 │   ├── tests/                   # 核心、WebSocket 及真实多进程测试
 │   ├── examples/                # 本地示例与自动重连客户端
 │   └── docs/design.md           # 设计文档
+├── search-autocomplete-system/  # 第14章：搜索自动补全
+│   ├── README.md                # 使用及 HTTP 部署说明
+│   ├── README_CN.md             # 中文说明
+│   ├── src/search_autocomplete/ # 批量快照、前缀树、分片副本
+│   ├── tests/                  # 排名、持久化与进程故障恢复
+│   ├── examples/               # 本地和真实 HTTP 示例
+│   ├── benchmarks/             # 延迟实测及验证边界
+│   └── docs/design.md          # 架构与限制
 ├── video-streaming-system/      # 第15章：视频系统
 │   ├── README.md                # 使用与分布式部署说明
 │   ├── README_CN.md             # 中文说明

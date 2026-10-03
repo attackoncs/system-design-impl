@@ -17,13 +17,14 @@ Production-quality Python implementations of system design concepts from the boo
 | 11 | [Notification System](./notification-system/) | ✅ Done | Multi-channel async pipeline, rate limiting, deduplication, exponential-backoff retry, lifecycle tracking |
 | 12 | [News Feed System](./news-feed-system/) | ✅ Done | Hybrid push/pull fanout, async workers, five-layer cache architecture, pluggable social graph |
 | 13 | [Chat System](./chat-system/) | ✅ Done | Direct/group chat, Redis multi-node routing, Sentinel failover, shared presence, durable push retries, reconnect sync, measured load/fault tests |
+| 14 | [Search Autocomplete](./search-autocomplete-system/) | ✅ Done | Cached top-five trie, batch snapshots, filtering, range shards, HTTP replica recovery |
 | 15 | [Video Streaming](./video-streaming-system/) | ✅ Done | Resumable uploads, real FFmpeg/encrypted HLS, PostgreSQL failover, S3 shared storage, measured recovery |
 
 ## Planned
 
 | Chapter | Topic | Status |
 |---------|-------|--------|
-| 14 | Search Autocomplete | 📋 Planned |
+| 16–29 | Chapter tasks | 📋 Planned |
 
 ## Project Structure
 
@@ -103,6 +104,14 @@ sdi-implement/
 │   ├── tests/                   # Core, WebSocket and real multi-process tests
 │   ├── examples/                # Local demos and reconnecting client
 │   └── docs/design.md           # Design document
+├── search-autocomplete-system/  # Ch.14: Search Autocomplete
+│   ├── README.md                # Usage and HTTP deployment
+│   ├── README_CN.md             # Chinese documentation
+│   ├── src/search_autocomplete/ # Batch snapshots, trie, shard replicas
+│   ├── tests/                  # Ranking, persistence and process recovery
+│   ├── examples/               # Local and real HTTP demonstrations
+│   ├── benchmarks/             # Measured latency and scope
+│   └── docs/design.md          # Architecture and limitations
 ├── video-streaming-system/      # Ch.15: Video Streaming
 │   ├── README.md                # Usage and distributed deployment
 │   ├── README_CN.md             # Chinese documentation

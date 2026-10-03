@@ -1,0 +1,25 @@
+{
+  "queries": 10000,
+  "local_requests": 10000,
+  "http_requests": 500,
+  "shards": 4,
+  "build_seconds": 0.059,
+  "cold_query_ms": 48.3738,
+  "local_latency": {
+    "p50_ms": 0.011,
+    "p95_ms": 0.0191,
+    "p99_ms": 0.0225
+  },
+  "http_latency": {
+    "p50_ms": 1.102,
+    "p95_ms": 1.6298,
+    "p99_ms": 22.6696
+  },
+  "local_requests_per_second": 74648.93,
+  "environment": {
+    "platform": "Windows-11-10.0.26100-SP0",
+    "python": "3.13.9",
+    "logical_cpus": 16
+  },
+  "scope": "single-host, sequential requests; HTTP service contains all shards"
+}
