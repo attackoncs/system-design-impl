@@ -1,0 +1,24 @@
+{
+  "license": "CC0-1.0. Synthetic educational roads; not real-world navigation data.",
+  "nodes": [
+    {"id":"A","latitude":0,"longitude":-0.002},
+    {"id":"B","latitude":0,"longitude":0},
+    {"id":"C","latitude":0,"longitude":0.002},
+    {"id":"D","latitude":0.001,"longitude":0},
+    {"id":"E","latitude":0.001,"longitude":0.002},
+    {"id":"F","latitude":1,"longitude":1},
+    {"id":"W","latitude":0.01,"longitude":179.999},
+    {"id":"Z","latitude":0.01,"longitude":-179.999}
+  ],
+  "edges": [
+    {"id":"ab","source":"A","target":"B","length_m":222.4,"speeds":{"driving":10,"walking":1.4,"cycling":5}},
+    {"id":"ba","source":"B","target":"A","length_m":222.4,"speeds":{"driving":10,"walking":1.4,"cycling":5}},
+    {"id":"bc","source":"B","target":"C","length_m":222.4,"speeds":{"driving":10,"walking":1.4,"cycling":5}},
+    {"id":"bd","source":"B","target":"D","length_m":111.2,"speeds":{"driving":8,"walking":1.4,"cycling":4}},
+    {"id":"de","source":"D","target":"E","length_m":222.4,"speeds":{"driving":8,"walking":1.4,"cycling":4}},
+    {"id":"ec","source":"E","target":"C","length_m":111.2,"speeds":{"driving":8,"walking":1.4,"cycling":4}},
+    {"id":"ad","source":"A","target":"D","length_m":249,"speeds":{"driving":20},"toll":true},
+    {"id":"wz","source":"W","target":"Z","speeds":{"driving":10,"walking":1.4}}
+  ],
+  "addresses": {"West Station":"A","Central":"B","East Station":"C","Park":"D"}
+}
