@@ -25,12 +25,13 @@ Production-quality Python implementations of system design concepts from the boo
 | 19 | [Maps System](./maps-system/) | ✅ Reference done | Lazy tiled routing/ETA, traffic reports, GeoJSON/PNG, versioned HTTP catalogs and regional read recovery; 14 tests |
 | 20 | [Distributed Message Queue](./distributed-message-queue/) | ✅ Reference done | Segmented replicated logs, producer fencing, consumer groups, queue-scoped transactions and real broker/transport faults; 15 tests |
 | 21 | [Metrics Monitoring and Alerting](./metrics-monitoring-system/) | ✅ Reference done | Durable collection through the message queue, tiered time series storage, grouped alerts and webhook retries; 15 tests |
+| 22 | [Ad Click Event Aggregation](./ad-click-aggregation-system/) | ✅ Reference done | Partitioned durable event log, salted hot ads, exact global Top N, late corrections, atomic checkpoints and replay reconciliation; 11 tests |
 
 ## Planned
 
 | Chapter | Topic | Status |
 |---------|-------|--------|
-| 22–29 | Chapter tasks | 📋 Planned |
+| 23–29 | Chapter tasks | 📋 Planned |
 
 ## Project Structure
 
@@ -139,6 +140,7 @@ sdi-implement/
 ├── maps-system/                 # Ch.19: Routing, traffic and map tiles
 ├── distributed-message-queue/   # Ch.20: Replicated logs and consumer groups
 ├── metrics-monitoring-system/   # Ch.21: Metrics, queries and alerts
+├── ad-click-aggregation-system/  # Ch.22: Event-time click aggregation and reconciliation
 └── .gitignore
 ```
 

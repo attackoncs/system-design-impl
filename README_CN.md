@@ -23,12 +23,13 @@
 | 19 | [地图系统](./maps-system/) | ✅ 参考实现完成 | 按需瓦片路由/ETA、交通上报、GeoJSON/PNG、版本化HTTP副本与区域读恢复；14项测试 |
 | 20 | [分布式消息队列](./distributed-message-queue/) | ✅ 参考实现完成 | 分段复制日志、生产者隔离、消费者组、队列内事务及真实broker/网络故障验证；15项测试 |
 | 21 | [监控与告警系统](./metrics-monitoring-system/) | ✅ 参考实现完成 | 持久化采集与消息队列、分层时序存储、分组告警及webhook重试；15项测试 |
+| 22 | [广告点击事件聚合](./ad-click-aggregation-system/) | ✅ 参考实现完成 | 持久化分区日志、热点拆分、精确全局Top N、迟到修正、事务检查点及重放对账；11项测试 |
 
 ## 计划实现
 
 | 章节 | 主题 | 状态 |
 |------|------|------|
-| 22–29 | 后续章节任务 | 📋 已规划 |
+| 23–29 | 后续章节任务 | 📋 已规划 |
 
 ## 项目结构
 
@@ -136,6 +137,7 @@ sdi-implement/
 ├── maps-system/                 # 第19章：路线、交通与地图瓦片
 ├── distributed-message-queue/   # 第20章：复制日志与消费者组
 ├── metrics-monitoring-system/   # 第21章：指标采集、查询与告警
+├── ad-click-aggregation-system/  # 第22章：事件时间聚合与对账
 └── .gitignore
 ```
 
