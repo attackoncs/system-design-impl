@@ -26,12 +26,13 @@ Production-quality Python implementations of system design concepts from the boo
 | 20 | [Distributed Message Queue](./distributed-message-queue/) | ✅ Reference done | Segmented replicated logs, producer fencing, consumer groups, queue-scoped transactions and real broker/transport faults; 15 tests |
 | 21 | [Metrics Monitoring and Alerting](./metrics-monitoring-system/) | ✅ Reference done | Durable collection through the message queue, tiered time series storage, grouped alerts and webhook retries; 15 tests |
 | 22 | [Ad Click Event Aggregation](./ad-click-aggregation-system/) | ✅ Reference done | Partitioned durable event log, salted hot ads, exact global Top N, late corrections, atomic checkpoints and replay reconciliation; 11 tests |
+| 23 | [Hotel Reservation](./hotel-reservation-system/) | ✅ Reference done | Hotel shards, atomic nightly inventory, bounded overbooking, price snapshots, idempotent bookings and simulated payment/refund recovery; 13 tests |
 
 ## Planned
 
 | Chapter | Topic | Status |
 |---------|-------|--------|
-| 23–29 | Chapter tasks | 📋 Planned |
+| 24–29 | Chapter tasks | 📋 Planned |
 
 ## Project Structure
 
@@ -141,6 +142,7 @@ sdi-implement/
 ├── distributed-message-queue/   # Ch.20: Replicated logs and consumer groups
 ├── metrics-monitoring-system/   # Ch.21: Metrics, queries and alerts
 ├── ad-click-aggregation-system/  # Ch.22: Event-time click aggregation and reconciliation
+├── hotel-reservation-system/    # Ch.23: Atomic hotel inventory and payment compensation
 └── .gitignore
 ```
 
