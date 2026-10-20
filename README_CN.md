@@ -19,12 +19,12 @@
 | 15 | [Video Streaming](./video-streaming-system/) | ✅ 参考实现完成 | 分片续传、真实 FFmpeg/加密 HLS、PostgreSQL 自动切换、S3 共享存储、故障实测 |
 | 16 | [File Sync](./file-sync-system/) | ✅ 参考实现完成 | 加密分块续传、修订历史、冲突副本、分享撤销、持久长轮询与设备增量同步 |
 | 17 | [附近商家服务](./proximity-service/) | ✅ 参考实现完成 | Geohash搜索、商家管理、每日原子快照、有界缓存、独立HTTP副本与区域读切换 |
+| 18 | [附近好友](./nearby-friends-system/) | ✅ 参考实现完成 | 实时WebSocket、Redis TTL/PubSub、双向授权、乱序抑制、环变更与快照恢复；12项测试 |
 
 ## 计划实现
 
 | 章节 | 主题 | 状态 |
 |------|------|------|
-| 18 | 附近好友 | 🚧 实现中 |
 | 19–29 | 后续章节任务 | 📋 已规划 |
 
 ## 项目结构
@@ -129,6 +129,7 @@ sdi-implement/
 │   ├── benchmarks/             # 增量带宽及同步实测
 │   └── docs/design.md          # 架构及边界
 ├── proximity-service/          # 第17章：附近商家服务
+├── nearby-friends-system/       # 第18章：实时授权附近好友
 └── .gitignore
 ```
 
