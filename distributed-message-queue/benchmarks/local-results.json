@@ -1,0 +1,22 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "brokers": 3,
+  "coordinators": 1,
+  "tcp_proxies": 3,
+  "partitions": 3,
+  "clients": 2,
+  "batches": 12,
+  "batch_size": 10,
+  "text_bytes_per_message": 256,
+  "messages": 120,
+  "fetched": 120,
+  "seconds": 3.508,
+  "messages_per_second": 34.21,
+  "batch_ack_p50_ms": 551.999,
+  "batch_ack_p95_ms": 619.402,
+  "broker_disk_bytes": 215769,
+  "segments_across_replicas": 54,
+  "errors": 0,
+  "scope": "localhost HTTP with actual independent broker disks, fsync per record and quorum confirmation; small synthetic reference, not production throughput"
+}
