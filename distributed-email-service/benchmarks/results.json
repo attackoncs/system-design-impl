@@ -1,0 +1,23 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "processes": 9,
+  "primary_shards": 2,
+  "read_replicas": 2,
+  "messages": 40,
+  "send_clients": 4,
+  "admission_seconds": 1.711,
+  "all_replica_searchable_seconds": 5.716,
+  "admitted_messages_per_second": 23.37,
+  "delivered_and_replicated_per_second": 7.0,
+  "unique_smtp_deliveries": 40,
+  "replica_search_matches": 40,
+  "search_requests": 40,
+  "search_clients": 4,
+  "search_p50_ms": 49.433,
+  "search_p95_ms": 76.077,
+  "search_requests_per_second": 79.22,
+  "sqlite_bytes": 1024000,
+  "object_bytes": 18000,
+  "scope": "real localhost HTTP + SMTP + immutable objects + asynchronous metadata replicas; no external mail, real AV or replicated object storage"
+}

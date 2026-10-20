@@ -25,12 +25,13 @@
 | 21 | [监控与告警系统](./metrics-monitoring-system/) | ✅ 参考实现完成 | 持久化采集与消息队列、分层时序存储、分组告警及webhook重试；15项测试 |
 | 22 | [广告点击事件聚合](./ad-click-aggregation-system/) | ✅ 参考实现完成 | 持久化分区日志、热点拆分、精确全局Top N、迟到修正、事务检查点及重放对账；11项测试 |
 | 23 | [酒店预订系统](./hotel-reservation-system/) | ✅ 参考实现完成 | 酒店分片、多夜原子库存、超售上限、价格快照、幂等预订及模拟支付/退款恢复；13项测试 |
+| 24 | [分布式邮件服务](./distributed-email-service/) | ✅ 参考实现完成 | 本机HTTP/SMTP收发、独立附件对象、用户分片、异步元数据副本、已读冲突保护与字段搜索；9项测试 |
 
 ## 计划实现
 
 | 章节 | 主题 | 状态 |
 |------|------|------|
-| 24–29 | 后续章节任务 | 📋 已规划 |
+| 25–29 | 后续章节任务 | 📋 已规划 |
 
 ## 项目结构
 
@@ -140,6 +141,7 @@ sdi-implement/
 ├── metrics-monitoring-system/   # 第21章：指标采集、查询与告警
 ├── ad-click-aggregation-system/  # 第22章：事件时间聚合与对账
 ├── hotel-reservation-system/    # 第23章：原子库存与支付补偿
+├── distributed-email-service/   # 第24章：本机SMTP、元数据副本与邮箱搜索
 └── .gitignore
 ```
 

@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "distributed-email"
+version = "0.1.0"
+requires-python = ">=3.10"
+description = "Local distributed email reference with SMTP, object storage and metadata replication"
+dependencies = []
+
+[project.scripts]
+distributed-email = "distributed_email.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
