@@ -1,0 +1,5 @@
+{
+  "owners": {"alice-demo": "alice", "bob-demo": "bob"},
+  "admin": "admin-demo",
+  "replication": "replica-demo"
+}

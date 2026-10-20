@@ -1,0 +1,48 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "scope": "localhost real HTTP, independent primary process; synthetic 10,000 businesses, mixed dense/sparse/radius queries, default page limit 100",
+  "requests": 120,
+  "clients": 4,
+  "seconds": 4.068,
+  "qps": 29.5,
+  "errors": 0,
+  "cases": [
+    {
+      "case": "dense-500",
+      "requests": 20,
+      "p50_ms": 74.289,
+      "p95_ms": 97.128
+    },
+    {
+      "case": "dense-5000",
+      "requests": 20,
+      "p50_ms": 369.978,
+      "p95_ms": 462.737
+    },
+    {
+      "case": "dense-20000",
+      "requests": 20,
+      "p50_ms": 321.399,
+      "p95_ms": 409.063
+    },
+    {
+      "case": "sparse-500",
+      "requests": 20,
+      "p50_ms": 26.316,
+      "p95_ms": 30.235
+    },
+    {
+      "case": "sparse-5000",
+      "requests": 20,
+      "p50_ms": 18.167,
+      "p95_ms": 27.087
+    },
+    {
+      "case": "sparse-20000",
+      "requests": 20,
+      "p50_ms": 20.648,
+      "p95_ms": 36.787
+    }
+  ]
+}

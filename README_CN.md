@@ -17,12 +17,15 @@
 | 13 | [Chat System](./chat-system/) | ✅ 完成 | 单聊群聊、Redis 多节点路由、Sentinel 主备切换、共享在线状态、持久化推送重试、重连同步及容量故障实测 |
 | 14 | [Search Autocomplete](./search-autocomplete-system/) | ✅ 完成 | 前缀树 Top 5、批聚合快照、即时过滤、范围分片、HTTP 副本恢复 |
 | 15 | [Video Streaming](./video-streaming-system/) | ✅ 参考实现完成 | 分片续传、真实 FFmpeg/加密 HLS、PostgreSQL 自动切换、S3 共享存储、故障实测 |
+| 16 | [File Sync](./file-sync-system/) | ✅ 参考实现完成 | 加密分块续传、修订历史、冲突副本、分享撤销、持久长轮询与设备增量同步 |
+| 17 | [附近商家服务](./proximity-service/) | ✅ 参考实现完成 | Geohash搜索、商家管理、每日原子快照、有界缓存、独立HTTP副本与区域读切换 |
 
 ## 计划实现
 
 | 章节 | 主题 | 状态 |
 |------|------|------|
-| 16–29 | 后续章节任务 | 📋 已规划 |
+| 18 | 附近好友 | 🚧 实现中 |
+| 19–29 | 后续章节任务 | 📋 已规划 |
 
 ## 项目结构
 
@@ -117,6 +120,15 @@ sdi-implement/
 │   ├── tests/                  # 40 项测试，含真实远端服务
 │   ├── benchmarks/             # 媒体实测和故障恢复报告
 │   └── docs/design.md          # 架构及部署边界
+├── file-sync-system/            # 第16章：文件同步
+│   ├── README.md                # 使用及协议说明
+│   ├── README_CN.md             # 中文说明
+│   ├── src/file_sync/           # 加密存储、修订与设备客户端
+│   ├── tests/                  # 33 项正确性及故障测试
+│   ├── examples/               # 独立进程和网络演示
+│   ├── benchmarks/             # 增量带宽及同步实测
+│   └── docs/design.md          # 架构及边界
+├── proximity-service/          # 第17章：附近商家服务
 └── .gitignore
 ```
 

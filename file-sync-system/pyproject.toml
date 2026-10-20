@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "file-sync-system"
+version = "0.1.0"
+description = "Encrypted block storage, revisioned files and durable device synchronization."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["cryptography>=42,<52"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/file_sync"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

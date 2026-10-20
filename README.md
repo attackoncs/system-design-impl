@@ -19,12 +19,15 @@ Production-quality Python implementations of system design concepts from the boo
 | 13 | [Chat System](./chat-system/) | ✅ Done | Direct/group chat, Redis multi-node routing, Sentinel failover, shared presence, durable push retries, reconnect sync, measured load/fault tests |
 | 14 | [Search Autocomplete](./search-autocomplete-system/) | ✅ Done | Cached top-five trie, batch snapshots, filtering, range shards, HTTP replica recovery |
 | 15 | [Video Streaming](./video-streaming-system/) | ✅ Done | Resumable uploads, real FFmpeg/encrypted HLS, PostgreSQL failover, S3 shared storage, measured recovery |
+| 16 | [File Sync](./file-sync-system/) | ✅ Reference done | Resumable encrypted blocks, immutable revisions, conflict copies, ACLs, durable long polling and device delta sync |
+| 17 | [Proximity Service](./proximity-service/) | ✅ Reference done | Geohash search, owner CRUD, atomic daily snapshots, bounded caches, independent HTTP replicas and regional read failover |
 
 ## Planned
 
 | Chapter | Topic | Status |
 |---------|-------|--------|
-| 16–29 | Chapter tasks | 📋 Planned |
+| 18 | Nearby Friends | 🚧 In progress |
+| 19–29 | Chapter tasks | 📋 Planned |
 
 ## Project Structure
 
@@ -120,6 +123,15 @@ sdi-implement/
 │   ├── tests/                  # 40 tests, including real remote services
 │   ├── benchmarks/             # Media measurements and failover evidence
 │   └── docs/design.md          # Architecture and deployment boundaries
+├── file-sync-system/            # Ch.16: File Sync
+│   ├── README.md                # Usage and protocol
+│   ├── README_CN.md             # Chinese documentation
+│   ├── src/file_sync/           # Encrypted storage, revisions and device client
+│   ├── tests/                  # 33 correctness and fault tests
+│   ├── examples/               # Independent process/network demo
+│   ├── benchmarks/             # Delta bandwidth and sync measurements
+│   └── docs/design.md          # Architecture and boundaries
+├── proximity-service/          # Ch.17: Nearby business search
 └── .gitignore
 ```
 
