@@ -1,0 +1,27 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "processes": 6,
+  "metadata_shards": 2,
+  "data_replicas": 3,
+  "write_quorum": 2,
+  "objects": 40,
+  "clients": 1,
+  "object_size_range_bytes": [
+    4105,
+    4106
+  ],
+  "write_seconds": 2.944,
+  "writes_per_second": 13.59,
+  "put_p50_ms": 76.485,
+  "put_p95_ms": 79.572,
+  "reads_per_second": 19.46,
+  "get_p50_ms": 47.572,
+  "get_p95_ms": 70.359,
+  "packed_chunks_per_node": 40,
+  "pack_files_per_node": 1,
+  "pack_bytes_per_node": 166310,
+  "large_files_per_node": 0,
+  "unrecoverable_chunks": 0,
+  "scope": "sequential localhost HTTP writes to three independent nodes, two-ack publication; SQLite metadata and one catalog coordinator; no multi-host SLA"
+}

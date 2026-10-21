@@ -28,12 +28,13 @@ Production-quality Python implementations of system design concepts from the boo
 | 22 | [Ad Click Event Aggregation](./ad-click-aggregation-system/) | ✅ Reference done | Partitioned durable event log, salted hot ads, exact global Top N, late corrections, atomic checkpoints and replay reconciliation; 11 tests |
 | 23 | [Hotel Reservation](./hotel-reservation-system/) | ✅ Reference done | Hotel shards, atomic nightly inventory, bounded overbooking, price snapshots, idempotent bookings and simulated payment/refund recovery; 13 tests |
 | 24 | [Distributed Email](./distributed-email-service/) | ✅ Reference done | Local HTTP/SMTP delivery, immutable attachments, user shards, asynchronous metadata replicas, versioned read flags and fielded search; 9 tests |
+| 25 | [S3-like Object Storage](./object-storage-system/) | ✅ Reference done | Versioned buckets, resumable multipart uploads, packed chunks, sharded listing snapshots, three data replicas and repair/GC; 10 tests |
 
 ## Planned
 
 | Chapter | Topic | Status |
 |---------|-------|--------|
-| 25–29 | Chapter tasks | 📋 Planned |
+| 26–29 | Chapter tasks | 📋 Planned |
 
 ## Project Structure
 
@@ -145,6 +146,7 @@ sdi-implement/
 ├── ad-click-aggregation-system/  # Ch.22: Event-time click aggregation and reconciliation
 ├── hotel-reservation-system/    # Ch.23: Atomic hotel inventory and payment compensation
 ├── distributed-email-service/   # Ch.24: Local SMTP, metadata replicas and mailbox search
+├── object-storage-system/       # Ch.25: Versions, multipart uploads and data replica repair
 └── .gitignore
 ```
 
