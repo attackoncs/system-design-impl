@@ -1,8 +1,8 @@
 """Main Crawler orchestrator for the web crawler library.
 
 Coordinates the crawl pipeline: frontier → robots check → fetch → parse →
-deduplicate → extract links → filter → enqueue. Uses asyncio.Semaphore
-to limit concurrent downloads.
+deduplicate → extract links → filter → enqueue. Uses asyncio.Semaphore to limit
+concurrent downloads.
 """
 
 from __future__ import annotations
@@ -12,15 +12,15 @@ import inspect
 import logging
 from typing import Optional
 
-from web_crawler.config import CrawlerConfig
-from web_crawler.dedup import ContentSeen, URLSeen
-from web_crawler.exceptions import FetchError
-from web_crawler.fetcher import Fetcher, URLLibFetcher
-from web_crawler.filters import URLFilter
-from web_crawler.frontier import URLFrontier
-from web_crawler.models import CrawlResult, CrawlStatus, FrontierEntry, Priority
-from web_crawler.parser import ContentParser, LinkExtractor
-from web_crawler.robots import RobotsChecker
+import web_crawler.config
+import web_crawler.dedup
+import web_crawler.exceptions
+import web_crawler.fetcher
+import web_crawler.filters
+import web_crawler.frontier
+import web_crawler.models
+import web_crawler.parser
+import web_crawler.robots
 
 logger = logging.getLogger(__name__)
 
@@ -36,22 +36,24 @@ class Crawler:
 
     def __init__(
         self,
-        config: Optional[CrawlerConfig] = None,
-        fetcher: Optional[Fetcher] = None,
+        config: Optional[web_crawler.config.CrawlerConfig] = None,
+        fetcher: Optional[web_crawler.fetcher.Fetcher] = None,
     ) -> None:
-        self._config = config or CrawlerConfig()
-        self._fetcher = fetcher or URLLibFetcher()
-        self._frontier = URLFrontier(per_host_delay=self._config.per_host_delay)
-        self._url_seen = URLSeen()
-        self._content_seen = ContentSeen()
-        self._robots = RobotsChecker(
+        self._config = config or web_crawler.config.CrawlerConfig()
+        self._fetcher = fetcher or web_crawler.fetcher.URLLibFetcher()
+        self._frontier = web_crawler.frontier.URLFrontier(
+            per_host_delay=self._config.per_host_delay
+        )
+        self._url_seen = web_crawler.dedup.URLSeen()
+        self._content_seen = web_crawler.dedup.ContentSeen()
+        self._robots = web_crawler.robots.RobotsChecker(
             self._fetcher,
             user_agent=self._config.user_agent,
             cache_ttl=self._config.robots_cache_ttl,
         )
-        self._parser = ContentParser()
-        self._link_extractor = LinkExtractor()
-        self._url_filter = URLFilter(
+        self._parser = web_crawler.parser.ContentParser()
+        self._link_extractor = web_crawler.parser.LinkExtractor()
+        self._url_filter = web_crawler.filters.URLFilter(
             extension_blacklist=self._config.extension_blacklist,
             domain_whitelist=self._config.domain_whitelist,
             domain_blacklist=self._config.domain_blacklist,
@@ -59,10 +61,12 @@ class Crawler:
             custom_filters=self._config.custom_filters,
         )
         self._semaphore = asyncio.Semaphore(self._config.max_concurrent)
-        self._results: list[CrawlResult] = []
+        self._results: list[web_crawler.models.CrawlResult] = []
         self._pages_crawled = 0
 
-    async def crawl(self, seed_urls: list[str]) -> list[CrawlResult]:
+    async def crawl(
+        self, seed_urls: list[str]
+    ) -> list[web_crawler.models.CrawlResult]:
         """Run the crawl loop starting from seed URLs.
 
         Enqueues seed URLs with HIGH priority at depth 0, then enters
@@ -77,7 +81,9 @@ class Crawler:
         """
         # Enqueue seed URLs
         for url in seed_urls:
-            self._enqueue_url(url, priority=Priority.HIGH, depth=0)
+            self._enqueue_url(
+                url, priority=web_crawler.models.Priority.HIGH, depth=0
+            )
 
         # Crawl loop
         tasks: set[asyncio.Task] = set()
@@ -105,7 +111,7 @@ class Crawler:
                 continue
 
             # Wait for at least one task to complete
-            done, tasks = await asyncio.wait(
+            _, tasks = await asyncio.wait(
                 tasks, return_when=asyncio.FIRST_COMPLETED
             )
 
@@ -117,7 +123,9 @@ class Crawler:
 
         return self._results
 
-    async def _process_url(self, entry: FrontierEntry) -> None:
+    async def _process_url(
+        self, entry: web_crawler.models.FrontierEntry
+    ) -> None:
         """Process a single URL through the full pipeline.
 
         Pipeline steps:
@@ -133,14 +141,17 @@ class Crawler:
         Args:
             entry: The frontier entry containing URL and metadata.
         """
+
         async with self._semaphore:
             url = entry.url
             depth = entry.depth
 
             # 1. Check robots.txt
             if not await self._robots.is_allowed(url):
-                result = CrawlResult(
-                    url=url, status=CrawlStatus.DISALLOWED, depth=depth
+                result = web_crawler.models.CrawlResult(
+                    url=url,
+                    status=web_crawler.models.CrawlStatus.DISALLOWED,
+                    depth=depth,
                 )
                 self._results.append(result)
                 return
@@ -152,10 +163,10 @@ class Crawler:
                     headers={"User-Agent": self._config.user_agent},
                     timeout=self._config.request_timeout,
                 )
-            except FetchError as e:
-                result = CrawlResult(
+            except web_crawler.exceptions.FetchError as e:
+                result = web_crawler.models.CrawlResult(
                     url=url,
-                    status=CrawlStatus.ERROR,
+                    status=web_crawler.models.CrawlStatus.ERROR,
                     depth=depth,
                     error_message=e.reason,
                 )
@@ -165,9 +176,9 @@ class Crawler:
             # 3. Content deduplication
             fingerprint = self._content_seen.compute_fingerprint(response.body)
             if self._content_seen.is_seen(fingerprint):
-                result = CrawlResult(
+                result = web_crawler.models.CrawlResult(
                     url=url,
-                    status=CrawlStatus.DUPLICATE,
+                    status=web_crawler.models.CrawlStatus.DUPLICATE,
                     http_status=response.status_code,
                     content_fingerprint=fingerprint,
                     depth=depth,
@@ -180,9 +191,9 @@ class Crawler:
             # 4. Parse and validate HTML
             content_type = response.headers.get("Content-Type", "")
             if not self._parser.is_html(content_type, response.body):
-                result = CrawlResult(
+                result = web_crawler.models.CrawlResult(
                     url=url,
-                    status=CrawlStatus.ERROR,
+                    status=web_crawler.models.CrawlStatus.ERROR,
                     http_status=response.status_code,
                     depth=depth,
                     error_message="Non-HTML content",
@@ -196,9 +207,9 @@ class Crawler:
             links = self._link_extractor.extract(html_text, url)
 
             # 6. Build success result
-            result = CrawlResult(
+            result = web_crawler.models.CrawlResult(
                 url=url,
-                status=CrawlStatus.SUCCESS,
+                status=web_crawler.models.CrawlStatus.SUCCESS,
                 http_status=response.status_code,
                 content_length=len(response.body),
                 content_fingerprint=fingerprint,
@@ -215,9 +226,13 @@ class Crawler:
             # 8. Filter and enqueue new links
             for link in links:
                 if self._url_filter.accept(link):
-                    self._enqueue_url(link, Priority.MEDIUM, depth + 1)
+                    self._enqueue_url(
+                        link, web_crawler.models.Priority.MEDIUM, depth + 1
+                    )
 
-    def _enqueue_url(self, url: str, priority: Priority, depth: int) -> None:
+    def _enqueue_url(
+        self, url: str, priority: web_crawler.models.Priority, depth: int
+    ) -> None:
         """Enqueue a URL if not already seen and within max_depth.
 
         Checks max_depth enforcement and URL deduplication before
@@ -233,10 +248,14 @@ class Crawler:
         if self._url_seen.is_seen(url):
             return
         self._url_seen.add(url)
-        entry = FrontierEntry(url=url, priority=priority, depth=depth)
+        entry = web_crawler.models.FrontierEntry(
+            url=url, priority=priority, depth=depth
+        )
         self._frontier.put(entry)
 
-    async def _invoke_hooks(self, result: CrawlResult, content: str) -> None:
+    async def _invoke_hooks(
+        self, result: web_crawler.models.CrawlResult, content: str
+    ) -> None:
         """Invoke all registered content hooks for a successful crawl.
 
         Supports both synchronous and asynchronous hook callables.
@@ -266,7 +285,9 @@ class Crawler:
                         content=content,
                         links=result.links,
                     )
-            except Exception as e:
-                logger.error(
-                    f"Content hook error for {result.url}: {e}"
+            # Isolate this operation; record failures before continuing.
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                logging.getLogger(__name__).exception(
+                    "Failure isolated in %s", "_invoke_hooks"
                 )
+                logger.error("Content hook error for %s: %s", result.url, e)

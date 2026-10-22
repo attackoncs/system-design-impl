@@ -1,0 +1,70 @@
+{
+  "assumptions": {
+    "monthly_active_users": "300000000",
+    "daily_active_ratio": "0.5",
+    "writes_per_dau": "2",
+    "reads_per_dau": "0",
+    "peak_factor": "2",
+    "metadata_size": "0 B",
+    "media_fraction": "0.1",
+    "media_size": "1 MB",
+    "read_response_size": "0 B",
+    "retention_days": "1825",
+    "replicas": "1",
+    "compression_ratio": "1",
+    "index_overhead_ratio": "0",
+    "cache_fraction": "0",
+    "cache_item_size": "0 B",
+    "server_qps": "1000",
+    "utilization": "0.7",
+    "safety_factor": "1",
+    "spare_nodes": "0",
+    "mean_latency_ms": "100",
+    "availability_percent": "99.99"
+  },
+  "estimates": {
+    "daily_active_users": "150000000",
+    "writes_per_day": "300000000",
+    "reads_per_day": "0",
+    "average_write_qps": "3472.2222222222222222222222222222222222222222222222222222222222222222222222222222",
+    "average_read_qps": "0",
+    "peak_write_qps": "6944.4444444444444444444444444444444444444444444444444444444444444444444444444444",
+    "peak_read_qps": "0",
+    "peak_total_qps": "6944.4444444444444444444444444444444444444444444444444444444444444444444444444444",
+    "average_record_bytes": "100000",
+    "logical_bytes_per_day": "30000000000000",
+    "retained_logical_bytes": "54750000000000000",
+    "compressed_primary_bytes": "54750000000000000",
+    "physical_bytes_with_replicas_and_indexes": "54750000000000000",
+    "cache_bytes": "0",
+    "average_ingress_bits_per_second": "2777777777.7777777777777777777777777777777777777777777777777777777777777777777778",
+    "peak_ingress_bits_per_second": "5555555555.5555555555555555555555555555555555555555555555555555555555555555555556",
+    "average_egress_bits_per_second": "0",
+    "peak_egress_bits_per_second": "0",
+    "estimated_peak_inflight_at_mean_latency": "694.44444444444444444444444444444444444444444444444444444444444444444444444444444"
+  },
+  "nodes": {
+    "serving": 10,
+    "spare": 0,
+    "total": 10
+  },
+  "availability": {
+    "availability_percent": "99.99",
+    "downtime_seconds": {
+      "day": "8.64",
+      "week": "60.48",
+      "month_30_days": "259.2",
+      "year_365_days": "3153.6"
+    },
+    "assumption": "30-day month; 365-day year; no SLA exclusions"
+  },
+  "notes": [
+    "Estimates, not measurements or a capacity/SLA guarantee.",
+    "MB=10^6 bytes; MiB=2^20 bytes. Rates use bits/s, 8 bits per byte.",
+    "Storage compression applies before replica and index multipliers; index overhead is on each compressed replica.",
+    "Cache holds a fraction of retained write records at explicit cache-item size; no cache replication multiplier.",
+    "Network uses uncompressed average write/read payloads, excluding protocol, replication and cache traffic.",
+    "Node count assumes a supplied mixed-workload QPS benchmark; spare nodes are explicit, not an availability proof.",
+    "Inflight estimate applies Little's law to assumed peak arrival rate and mean latency, not p99."
+  ]
+}

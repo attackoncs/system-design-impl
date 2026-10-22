@@ -8,14 +8,12 @@ Tests cover:
 - Output SSTable is sorted
 """
 
-import asyncio
 import time
 
+import kv_store.storage.compaction
+import kv_store.storage.memtable
+import kv_store.storage.sstable
 import pytest
-
-from kv_store.storage.compaction import CompactionManager, CompactionStats
-from kv_store.storage.memtable import MemTable
-from kv_store.storage.sstable import SSTable
 
 
 @pytest.fixture
@@ -27,10 +25,15 @@ def sstable_dir(tmp_path):
 
 
 async def _create_sstable(
-    sstable_dir: str, entries: list[tuple[str, bytes | None, float, bool]], level: int = 0, suffix: str = ""
-) -> SSTable:
-    """Helper to create an SSTable from a list of (key, value, timestamp, is_tombstone) tuples."""
-    memtable = MemTable(size_threshold_bytes=1024 * 1024)
+    sstable_dir: str,
+    entries: list[tuple[str, bytes | None, float, bool]],
+    level: int = 0,
+    suffix: str = "",
+) -> kv_store.storage.sstable.SSTable:
+    """Helper to create an SSTable from a list of (key, value, timestamp,
+    is_tombstone) tuples.
+    """
+    memtable = kv_store.storage.memtable.MemTable(size_threshold_bytes=1024 * 1024)
     for key, value, timestamp, is_tombstone in entries:
         if is_tombstone:
             memtable.delete(key, timestamp)
@@ -38,12 +41,14 @@ async def _create_sstable(
             memtable.put(key, value, timestamp)
 
     file_path = f"{sstable_dir}/test_{suffix or id(entries)}.sst"
-    return await SSTable.create_from_memtable(memtable, file_path, level=level)
+    return await kv_store.storage.sstable.SSTable.create_from_memtable(memtable, file_path, level=level)
 
 
 @pytest.mark.asyncio
 async def test_merge_non_overlapping_keys(sstable_dir):
-    """Merging two SSTables with non-overlapping keys produces a sorted union."""
+    """Merging two SSTables with non-overlapping keys produces a sorted
+    union.
+    """
     sst1 = await _create_sstable(
         sstable_dir,
         [("a", b"val_a", 1.0, False), ("b", b"val_b", 1.0, False)],
@@ -57,7 +62,7 @@ async def test_merge_non_overlapping_keys(sstable_dir):
         suffix="sst2",
     )
 
-    manager = CompactionManager(sstable_dir, compaction_threshold=4)
+    manager = kv_store.storage.compaction.CompactionManager(sstable_dir, compaction_threshold=4)
     result = await manager.compact([sst1, sst2], level=0)
 
     # Verify all keys are present and sorted
@@ -87,7 +92,7 @@ async def test_merge_duplicate_keys_keeps_newest(sstable_dir):
         suffix="dup2",
     )
 
-    manager = CompactionManager(sstable_dir, compaction_threshold=4)
+    manager = kv_store.storage.compaction.CompactionManager(sstable_dir, compaction_threshold=4)
     result = await manager.compact([sst1, sst2], level=0)
 
     entries = list(result.entries())
@@ -118,14 +123,21 @@ async def test_tombstones_removed_after_grace_period(sstable_dir):
     sst2 = await _create_sstable(
         sstable_dir,
         [
-            ("recent_dead_key", None, recent_time, True),  # recent tombstone, keep it
+            (
+                "recent_dead_key",
+                None,
+                recent_time,
+                True,
+            ),  # recent tombstone, keep it
         ],
         level=0,
         suffix="tomb2",
     )
 
     # Use a short grace period so old tombstones are removed
-    manager = CompactionManager(sstable_dir, compaction_threshold=4, tombstone_grace_seconds=3600)
+    manager = kv_store.storage.compaction.CompactionManager(
+        sstable_dir, compaction_threshold=4, tombstone_grace_seconds=3600
+    )
     result = await manager.compact([sst1, sst2], level=0)
 
     entries = list(result.entries())
@@ -145,7 +157,9 @@ async def test_tombstones_removed_after_grace_period(sstable_dir):
 
 @pytest.mark.asyncio
 async def test_compaction_triggers_at_threshold(sstable_dir):
-    """maybe_compact triggers compaction when SSTables at a level exceed threshold."""
+    """maybe_compact triggers compaction when SSTables at a level exceed
+    threshold.
+    """
     # Create 4 SSTables at level 0 (threshold is 4)
     sstables = []
     for i in range(4):
@@ -157,7 +171,7 @@ async def test_compaction_triggers_at_threshold(sstable_dir):
         )
         sstables.append(sst)
 
-    manager = CompactionManager(sstable_dir, compaction_threshold=4)
+    manager = kv_store.storage.compaction.CompactionManager(sstable_dir, compaction_threshold=4)
     result = await manager.maybe_compact(sstables)
 
     # Compaction should have occurred
@@ -181,7 +195,7 @@ async def test_no_compaction_below_threshold(sstable_dir):
         )
         sstables.append(sst)
 
-    manager = CompactionManager(sstable_dir, compaction_threshold=4)
+    manager = kv_store.storage.compaction.CompactionManager(sstable_dir, compaction_threshold=4)
     result = await manager.maybe_compact(sstables)
 
     assert result is None
@@ -204,7 +218,7 @@ async def test_output_sstable_is_sorted(sstable_dir):
         suffix="sort2",
     )
 
-    manager = CompactionManager(sstable_dir, compaction_threshold=4)
+    manager = kv_store.storage.compaction.CompactionManager(sstable_dir, compaction_threshold=4)
     result = await manager.compact([sst1, sst2], level=0)
 
     entries = list(result.entries())
@@ -229,8 +243,8 @@ async def test_compaction_stats(sstable_dir):
         suffix="stats2",
     )
 
-    manager = CompactionManager(sstable_dir, compaction_threshold=4)
-    result = await manager.compact([sst1, sst2], level=0)
+    manager = kv_store.storage.compaction.CompactionManager(sstable_dir, compaction_threshold=4)
+    await manager.compact([sst1, sst2], level=0)
 
     stats = manager.get_compaction_stats()
     assert stats.input_sstables == 2
@@ -244,14 +258,16 @@ async def test_compaction_stats(sstable_dir):
 @pytest.mark.asyncio
 async def test_compaction_empty_sstable_list(sstable_dir):
     """maybe_compact with empty list returns None."""
-    manager = CompactionManager(sstable_dir, compaction_threshold=4)
+    manager = kv_store.storage.compaction.CompactionManager(sstable_dir, compaction_threshold=4)
     result = await manager.maybe_compact([])
     assert result is None
 
 
 @pytest.mark.asyncio
 async def test_compaction_preserves_recent_tombstones(sstable_dir):
-    """Recent tombstones within grace period are preserved in compacted output."""
+    """Recent tombstones within grace period are preserved in compacted
+    output.
+    """
     now = time.time()
 
     sst = await _create_sstable(
@@ -264,7 +280,7 @@ async def test_compaction_preserves_recent_tombstones(sstable_dir):
         suffix="recent_tomb",
     )
 
-    manager = CompactionManager(
+    manager = kv_store.storage.compaction.CompactionManager(
         sstable_dir, compaction_threshold=4, tombstone_grace_seconds=3600
     )
     result = await manager.compact([sst], level=0)
@@ -302,7 +318,7 @@ async def test_maybe_compact_selects_lowest_level(sstable_dir):
         level1_sstables.append(sst)
 
     all_sstables = level0_sstables + level1_sstables
-    manager = CompactionManager(sstable_dir, compaction_threshold=4)
+    manager = kv_store.storage.compaction.CompactionManager(sstable_dir, compaction_threshold=4)
     result = await manager.maybe_compact(all_sstables)
 
     # Should compact level 0 (4 SSTables) into level 1

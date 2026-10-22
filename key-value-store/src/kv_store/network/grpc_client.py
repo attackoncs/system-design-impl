@@ -1,4 +1,4 @@
-"""gRPC client for inter-node communication in the distributed key-value store.
+"""GRPC client for inter-node communication in the distributed key-value store.
 
 Provides connection pooling (one channel per target address) and methods for
 all inter-node RPCs: Put, Get, Delete, Replicate, GossipExchange,
@@ -15,9 +15,8 @@ from typing import Optional
 import grpc
 import grpc.aio
 
-from kv_store.network import kvstore_pb2
-from kv_store.network import kvstore_pb2_grpc
-from kv_store.replication.vector_clock import VectorClock
+from kv_store.network import kvstore_pb2, kvstore_pb2_grpc
+from kv_store.replication import vector_clock as replication_vector_clock
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +38,9 @@ class NodeUnavailableError(Exception):
         super().__init__(msg)
 
 
-def _vector_clock_to_proto(clock: VectorClock) -> kvstore_pb2.VectorClockProto:
+def _vector_clock_to_proto(
+    clock: replication_vector_clock.VectorClock,
+) -> kvstore_pb2.VectorClockProto:
     """Convert a VectorClock to its protobuf representation."""
     proto = kvstore_pb2.VectorClockProto()
     for node_id, counter in clock.to_dict().items():
@@ -48,17 +49,19 @@ def _vector_clock_to_proto(clock: VectorClock) -> kvstore_pb2.VectorClockProto:
     return proto
 
 
-def _proto_to_vector_clock(proto: kvstore_pb2.VectorClockProto) -> VectorClock:
+def _proto_to_vector_clock(
+    proto: kvstore_pb2.VectorClockProto,
+) -> replication_vector_clock.VectorClock:
     """Convert a VectorClockProto to a VectorClock instance."""
     entries = {entry.node_id: entry.counter for entry in proto.entries}
-    return VectorClock.from_dict(entries)
+    return replication_vector_clock.VectorClock.from_dict(entries)
 
 
 class GRPCClient:
-    """gRPC client with connection pooling for inter-node communication.
+    """GRPC client with connection pooling for inter-node communication.
 
-    Maintains a pool of async channels keyed by target address.
-    All methods raise NodeUnavailableError on connection failures.
+    Maintains a pool of async channels keyed by target address. All methods
+    raise NodeUnavailableError on connection failures.
     """
 
     def __init__(
@@ -114,7 +117,7 @@ class GRPCClient:
         target: str,
         key: str,
         value: bytes,
-        vector_clock: VectorClock,
+        vector_clock: replication_vector_clock.VectorClock,
     ) -> bool:
         """Send a Put request to a target node.
 
@@ -146,7 +149,7 @@ class GRPCClient:
         self,
         target: str,
         key: str,
-    ) -> Optional[tuple[bytes, VectorClock]]:
+    ) -> Optional[tuple[bytes, replication_vector_clock.VectorClock]]:
         """Send a Get request to a target node.
 
         Args:
@@ -177,7 +180,7 @@ class GRPCClient:
         target: str,
         key: str,
         value: bytes,
-        vector_clock: VectorClock,
+        vector_clock: replication_vector_clock.VectorClock,
         timestamp: float,
         is_tombstone: bool = False,
     ) -> bool:
@@ -241,7 +244,11 @@ class GRPCClient:
                     node_id=member.node_id,
                     address=member.address,
                     heartbeat_counter=member.heartbeat_counter,
-                    status=member.status.value if hasattr(member.status, "value") else str(member.status),
+                    status=(
+                        member.status.value
+                        if hasattr(member.status, "value")
+                        else str(member.status)
+                    ),
                 )
                 request.members.append(member_proto)
 
@@ -250,12 +257,14 @@ class GRPCClient:
             # Convert response members back to a simple list of dicts
             remote_members = []
             for member_proto in response.members:
-                remote_members.append({
-                    "node_id": member_proto.node_id,
-                    "address": member_proto.address,
-                    "heartbeat_counter": member_proto.heartbeat_counter,
-                    "status": member_proto.status,
-                })
+                remote_members.append(
+                    {
+                        "node_id": member_proto.node_id,
+                        "address": member_proto.address,
+                        "heartbeat_counter": member_proto.heartbeat_counter,
+                        "status": member_proto.status,
+                    }
+                )
 
             return remote_members
         except grpc.RpcError as e:
@@ -272,7 +281,8 @@ class GRPCClient:
 
         Args:
             target: Target node address (host:port).
-            hint: HintedData object with key, value, vector_clock, timestamp, is_tombstone.
+            hint: HintedData object with key, value, vector_clock, timestamp,
+                is_tombstone.
 
         Returns:
             True if delivery was successful.
@@ -286,16 +296,27 @@ class GRPCClient:
             # Convert vector clock
             vc_proto = kvstore_pb2.VectorClockProto()
             if hasattr(hint, "vector_clock") and hint.vector_clock is not None:
-                if isinstance(hint.vector_clock, VectorClock):
+                if isinstance(
+                    hint.vector_clock,
+                    replication_vector_clock.VectorClock,
+                ):
                     vc_proto = _vector_clock_to_proto(hint.vector_clock)
 
             request = kvstore_pb2.HintedHandoffRequest(
-                target_node_id=hint.target_node_id if hasattr(hint, "target_node_id") else "",
+                target_node_id=(
+                    hint.target_node_id
+                    if hasattr(hint, "target_node_id")
+                    else ""
+                ),
                 key=hint.key,
                 value=hint.value if hint.value else b"",
                 vector_clock=vc_proto,
                 timestamp=hint.timestamp if hasattr(hint, "timestamp") else 0.0,
-                is_tombstone=hint.is_tombstone if hasattr(hint, "is_tombstone") else False,
+                is_tombstone=(
+                    hint.is_tombstone
+                    if hasattr(hint, "is_tombstone")
+                    else False
+                ),
             )
             response = await stub.HintedHandoff(request, timeout=self._timeout)
             return response.success
@@ -332,12 +353,14 @@ class GRPCClient:
             differing_buckets = list(response.differing_buckets)
             key_value_pairs = []
             for kv in response.key_value_pairs:
-                key_value_pairs.append({
-                    "key": kv.key,
-                    "value": kv.value,
-                    "timestamp": kv.timestamp,
-                    "is_tombstone": kv.is_tombstone,
-                })
+                key_value_pairs.append(
+                    {
+                        "key": kv.key,
+                        "value": kv.value,
+                        "timestamp": kv.timestamp,
+                        "is_tombstone": kv.is_tombstone,
+                    }
+                )
 
             return (differing_buckets, key_value_pairs)
         except grpc.RpcError as e:

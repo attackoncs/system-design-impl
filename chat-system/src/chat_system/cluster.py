@@ -1,20 +1,24 @@
 """CLI for chat nodes, discovery, credential provisioning and push workers."""
+
 import argparse
 import asyncio
+import contextlib
+import dataclasses
 import json
+import logging
 import os
-from contextlib import suppress
-from dataclasses import asdict
-from urllib.parse import parse_qs, urlsplit
+import urllib.parse
 
-from .distributed import DistributedChatService
-from .models import ChatConfig, ChatError
-from .push import HTTPWebhookNotifier, PushWorker
-from .redis_backend import RedisBackend
-from .transport import WebSocketChatServer
+import chat_system.distributed
+import chat_system.models
+import chat_system.push
+import chat_system.redis_backend
+import chat_system.transport
 
 
 class DiscoveryHTTPServer:
+    """An asynchronous HTTP endpoint exposing capacity-aware chat discovery."""
+
     def __init__(self, backend):
         self.backend = backend
 
@@ -26,30 +30,51 @@ class DiscoveryHTTPServer:
                 raise ValueError("headers too large")
             line = request.split(b"\r\n", 1)[0].decode("ascii")
             method, target, _ = line.split(" ")
-            parsed = urlsplit(target)
+            parsed = urllib.parse.urlsplit(target)
             if method == "GET" and parsed.path == "/discover":
-                region = parse_qs(parsed.query).get("region", [None])[0]
+                region = urllib.parse.parse_qs(parsed.query).get(
+                    "region", [None]
+                )[0]
                 server = await self.backend.select(region)
-                status, body = "200 OK", asdict(server)
+                status, body = "200 OK", dataclasses.asdict(server)
             elif method == "GET" and parsed.path == "/health":
                 await self.backend.redis.ping()
                 status, body = "200 OK", {"ok": True}
             else:
                 status, body = "404 Not Found", {"error": "not found"}
-        except (ChatError, ConnectionError):
-            status, body = "503 Service Unavailable", {"error": "no available chat server"}
-        except (ValueError, asyncio.TimeoutError, asyncio.IncompleteReadError, asyncio.LimitOverrunError):
+        except (chat_system.models.ChatError, ConnectionError):
+            status, body = "503 Service Unavailable", {
+                "error": "no available chat server"
+            }
+        except (
+            ValueError,
+            asyncio.TimeoutError,
+            asyncio.IncompleteReadError,
+            asyncio.LimitOverrunError,
+        ):
             pass
-        except Exception:
-            status, body = "503 Service Unavailable", {"error": "service unavailable"}
+        # Isolate this operation; record failures before continuing.
+        except Exception:  # pylint: disable=broad-exception-caught
+            logging.getLogger(__name__).exception(
+                "Failure isolated in %s", "handler"
+            )
+            status, body = "503 Service Unavailable", {
+                "error": "service unavailable"
+            }
         try:
             payload = json.dumps(body).encode()
-            writer.write((f"HTTP/1.1 {status}\r\nContent-Type: application/json\r\n"
-                          f"Content-Length: {len(payload)}\r\nConnection: close\r\n\r\n").encode() + payload)
+            writer.write(
+                (
+                    f"HTTP/1.1 {status}\r\nContent-Type:"
+                    " application/json\r\nContent-Length:"
+                    f" {len(payload)}\r\nConnection: close\r\n\r\n"
+                ).encode()
+                + payload
+            )
             await writer.drain()
         finally:
             writer.close()
-            with suppress(ConnectionError):
+            with contextlib.suppress(ConnectionError):
                 await writer.wait_closed()
 
     async def start(self, host="127.0.0.1", port=8080):
@@ -68,17 +93,33 @@ async def run(args):
                 raise ValueError("set CHAT_TOKEN for revocation")
             await backend.revoke(token)
         elif args.command == "discover":
-            print(json.dumps(asdict(await backend.select(args.region))), flush=True)
+            print(
+                json.dumps(
+                    dataclasses.asdict(await backend.select(args.region))
+                ),
+                flush=True,
+            )
         elif args.command == "discovery":
-            server = await DiscoveryHTTPServer(backend).start(args.host, args.port)
+            server = await DiscoveryHTTPServer(backend).start(
+                args.host, args.port
+            )
             async with server:
                 print("Discovery service ready", flush=True)
                 await server.serve_forever()
         elif args.command == "node":
-            service = DistributedChatService(backend, args.node_id, args.public_url, args.region,
-                                              args.capacity, args.lease, args.poll,
-                                              ChatConfig(heartbeat_timeout=args.heartbeat_timeout))
-            adapter = WebSocketChatServer(service)
+            service = chat_system.distributed.DistributedChatService(
+                backend,
+                args.node_id,
+                args.public_url,
+                args.region,
+                args.capacity,
+                args.lease,
+                args.poll,
+                chat_system.models.ChatConfig(
+                    heartbeat_timeout=args.heartbeat_timeout
+                ),
+            )
+            adapter = chat_system.transport.WebSocketChatServer(service)
             # Open socket before publishing the node's lease.
             async with adapter.running(args.host, args.port):
                 await service.start()
@@ -86,10 +127,21 @@ async def run(args):
                 await asyncio.Future()
         elif args.command == "worker":
             url = os.environ.get("CHAT_PUSH_URL")
-            notifier = HTTPWebhookNotifier(url, os.environ.get("CHAT_PUSH_TOKEN")) if url else None
+            notifier = (
+                chat_system.push.HTTPWebhookNotifier(
+                    url, os.environ.get("CHAT_PUSH_TOKEN")
+                )
+                if url
+                else None
+            )
             print("Push worker ready", flush=True)
-            await PushWorker(backend, notifier, reclaim_idle_ms=args.reclaim_ms,
-                             retry_base=args.retry_base, max_attempts=args.max_attempts).run()
+            await chat_system.push.PushWorker(
+                backend,
+                notifier,
+                reclaim_idle_ms=args.reclaim_ms,
+                retry_base=args.retry_base,
+                max_attempts=args.max_attempts,
+            ).run()
     finally:
         if service is not None:
             await service.close()
@@ -98,11 +150,22 @@ async def run(args):
 
 def parser():
     root = argparse.ArgumentParser(description=__doc__)
-    root.add_argument("--redis-url", default=os.environ.get("CHAT_REDIS_URL", "redis://127.0.0.1:6379/0"))
-    root.add_argument("--namespace", default=os.environ.get("CHAT_NAMESPACE", "chat"))
-    root.add_argument("--sentinels", default=os.environ.get("CHAT_REDIS_SENTINELS", ""),
-                      help="comma separated host:port endpoints")
-    root.add_argument("--master-name", default=os.environ.get("CHAT_REDIS_MASTER", "chat-primary"))
+    root.add_argument(
+        "--redis-url",
+        default=os.environ.get("CHAT_REDIS_URL", "redis://127.0.0.1:6379/0"),
+    )
+    root.add_argument(
+        "--namespace", default=os.environ.get("CHAT_NAMESPACE", "chat")
+    )
+    root.add_argument(
+        "--sentinels",
+        default=os.environ.get("CHAT_REDIS_SENTINELS", ""),
+        help="comma separated host:port endpoints",
+    )
+    root.add_argument(
+        "--master-name",
+        default=os.environ.get("CHAT_REDIS_MASTER", "chat-primary"),
+    )
     root.add_argument("--wait-replicas", type=int, default=None)
     root.add_argument("--wait-timeout-ms", type=int, default=1000)
     commands = root.add_subparsers(dest="command", required=True)
@@ -137,12 +200,21 @@ def make_backend(args):
         for value in args.sentinels.split(","):
             host, port = value.strip().rsplit(":", 1)
             endpoints.append((host, int(port)))
-        return RedisBackend.from_sentinel(endpoints, args.master_name, args.namespace,
+        return chat_system.redis_backend.RedisBackend.from_sentinel(
+            endpoints,
+            args.master_name,
+            args.namespace,
             password=os.environ.get("CHAT_REDIS_PASSWORD"),
             sentinel_password=os.environ.get("CHAT_SENTINEL_PASSWORD"),
-            wait_replicas=1 if replicas is None else replicas, wait_timeout_ms=args.wait_timeout_ms)
-    return RedisBackend.from_url(args.redis_url, args.namespace,
-        wait_replicas=0 if replicas is None else replicas, wait_timeout_ms=args.wait_timeout_ms)
+            wait_replicas=1 if replicas is None else replicas,
+            wait_timeout_ms=args.wait_timeout_ms,
+        )
+    return chat_system.redis_backend.RedisBackend.from_url(
+        args.redis_url,
+        args.namespace,
+        wait_replicas=0 if replicas is None else replicas,
+        wait_timeout_ms=args.wait_timeout_ms,
+    )
 
 
 def main():

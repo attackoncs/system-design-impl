@@ -1,9 +1,9 @@
 """Fanout workers for async news feed distribution.
 
 FanoutWorker consumes FanoutTask items from a MessageQueue and appends
-FeedEntry records to each target user's NewsFeedCache. WorkerPool manages
-a configurable number of concurrent worker asyncio tasks with graceful
-shutdown support.
+FeedEntry records to each target user's NewsFeedCache. WorkerPool manages a
+configurable number of concurrent worker asyncio tasks with graceful shutdown
+support.
 """
 
 from __future__ import annotations
@@ -12,9 +12,9 @@ import asyncio
 import logging
 from typing import List, Optional
 
-from news_feed_system.models import FanoutTask, FeedEntry
-from news_feed_system.news_feed_cache import NewsFeedCache
-from news_feed_system.queue import MessageQueue
+import news_feed_system.models
+import news_feed_system.news_feed_cache
+import news_feed_system.queue
 
 logger = logging.getLogger(__name__)
 
@@ -37,16 +37,16 @@ class FanoutWorker:
 
     def __init__(
         self,
-        queue: MessageQueue,
-        cache: NewsFeedCache,
+        queue: news_feed_system.queue.MessageQueue,
+        cache: news_feed_system.news_feed_cache.NewsFeedCache,
         worker_id: int = 0,
     ) -> None:
         self._queue = queue
         self._cache = cache
         self._worker_id = worker_id
-        self._task: Optional[asyncio.Task] = None  # type: ignore[type-arg]
+        self._task: Optional[asyncio.Task] = None
 
-    async def _run(self, sentinel_queue: asyncio.Queue) -> None:  # type: ignore[type-arg]
+    async def _run(self, sentinel_queue: asyncio.Queue) -> None:
         """Main worker loop.
 
         Dequeues items from the shared sentinel_queue (which wraps the
@@ -63,11 +63,13 @@ class FanoutWorker:
                 if item is _STOP_SENTINEL:
                     # Put the sentinel back so other workers can also stop.
                     await sentinel_queue.put(_STOP_SENTINEL)
-                    logger.debug("Worker %d received stop sentinel", self._worker_id)
+                    logger.debug(
+                        "Worker %d received stop sentinel", self._worker_id
+                    )
                     return
 
-                task: FanoutTask = item
-                entry = FeedEntry(
+                task: news_feed_system.models.FanoutTask = item
+                entry = news_feed_system.models.FeedEntry(
                     post_id=task.post_id,
                     author_id=task.author_id,
                     timestamp=task.timestamp,
@@ -84,7 +86,7 @@ class FanoutWorker:
             finally:
                 sentinel_queue.task_done()
 
-    def start(self, sentinel_queue: asyncio.Queue) -> asyncio.Task:  # type: ignore[type-arg]
+    def start(self, sentinel_queue: asyncio.Queue) -> asyncio.Task:
         """Start the worker as an asyncio task.
 
         Args:
@@ -98,7 +100,7 @@ class FanoutWorker:
         return self._task
 
     @property
-    def task(self) -> Optional[asyncio.Task]:  # type: ignore[type-arg]
+    def task(self) -> Optional[asyncio.Task]:
         """The underlying asyncio.Task, or None if not started."""
         return self._task
 
@@ -118,8 +120,8 @@ class WorkerPool:
 
     def __init__(
         self,
-        queue: MessageQueue,
-        cache: NewsFeedCache,
+        queue: news_feed_system.queue.MessageQueue,
+        cache: news_feed_system.news_feed_cache.NewsFeedCache,
         num_workers: int = 4,
     ) -> None:
         if num_workers <= 0:
@@ -130,15 +132,15 @@ class WorkerPool:
         self._workers: List[FanoutWorker] = []
         # Internal asyncio.Queue that wraps the MessageQueue items and also
         # accepts the sentinel for shutdown signalling.
-        self._sentinel_queue: asyncio.Queue = asyncio.Queue()  # type: ignore[type-arg]
+        self._sentinel_queue: asyncio.Queue = asyncio.Queue()
         self._running = False
-        self._pump_task: Optional[asyncio.Task] = None  # type: ignore[type-arg]
+        self._pump_task: Optional[asyncio.Task] = None
 
     async def _pump(self) -> None:
         """Pump items from MessageQueue into the internal sentinel_queue.
 
-        Runs until cancelled (on stop). This decouples the MessageQueue
-        (which only holds FanoutTask) from the sentinel mechanism.
+        Runs until cancelled (on stop). This decouples the MessageQueue (which
+        only holds FanoutTask) from the sentinel mechanism.
         """
         while True:
             try:

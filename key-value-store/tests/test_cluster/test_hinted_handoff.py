@@ -1,24 +1,22 @@
 """Tests for the hinted handoff manager."""
 
-import asyncio
-from unittest.mock import AsyncMock
+import unittest.mock
 
+import kv_store.cluster.hinted_handoff
 import pytest
-
-from kv_store.cluster.hinted_handoff import HintedData, HintedHandoffManager
 
 
 @pytest.fixture
 def deliver_func():
     """Create a mock deliver function that succeeds."""
-    mock = AsyncMock(return_value=True)
+    mock = unittest.mock.AsyncMock(return_value=True)
     return mock
 
 
 @pytest.fixture
 def manager(deliver_func):
     """Create a HintedHandoffManager instance."""
-    return HintedHandoffManager(
+    return kv_store.cluster.hinted_handoff.HintedHandoffManager(
         node_id="node-1",
         deliver_func=deliver_func,
         handoff_interval=1.0,
@@ -26,9 +24,9 @@ def manager(deliver_func):
     )
 
 
-def make_hint(target: str = "node-2", key: str = "key1") -> HintedData:
+def make_hint(target: str = "node-2", key: str = "key1") -> kv_store.cluster.hinted_handoff.HintedData:
     """Helper to create a HintedData instance."""
-    return HintedData(
+    return kv_store.cluster.hinted_handoff.HintedData(
         target_node_id=target,
         key=key,
         value=b"value1",
@@ -141,7 +139,7 @@ class TestHandoffLoop:
     async def test_handoff_loop_delivers_to_alive_nodes(self, deliver_func):
         """Handoff loop should attempt delivery for alive nodes."""
         alive_nodes = {"node-2"}
-        manager = HintedHandoffManager(
+        manager = kv_store.cluster.hinted_handoff.HintedHandoffManager(
             node_id="node-1",
             deliver_func=deliver_func,
             handoff_interval=0.1,
@@ -158,7 +156,7 @@ class TestHandoffLoop:
 
     async def test_handoff_loop_skips_dead_nodes(self, deliver_func):
         """Handoff loop should skip nodes that are not alive."""
-        manager = HintedHandoffManager(
+        manager = kv_store.cluster.hinted_handoff.HintedHandoffManager(
             node_id="node-1",
             deliver_func=deliver_func,
             handoff_interval=0.1,

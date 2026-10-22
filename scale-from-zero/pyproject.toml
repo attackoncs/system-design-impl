@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scale-from-zero-reference"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = []
+description = "Staged real-HTTP scaling lab: stateless web, cache, replicas, sharding and jobs"
+
+[project.scripts]
+scale-from-zero = "scale_from_zero.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

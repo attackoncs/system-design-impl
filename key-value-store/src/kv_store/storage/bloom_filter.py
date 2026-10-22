@@ -1,7 +1,7 @@
 """Bloom filter implementation for SSTable key lookups.
 
-A space-efficient probabilistic data structure used to test whether a key
-is a member of a set. False positives are possible, but false negatives are not.
+A space-efficient probabilistic data structure used to test whether a key is a
+member of a set. False positives are possible, but false negatives are not.
 This is used in the LSM-tree read path to avoid unnecessary SSTable disk reads.
 
 Covers: FR-10.2, FR-10.4
@@ -17,7 +17,8 @@ class BloomFilter:
     """Space-efficient probabilistic data structure for set membership testing.
 
     Used to avoid unnecessary SSTable disk reads. A negative result guarantees
-    the key is not in the SSTable; a positive result means the key might be present.
+    the key is not in the SSTable; a positive result means the key might be
+    present.
 
     Uses double hashing to simulate multiple independent hash functions:
         hash_i(key) = (hash1(key) + i * hash2(key)) % m
@@ -42,7 +43,8 @@ class BloomFilter:
             false_positive_rate: Target false positive probability (default 1%).
 
         Raises:
-            ValueError: If expected_items < 1 or false_positive_rate not in (0, 1).
+            ValueError: If expected_items < 1 or false_positive_rate not in (0,
+                1).
 
         The bit array size and number of hash functions are computed
         from these parameters using the optimal formulas:
@@ -51,8 +53,10 @@ class BloomFilter:
         """
         if expected_items < 1:
             raise ValueError("expected_items must be at least 1")
-        if not (0 < false_positive_rate < 1):
-            raise ValueError("false_positive_rate must be between 0 and 1 (exclusive)")
+        if not 0 < false_positive_rate < 1:
+            raise ValueError(
+                "false_positive_rate must be between 0 and 1 (exclusive)"
+            )
 
         self._expected_items = expected_items
         self._false_positive_rate = false_positive_rate
@@ -114,7 +118,7 @@ class BloomFilter:
         """Set a bit at the given position in the bit array."""
         byte_index = position // 8
         bit_offset = position % 8
-        self._bit_array[byte_index] |= (1 << bit_offset)
+        self._bit_array[byte_index] |= 1 << bit_offset
 
     def _get_bit(self, position: int) -> bool:
         """Get the value of a bit at the given position."""
@@ -185,23 +189,28 @@ class BloomFilter:
         Raises:
             ValueError: If the data is corrupted or has an unsupported version.
         """
-        # Header format: version(1) + expected_items(4) + fp_rate(8) + size_bits(4) + num_hashes(2) + array_len(4) = 23 bytes
+        # Header format: version(1) + expected_items(4) + fp_rate(8) +
+        # size_bits(4) + num_hashes(2) + array_len(4) = 23 bytes
         header_format = "<BIdIHI"
         header_size = struct.calcsize(header_format)
         if len(data) < header_size:
-            raise ValueError("Data too short to contain a valid Bloom filter header")
+            raise ValueError(
+                "Data too short to contain a valid Bloom filter header"
+            )
 
-        version, expected_items, fp_rate, size_bits, num_hashes, array_len = struct.unpack(
-            header_format, data[:header_size]
+        version, expected_items, fp_rate, size_bits, num_hashes, array_len = (
+            struct.unpack(header_format, data[:header_size])
         )
 
         if version != cls._FORMAT_VERSION:
-            raise ValueError(f"Unsupported Bloom filter format version: {version}")
+            raise ValueError(
+                f"Unsupported Bloom filter format version: {version}"
+            )
 
         if len(data) < header_size + array_len:
             raise ValueError("Data too short to contain the full bit array")
 
-        bit_array_data = data[header_size: header_size + array_len]
+        bit_array_data = data[header_size : header_size + array_len]
 
         # Reconstruct the filter without recomputing parameters
         bf = cls.__new__(cls)

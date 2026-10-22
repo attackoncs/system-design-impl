@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import List, Dict, Optional
-from urllib.parse import urlparse
+import dataclasses
+import enum
+import urllib.parse
+from typing import Dict, List, Optional
 
 
-class CrawlStatus(Enum):
+class CrawlStatus(enum.Enum):
     """Status of a single URL crawl attempt."""
 
     SUCCESS = "success"
@@ -18,7 +18,7 @@ class CrawlStatus(Enum):
     FILTERED = "filtered"
 
 
-class Priority(Enum):
+class Priority(enum.Enum):
     """URL crawl priority levels for the front queue."""
 
     HIGH = 0
@@ -26,7 +26,7 @@ class Priority(Enum):
     LOW = 2
 
 
-@dataclass
+@dataclasses.dataclass
 class FrontierEntry:
     """An entry in the URL frontier with metadata."""
 
@@ -37,14 +37,14 @@ class FrontierEntry:
 
     def __post_init__(self) -> None:
         if not self.host:
-            self.host = urlparse(self.url).netloc.lower()
+            self.host = urllib.parse.urlparse(self.url).netloc.lower()
 
     def __lt__(self, other: "FrontierEntry") -> bool:
         """Compare by priority value for heapq ordering."""
         return self.priority.value < other.priority.value
 
 
-@dataclass
+@dataclasses.dataclass
 class CrawlResult:
     """Result of crawling a single URL."""
 
@@ -53,7 +53,7 @@ class CrawlResult:
     http_status: Optional[int] = None
     content_length: Optional[int] = None
     content_fingerprint: Optional[str] = None
-    links: List[str] = field(default_factory=list)
+    links: List[str] = dataclasses.field(default_factory=list)
     depth: int = 0
     error_message: Optional[str] = None
-    headers: Dict[str, str] = field(default_factory=dict)
+    headers: Dict[str, str] = dataclasses.field(default_factory=dict)

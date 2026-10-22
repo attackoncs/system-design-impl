@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+import abc
 import asyncio
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
+import contextlib
+import dataclasses
+import urllib.error
+import urllib.request
 from typing import Dict, Optional
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
-from web_crawler.exceptions import FetchError
+import web_crawler.exceptions
 
 
-@dataclass
+@dataclasses.dataclass
 class FetchResponse:
     """Response from an HTTP fetch operation."""
 
@@ -22,10 +23,10 @@ class FetchResponse:
     url: str
 
 
-class Fetcher(ABC):
+class Fetcher(abc.ABC):
     """Abstract interface for HTTP fetching."""
 
-    @abstractmethod
+    @abc.abstractmethod
     async def fetch(
         self,
         url: str,
@@ -45,7 +46,6 @@ class Fetcher(ABC):
         Raises:
             FetchError: If the fetch fails.
         """
-        ...
 
 
 class URLLibFetcher(Fetcher):
@@ -73,20 +73,24 @@ class URLLibFetcher(Fetcher):
         timeout: float,
     ) -> FetchResponse:
         """Synchronous fetch using urllib.request."""
-        req = Request(url, headers=headers)
+        req = urllib.request.Request(url, headers=headers)
         try:
-            response = urlopen(req, timeout=timeout)
-            resp_headers = {k: v for k, v in response.getheaders()}
-            body = response.read()
-            return FetchResponse(
-                status_code=response.status,
-                headers=resp_headers,
-                body=body,
-                url=url,
-            )
-        except HTTPError as e:
-            raise FetchError(url, f"HTTP {e.code}: {e.reason}")
-        except URLError as e:
-            raise FetchError(url, str(e.reason))
-        except TimeoutError:
-            raise FetchError(url, "Request timed out")
+            with contextlib.closing(
+                urllib.request.urlopen(req, timeout=timeout)
+            ) as response:
+                return FetchResponse(
+                    status_code=response.status,
+                    headers=dict(response.getheaders()),
+                    body=response.read(),
+                    url=url,
+                )
+        except urllib.error.HTTPError as e:
+            raise web_crawler.exceptions.FetchError(
+                url, f"HTTP {e.code}: {e.reason}"
+            ) from e
+        except urllib.error.URLError as e:
+            raise web_crawler.exceptions.FetchError(url, str(e.reason)) from e
+        except TimeoutError as e:
+            raise web_crawler.exceptions.FetchError(
+                url, "Request timed out"
+            ) from e

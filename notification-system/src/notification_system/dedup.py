@@ -2,8 +2,8 @@
 
 Detects and suppresses duplicate notification requests based on a SHA-256
 content hash of (recipient_id, channel, content). Maintains an in-memory
-dictionary of dedup keys with expiration timestamps and automatically
-expires old entries to prevent unbounded memory growth.
+dictionary of dedup keys with expiration timestamps and automatically expires
+old entries to prevent unbounded memory growth.
 """
 
 from __future__ import annotations
@@ -12,8 +12,8 @@ import hashlib
 import time
 from typing import Optional
 
-from notification_system.exceptions import DuplicateNotificationError
-from notification_system.models import Channel
+import notification_system.exceptions
+import notification_system.models
 
 
 class Deduplicator:
@@ -24,13 +24,20 @@ class Deduplicator:
     Automatically expires old entries on access.
     """
 
-    def __init__(self, window_seconds: float = 300.0, clock: callable = None) -> None:
+    def __init__(
+        self, window_seconds: float = 300.0, clock: callable = None
+    ) -> None:
         self._window_seconds = window_seconds
         self._clock = clock or time.monotonic
         # dedup_key -> (notification_id, expiry_timestamp)
         self._entries: dict[str, tuple[str, float]] = {}
 
-    def compute_key(self, recipient_id: str, channel: Channel, content: str) -> str:
+    def compute_key(
+        self,
+        recipient_id: str,
+        channel: notification_system.models.Channel,
+        content: str,
+    ) -> str:
         """Compute a deduplication key from recipient, channel, and content.
 
         Args:
@@ -74,7 +81,11 @@ class Deduplicator:
         self._entries[dedup_key] = (notification_id, expiry)
 
     def check_and_record(
-        self, recipient_id: str, channel: Channel, content: str, notification_id: str
+        self,
+        recipient_id: str,
+        channel: notification_system.models.Channel,
+        content: str,
+        notification_id: str,
     ) -> None:
         """Check for duplicate and record if new.
 
@@ -93,13 +104,17 @@ class Deduplicator:
         key = self.compute_key(recipient_id, channel, content)
         original_id = self.check(key)
         if original_id is not None:
-            raise DuplicateNotificationError(original_id)
+            raise notification_system.exceptions.DuplicateNotificationError(
+                original_id
+            )
         self.record(key, notification_id)
 
     def _expire_old_entries(self) -> None:
         """Remove all expired entries."""
         now = self._clock()
-        expired_keys = [k for k, (_, expiry) in self._entries.items() if now >= expiry]
+        expired_keys = [
+            k for k, (_, expiry) in self._entries.items() if now >= expiry
+        ]
         for k in expired_keys:
             del self._entries[k]
 

@@ -1,8 +1,8 @@
 """Distributed key-value store with tunable consistency.
 
 A Dynamo-inspired distributed key-value store featuring consistent hashing,
-vector clocks, quorum-based replication, gossip protocol membership,
-and LSM-tree storage.
+vector clocks, quorum-based replication, gossip protocol membership, and LSM-
+tree storage.
 """
 
 from kv_store.config import (

@@ -1,24 +1,22 @@
 """Tests for the gossip protocol implementation."""
 
-import asyncio
 import time
-from unittest.mock import AsyncMock
+import unittest.mock
 
+import kv_store.cluster.gossip
 import pytest
-
-from kv_store.cluster.gossip import GossipProtocol, MemberInfo, NodeStatus
 
 
 @pytest.fixture
 def gossip():
     """Create a GossipProtocol instance for testing."""
-    return GossipProtocol(
+    return kv_store.cluster.gossip.GossipProtocol(
         node_id="node-1",
         address="localhost:5001",
         gossip_interval=1.0,
         gossip_fanout=2,
         failure_timeout=5.0,
-        gossip_func=AsyncMock(),
+        gossip_func=unittest.mock.AsyncMock(),
     )
 
 
@@ -49,11 +47,11 @@ class TestMergeMembership:
 
         # Merge with remote that has heartbeat 10
         remote = [
-            MemberInfo(
+            kv_store.cluster.gossip.MemberInfo(
                 node_id="node-2",
                 address="localhost:5002",
                 heartbeat_counter=10,
-                status=NodeStatus.ALIVE,
+                status=kv_store.cluster.gossip.NodeStatus.ALIVE,
             )
         ]
         gossip.merge_membership(remote)
@@ -65,11 +63,11 @@ class TestMergeMembership:
         gossip._members["node-2"].heartbeat_counter = 10
 
         remote = [
-            MemberInfo(
+            kv_store.cluster.gossip.MemberInfo(
                 node_id="node-2",
                 address="localhost:5002",
                 heartbeat_counter=5,
-                status=NodeStatus.ALIVE,
+                status=kv_store.cluster.gossip.NodeStatus.ALIVE,
             )
         ]
         gossip.merge_membership(remote)
@@ -78,11 +76,11 @@ class TestMergeMembership:
     async def test_new_nodes_added_via_merge(self, gossip):
         """Merge should add previously unknown nodes."""
         remote = [
-            MemberInfo(
+            kv_store.cluster.gossip.MemberInfo(
                 node_id="node-3",
                 address="localhost:5003",
                 heartbeat_counter=1,
-                status=NodeStatus.ALIVE,
+                status=kv_store.cluster.gossip.NodeStatus.ALIVE,
             )
         ]
         gossip.merge_membership(remote)
@@ -94,11 +92,11 @@ class TestMergeMembership:
         """Merge should not overwrite this node's own info."""
         await gossip._gossip_round()  # increment heartbeat to 1
         remote = [
-            MemberInfo(
+            kv_store.cluster.gossip.MemberInfo(
                 node_id="node-1",
                 address="localhost:9999",
                 heartbeat_counter=100,
-                status=NodeStatus.DOWN,
+                status=kv_store.cluster.gossip.NodeStatus.DOWN,
             )
         ]
         gossip.merge_membership(remote)
@@ -116,7 +114,7 @@ class TestFailureDetection:
         # Simulate time passing beyond failure timeout
         gossip._members["node-2"].last_updated = time.time() - 6.0
         gossip._check_timeouts()
-        assert gossip._members["node-2"].status == NodeStatus.SUSPECTED
+        assert gossip._members["node-2"].status == kv_store.cluster.gossip.NodeStatus.SUSPECTED
 
     async def test_node_marked_down_after_extended_timeout(self, gossip):
         """Node should be marked DOWN after 2x failure_timeout."""
@@ -124,36 +122,36 @@ class TestFailureDetection:
         # First mark as suspected
         gossip._members["node-2"].last_updated = time.time() - 6.0
         gossip._check_timeouts()
-        assert gossip._members["node-2"].status == NodeStatus.SUSPECTED
+        assert gossip._members["node-2"].status == kv_store.cluster.gossip.NodeStatus.SUSPECTED
 
         # Now simulate more time passing (total > 2x timeout = 10s)
         gossip._members["node-2"].last_updated = time.time() - 11.0
         gossip._check_timeouts()
-        assert gossip._members["node-2"].status == NodeStatus.DOWN
+        assert gossip._members["node-2"].status == kv_store.cluster.gossip.NodeStatus.DOWN
 
     async def test_alive_node_not_marked_suspected(self, gossip):
         """Node within timeout should remain ALIVE."""
         gossip.add_seed_node("node-2", "localhost:5002")
         gossip._members["node-2"].last_updated = time.time() - 2.0
         gossip._check_timeouts()
-        assert gossip._members["node-2"].status == NodeStatus.ALIVE
+        assert gossip._members["node-2"].status == kv_store.cluster.gossip.NodeStatus.ALIVE
 
     async def test_merge_revives_suspected_node(self, gossip):
         """A higher heartbeat from a suspected node should revive it."""
         gossip.add_seed_node("node-2", "localhost:5002")
-        gossip._members["node-2"].status = NodeStatus.SUSPECTED
+        gossip._members["node-2"].status = kv_store.cluster.gossip.NodeStatus.SUSPECTED
         gossip._members["node-2"].heartbeat_counter = 5
 
         remote = [
-            MemberInfo(
+            kv_store.cluster.gossip.MemberInfo(
                 node_id="node-2",
                 address="localhost:5002",
                 heartbeat_counter=10,
-                status=NodeStatus.ALIVE,
+                status=kv_store.cluster.gossip.NodeStatus.ALIVE,
             )
         ]
         gossip.merge_membership(remote)
-        assert gossip._members["node-2"].status == NodeStatus.ALIVE
+        assert gossip._members["node-2"].status == kv_store.cluster.gossip.NodeStatus.ALIVE
 
 
 class TestGossipFanout:
@@ -161,11 +159,11 @@ class TestGossipFanout:
 
     async def test_fanout_selects_correct_number_of_peers(self):
         """Gossip should select up to fanout number of peers."""
-        gossip = GossipProtocol(
+        gossip = kv_store.cluster.gossip.GossipProtocol(
             node_id="node-1",
             address="localhost:5001",
             gossip_fanout=2,
-            gossip_func=AsyncMock(),
+            gossip_func=unittest.mock.AsyncMock(),
         )
         # Add 5 peers
         for i in range(2, 7):
@@ -176,11 +174,11 @@ class TestGossipFanout:
 
     async def test_fanout_limited_by_available_peers(self):
         """Fanout should be limited by the number of available peers."""
-        gossip = GossipProtocol(
+        gossip = kv_store.cluster.gossip.GossipProtocol(
             node_id="node-1",
             address="localhost:5001",
             gossip_fanout=5,
-            gossip_func=AsyncMock(),
+            gossip_func=unittest.mock.AsyncMock(),
         )
         gossip.add_seed_node("node-2", "localhost:5002")
 
@@ -189,11 +187,11 @@ class TestGossipFanout:
 
     async def test_fanout_excludes_self(self):
         """Peer selection should never include self."""
-        gossip = GossipProtocol(
+        gossip = kv_store.cluster.gossip.GossipProtocol(
             node_id="node-1",
             address="localhost:5001",
             gossip_fanout=3,
-            gossip_func=AsyncMock(),
+            gossip_func=unittest.mock.AsyncMock(),
         )
         gossip.add_seed_node("node-2", "localhost:5002")
         gossip.add_seed_node("node-3", "localhost:5003")
@@ -204,15 +202,15 @@ class TestGossipFanout:
 
     async def test_fanout_excludes_down_nodes(self):
         """Peer selection should exclude DOWN nodes."""
-        gossip = GossipProtocol(
+        gossip = kv_store.cluster.gossip.GossipProtocol(
             node_id="node-1",
             address="localhost:5001",
             gossip_fanout=3,
-            gossip_func=AsyncMock(),
+            gossip_func=unittest.mock.AsyncMock(),
         )
         gossip.add_seed_node("node-2", "localhost:5002")
         gossip.add_seed_node("node-3", "localhost:5003")
-        gossip._members["node-2"].status = NodeStatus.DOWN
+        gossip._members["node-2"].status = kv_store.cluster.gossip.NodeStatus.DOWN
 
         peers = gossip._select_peers()
         assert "node-2" not in peers
@@ -225,7 +223,7 @@ class TestGetAliveNodes:
         """get_alive_nodes should only return ALIVE nodes."""
         gossip.add_seed_node("node-2", "localhost:5002")
         gossip.add_seed_node("node-3", "localhost:5003")
-        gossip._members["node-3"].status = NodeStatus.SUSPECTED
+        gossip._members["node-3"].status = kv_store.cluster.gossip.NodeStatus.SUSPECTED
 
         alive = gossip.get_alive_nodes()
         alive_ids = [m.node_id for m in alive]
@@ -239,7 +237,7 @@ class TestGetNodeStatus:
 
     async def test_get_status_known_node(self, gossip):
         """Should return status for known nodes."""
-        assert gossip.get_node_status("node-1") == NodeStatus.ALIVE
+        assert gossip.get_node_status("node-1") == kv_store.cluster.gossip.NodeStatus.ALIVE
 
     async def test_get_status_unknown_node(self, gossip):
         """Should return None for unknown nodes."""
@@ -254,7 +252,7 @@ class TestAddSeedNode:
         gossip.add_seed_node("node-2", "localhost:5002")
         assert "node-2" in gossip.members
         assert gossip.members["node-2"].address == "localhost:5002"
-        assert gossip.members["node-2"].status == NodeStatus.ALIVE
+        assert gossip.members["node-2"].status == kv_store.cluster.gossip.NodeStatus.ALIVE
 
     async def test_add_seed_node_idempotent(self, gossip):
         """Adding the same seed node twice should not duplicate."""

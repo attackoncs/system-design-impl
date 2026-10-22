@@ -4,20 +4,19 @@ from __future__ import annotations
 
 import asyncio
 
+import news_feed_system.models
+import news_feed_system.queue
 import pytest
-
-from news_feed_system.models import FanoutTask
-from news_feed_system.queue import MessageQueue
 
 
 @pytest.mark.asyncio
 async def test_enqueue_dequeue_fifo_order() -> None:
     """Tasks are dequeued in FIFO order."""
-    queue = MessageQueue(max_size=10)
+    queue = news_feed_system.queue.MessageQueue(max_size=10)
 
-    task1 = FanoutTask(post_id="p1", author_id="a1", target_user_ids=["u1"])
-    task2 = FanoutTask(post_id="p2", author_id="a2", target_user_ids=["u2"])
-    task3 = FanoutTask(post_id="p3", author_id="a3", target_user_ids=["u3"])
+    task1 = news_feed_system.models.FanoutTask(post_id="p1", author_id="a1", target_user_ids=["u1"])
+    task2 = news_feed_system.models.FanoutTask(post_id="p2", author_id="a2", target_user_ids=["u2"])
+    task3 = news_feed_system.models.FanoutTask(post_id="p3", author_id="a3", target_user_ids=["u3"])
 
     await queue.enqueue(task1)
     await queue.enqueue(task2)
@@ -30,16 +29,18 @@ async def test_enqueue_dequeue_fifo_order() -> None:
 
 @pytest.mark.asyncio
 async def test_size_reflects_current_items() -> None:
-    """size() returns the current number of items in the queue."""
-    queue = MessageQueue(max_size=10)
+    """Size() returns the current number of items in the queue."""
+    queue = news_feed_system.queue.MessageQueue(max_size=10)
 
     assert queue.size() == 0
 
-    task = FanoutTask(post_id="p1", author_id="a1", target_user_ids=["u1"])
+    task = news_feed_system.models.FanoutTask(post_id="p1", author_id="a1", target_user_ids=["u1"])
     await queue.enqueue(task)
     assert queue.size() == 1
 
-    await queue.enqueue(FanoutTask(post_id="p2", author_id="a1", target_user_ids=["u2"]))
+    await queue.enqueue(
+        news_feed_system.models.FanoutTask(post_id="p2", author_id="a1", target_user_ids=["u2"])
+    )
     assert queue.size() == 2
 
     await queue.dequeue()
@@ -49,14 +50,18 @@ async def test_size_reflects_current_items() -> None:
 @pytest.mark.asyncio
 async def test_is_full_with_max_size() -> None:
     """is_full() returns True when queue reaches max size."""
-    queue = MessageQueue(max_size=2)
+    queue = news_feed_system.queue.MessageQueue(max_size=2)
 
     assert queue.is_full() is False
 
-    await queue.enqueue(FanoutTask(post_id="p1", author_id="a1", target_user_ids=["u1"]))
+    await queue.enqueue(
+        news_feed_system.models.FanoutTask(post_id="p1", author_id="a1", target_user_ids=["u1"])
+    )
     assert queue.is_full() is False
 
-    await queue.enqueue(FanoutTask(post_id="p2", author_id="a1", target_user_ids=["u2"]))
+    await queue.enqueue(
+        news_feed_system.models.FanoutTask(post_id="p2", author_id="a1", target_user_ids=["u2"])
+    )
     assert queue.is_full() is True
 
     await queue.dequeue()
@@ -66,13 +71,13 @@ async def test_is_full_with_max_size() -> None:
 @pytest.mark.asyncio
 async def test_is_full_unlimited_queue() -> None:
     """is_full() always returns False for unlimited queues (max_size=0)."""
-    queue = MessageQueue(max_size=0)
+    queue = news_feed_system.queue.MessageQueue(max_size=0)
 
     assert queue.is_full() is False
 
     for i in range(100):
         await queue.enqueue(
-            FanoutTask(post_id=f"p{i}", author_id="a1", target_user_ids=["u1"])
+            news_feed_system.models.FanoutTask(post_id=f"p{i}", author_id="a1", target_user_ids=["u1"])
         )
 
     assert queue.is_full() is False
@@ -80,15 +85,17 @@ async def test_is_full_unlimited_queue() -> None:
 
 @pytest.mark.asyncio
 async def test_dequeue_blocks_until_item_available() -> None:
-    """dequeue() blocks when queue is empty and resumes when item is enqueued."""
-    queue = MessageQueue(max_size=10)
-    result: list[FanoutTask] = []
+    """Dequeue() blocks when queue is empty and resumes when item is
+    enqueued.
+    """
+    queue = news_feed_system.queue.MessageQueue(max_size=10)
+    result: list[news_feed_system.models.FanoutTask] = []
 
     async def consumer() -> None:
         item = await queue.dequeue()
         result.append(item)
 
-    task = FanoutTask(post_id="p1", author_id="a1", target_user_ids=["u1"])
+    task = news_feed_system.models.FanoutTask(post_id="p1", author_id="a1", target_user_ids=["u1"])
 
     consumer_task = asyncio.create_task(consumer())
     # Give the consumer a chance to block
@@ -103,11 +110,13 @@ async def test_dequeue_blocks_until_item_available() -> None:
 
 @pytest.mark.asyncio
 async def test_enqueue_blocks_when_full() -> None:
-    """enqueue() blocks when queue is full and resumes when space is available."""
-    queue = MessageQueue(max_size=1)
+    """Enqueue() blocks when queue is full and resumes when space is
+    available.
+    """
+    queue = news_feed_system.queue.MessageQueue(max_size=1)
 
-    task1 = FanoutTask(post_id="p1", author_id="a1", target_user_ids=["u1"])
-    task2 = FanoutTask(post_id="p2", author_id="a1", target_user_ids=["u2"])
+    task1 = news_feed_system.models.FanoutTask(post_id="p1", author_id="a1", target_user_ids=["u1"])
+    task2 = news_feed_system.models.FanoutTask(post_id="p2", author_id="a1", target_user_ids=["u2"])
 
     await queue.enqueue(task1)
     enqueued = False
@@ -133,5 +142,5 @@ async def test_enqueue_blocks_when_full() -> None:
 @pytest.mark.asyncio
 async def test_empty_queue_size_zero() -> None:
     """A new queue has size 0."""
-    queue = MessageQueue(max_size=100)
+    queue = news_feed_system.queue.MessageQueue(max_size=100)
     assert queue.size() == 0

@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Callable
+from typing import Any
 
-from .base import BaseStorage
+from rate_limiter.storage import base as storage_base
 
 
-class MemoryStorage(BaseStorage):
+class MemoryStorage(storage_base.BaseStorage):
     """Thread-safe in-memory storage backend.
 
-    Uses a threading lock to ensure atomic operations and supports
-    TTL-based key expiration via expiry timestamps.
+    Uses a threading lock to ensure atomic operations and supports TTL-based
+    key expiration via expiry timestamps.
     """
 
     def __init__(self) -> None:
@@ -79,7 +79,9 @@ class MemoryStorage(BaseStorage):
             else:
                 self._expiry.pop(key, None)
 
-    def increment(self, key: str, amount: int = 1, ttl: int | None = None) -> int:
+    def increment(
+        self, key: str, amount: int = 1, ttl: int | None = None
+    ) -> int:
         """Atomically increment a counter and return the new value.
 
         If the key does not exist or has expired, it is initialized to 0
@@ -131,14 +133,16 @@ class MemoryStorage(BaseStorage):
         """
         if not callable(script):
             raise TypeError(
-                f"MemoryStorage.execute_atomic requires a callable, got {type(script).__name__}"
+                "MemoryStorage.execute_atomic requires a callable, got"
+                f" {type(script).__name__}"
             )
 
         with self._lock:
             return script(keys, args, self)
 
-    def _get_raw(self, key: str) -> str | None:
-        """Get a value without acquiring the lock (for use inside execute_atomic).
+    def get_unlocked(self, key: str) -> str | None:
+        """Get a value without acquiring the lock (for use inside
+        execute_atomic).
 
         Args:
             key: The storage key to look up.
@@ -152,8 +156,11 @@ class MemoryStorage(BaseStorage):
             return None
         return self._data.get(key)
 
-    def _set_raw(self, key: str, value: str, ttl: int | None = None) -> None:
-        """Set a value without acquiring the lock (for use inside execute_atomic).
+    def set_unlocked(
+        self, key: str, value: str, ttl: int | None = None
+    ) -> None:
+        """Set a value without acquiring the lock (for use inside
+        execute_atomic).
 
         Args:
             key: The storage key.
@@ -166,8 +173,11 @@ class MemoryStorage(BaseStorage):
         else:
             self._expiry.pop(key, None)
 
-    def _increment_raw(self, key: str, amount: int = 1, ttl: int | None = None) -> int:
-        """Increment without acquiring the lock (for use inside execute_atomic).
+    def _increment_raw(
+        self, key: str, amount: int = 1, ttl: int | None = None
+    ) -> int:
+        """Increment without acquiring the lock (for use inside
+        execute_atomic).
 
         Args:
             key: The storage key to increment.

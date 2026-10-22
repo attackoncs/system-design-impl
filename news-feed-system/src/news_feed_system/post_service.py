@@ -17,12 +17,12 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Optional
 
-from news_feed_system.auth import Authenticator
-from news_feed_system.exceptions import AuthenticationError, ValidationError
-from news_feed_system.fanout_service import FanoutService
-from news_feed_system.models import FeedRequest, Post
-from news_feed_system.post_cache import PostCache
-from news_feed_system.rate_limiter import SlidingWindowRateLimiter
+import news_feed_system.auth
+import news_feed_system.exceptions
+import news_feed_system.fanout_service
+import news_feed_system.models
+import news_feed_system.post_cache
+import news_feed_system.rate_limiter
 
 if TYPE_CHECKING:
     from news_feed_system.notification_service import NotificationService
@@ -47,10 +47,10 @@ class PostService:
 
     def __init__(
         self,
-        authenticator: Authenticator,
-        rate_limiter: SlidingWindowRateLimiter,
-        post_cache: PostCache,
-        fanout_service: FanoutService,
+        authenticator: news_feed_system.auth.Authenticator,
+        rate_limiter: news_feed_system.rate_limiter.SlidingWindowRateLimiter,
+        post_cache: news_feed_system.post_cache.PostCache,
+        fanout_service: news_feed_system.fanout_service.FanoutService,
         notification_service: Optional["NotificationService"] = None,
     ) -> None:
         self._authenticator = authenticator
@@ -59,7 +59,9 @@ class PostService:
         self._fanout_service = fanout_service
         self._notification_service = notification_service
 
-    async def publish(self, request: FeedRequest) -> str:
+    async def publish(
+        self, request: news_feed_system.models.FeedRequest
+    ) -> str:
         """Publish a post from a feed request.
 
         Executes the full publishing pipeline:
@@ -88,14 +90,14 @@ class PostService:
         """
         # --- Step 1: Validate content (Requirement 1.5) ---
         if not request.content or not request.content.strip():
-            raise ValidationError(
+            raise news_feed_system.exceptions.ValidationError(
                 "Post content must not be empty", field="content"
             )
 
         # --- Step 2: Authenticate (Requirements 1.6, 13.3) ---
         user_id = await self._authenticator.validate_token(request.auth_token)
         if user_id is None:
-            raise AuthenticationError()
+            raise news_feed_system.exceptions.AuthenticationError()
 
         # --- Step 3: Rate limit (Requirements 13.1, 13.2) ---
         # check_and_record raises RateLimitError if limit exceeded
@@ -103,7 +105,7 @@ class PostService:
 
         # --- Step 4: Persist post (Requirement 1.1) ---
         post_id = str(uuid.uuid4())
-        post = Post(
+        post = news_feed_system.models.Post(
             post_id=post_id,
             author_id=user_id,
             content=request.content,

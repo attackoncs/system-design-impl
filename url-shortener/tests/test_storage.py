@@ -3,21 +3,19 @@
 Validates: Requirements 5.1, 5.2, 5.3, 5.4
 """
 
-import pytest
-
-from url_shortener.models import RedirectType, URLMapping
-from url_shortener.storage import InMemoryStorage, StorageBackend
+import url_shortener.models
+import url_shortener.storage
 
 
 class TestInMemoryStorage:
     """Tests for InMemoryStorage implementation."""
 
     def setup_method(self) -> None:
-        self.storage = InMemoryStorage()
+        self.storage = url_shortener.storage.InMemoryStorage()
 
     def test_save_and_get_by_short_code(self) -> None:
-        """save() then get_by_short_code() returns the mapping."""
-        mapping = URLMapping(
+        """Save() then get_by_short_code() returns the mapping."""
+        mapping = url_shortener.models.URLMapping(
             short_code="abc1234",
             long_url="https://example.com/page",
         )
@@ -29,8 +27,10 @@ class TestInMemoryStorage:
         assert result.long_url == "https://example.com/page"
 
     def test_save_and_get_by_long_url(self) -> None:
-        """save() then get_by_long_url() returns the mapping (bidirectional)."""
-        mapping = URLMapping(
+        """Save() then get_by_long_url() returns the mapping
+        (bidirectional).
+        """
+        mapping = url_shortener.models.URLMapping(
             short_code="xyz7890",
             long_url="https://example.com/another",
         )
@@ -42,8 +42,8 @@ class TestInMemoryStorage:
         assert result.long_url == "https://example.com/another"
 
     def test_exists_returns_true_for_saved_code(self) -> None:
-        """exists() returns True for a saved short code."""
-        mapping = URLMapping(
+        """Exists() returns True for a saved short code."""
+        mapping = url_shortener.models.URLMapping(
             short_code="exists1",
             long_url="https://example.com/exists",
         )
@@ -52,20 +52,20 @@ class TestInMemoryStorage:
         assert self.storage.exists("exists1") is True
 
     def test_exists_returns_false_for_absent_code(self) -> None:
-        """exists() returns False for a code not in storage."""
+        """Exists() returns False for a code not in storage."""
         assert self.storage.exists("nocode1") is False
 
     def test_redirect_type_preserved(self) -> None:
         """RedirectType is preserved in stored mapping."""
-        mapping_permanent = URLMapping(
+        mapping_permanent = url_shortener.models.URLMapping(
             short_code="perm123",
             long_url="https://example.com/permanent",
-            redirect_type=RedirectType.PERMANENT,
+            redirect_type=url_shortener.models.RedirectType.PERMANENT,
         )
-        mapping_temporary = URLMapping(
+        mapping_temporary = url_shortener.models.URLMapping(
             short_code="temp123",
             long_url="https://example.com/temporary",
-            redirect_type=RedirectType.TEMPORARY,
+            redirect_type=url_shortener.models.RedirectType.TEMPORARY,
         )
         self.storage.save(mapping_permanent)
         self.storage.save(mapping_temporary)
@@ -74,22 +74,22 @@ class TestInMemoryStorage:
         result_temp = self.storage.get_by_short_code("temp123")
 
         assert result_perm is not None
-        assert result_perm.redirect_type == RedirectType.PERMANENT
+        assert result_perm.redirect_type == url_shortener.models.RedirectType.PERMANENT
         assert result_perm.redirect_type == 301
 
         assert result_temp is not None
-        assert result_temp.redirect_type == RedirectType.TEMPORARY
+        assert result_temp.redirect_type == url_shortener.models.RedirectType.TEMPORARY
         assert result_temp.redirect_type == 302
 
     def test_overwrite_short_code_updates_both_dicts(self) -> None:
         """Overwriting a short code with a new mapping updates both dicts."""
-        original = URLMapping(
+        original = url_shortener.models.URLMapping(
             short_code="over123",
             long_url="https://example.com/original",
         )
         self.storage.save(original)
 
-        replacement = URLMapping(
+        replacement = url_shortener.models.URLMapping(
             short_code="over123",
             long_url="https://example.com/replacement",
         )
@@ -101,7 +101,9 @@ class TestInMemoryStorage:
         assert result.long_url == "https://example.com/replacement"
 
         # New URL resolves to the mapping
-        result_by_url = self.storage.get_by_long_url("https://example.com/replacement")
+        result_by_url = self.storage.get_by_long_url(
+            "https://example.com/replacement"
+        )
         assert result_by_url is not None
         assert result_by_url.short_code == "over123"
 
@@ -117,4 +119,4 @@ class TestInMemoryStorage:
 
     def test_implements_storage_backend_interface(self) -> None:
         """InMemoryStorage is a subclass of StorageBackend."""
-        assert isinstance(self.storage, StorageBackend)
+        assert isinstance(self.storage, url_shortener.storage.StorageBackend)

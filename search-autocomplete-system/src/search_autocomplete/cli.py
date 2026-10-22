@@ -1,11 +1,14 @@
-"""Collection, batch building, block rules, query nodes and coordinator commands."""
+"""Collection, batch building, block rules, query nodes and coordinator
+commands.
+"""
+
 import argparse
 import json
 import time
 
-from .http import Coordinator, server
-from .service import Autocomplete
-from .store import Store
+import search_autocomplete.http
+import search_autocomplete.service
+import search_autocomplete.store
 
 
 def main():
@@ -31,33 +34,71 @@ def main():
         if name == "node":
             command.add_argument("--shard", type=int, required=True)
         else:
-            command.add_argument("--replicas", required=True, help="JSON map file: shard ID -> endpoint list")
+            command.add_argument(
+                "--replicas",
+                required=True,
+                help="JSON map file: shard ID -> endpoint list",
+            )
     args = parser.parse_args()
-    store = Store(args.db)
+    store = search_autocomplete.store.Store(args.db)
     coordinator = None
     try:
         if args.command == "record":
-            print(json.dumps({"created": store.record(args.event_id, args.query, args.at)}))
+            print(
+                json.dumps(
+                    {
+                        "created": store.record(
+                            args.event_id, args.query, args.at
+                        )
+                    }
+                )
+            )
         elif args.command == "build":
             end = time.time() if args.end is None else args.end
-            start = max(0, end - 7 * 86400) if args.start is None else args.start
+            start = (
+                max(0, end - 7 * 86400) if args.start is None else args.start
+            )
             print(json.dumps({"version": store.build(start, end, args.shards)}))
         elif args.command in ("block", "unblock"):
-            print(json.dumps({"revision": store.block(args.query, args.command == "block")}))
+            print(
+                json.dumps(
+                    {
+                        "revision": store.block(
+                            args.query, args.command == "block"
+                        )
+                    }
+                )
+            )
         elif args.command == "query":
-            print(json.dumps(Autocomplete(store).suggest(args.prefix)))
+            print(
+                json.dumps(
+                    search_autocomplete.service.Autocomplete(store).suggest(
+                        args.prefix
+                    )
+                )
+            )
         else:
             if args.command == "coordinator":
                 with open(args.replicas, encoding="utf-8") as stream:
-                    replicas = {int(key): value for key, value in json.load(stream).items()}
-                coordinator = Coordinator(store, replicas)
+                    replicas = {
+                        int(key): value
+                        for key, value in json.load(stream).items()
+                    }
+                coordinator = search_autocomplete.http.Coordinator(
+                    store, replicas
+                )
                 service = coordinator
             else:
-                service = Autocomplete(store)
+                service = search_autocomplete.service.Autocomplete(store)
                 snapshot = store.snapshot()
                 if not 0 <= args.shard < len(snapshot["shards"]):
                     raise ValueError("shard is absent from current snapshot")
-            http = server(service, args.host, args.port, args.shard if args.command == "node" else None)
+            http = search_autocomplete.http.server(
+                service,
+                args.host,
+                args.port,
+                args.shard if args.command == "node" else None,
+            )
             print("Autocomplete service ready", flush=True)
             try:
                 http.serve_forever()

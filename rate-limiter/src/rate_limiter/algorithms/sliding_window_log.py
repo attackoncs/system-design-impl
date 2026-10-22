@@ -5,13 +5,14 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from ..config import RateLimitRule
-from ..storage.base import BaseStorage
-from .base import BaseAlgorithm, RateLimitResult
+from rate_limiter import config as rate_limiter_config
+from rate_limiter.algorithms import base as algorithms_base
+from rate_limiter.storage import base as storage_base
 
 # Redis Lua script for atomic sliding window log operations.
 # KEYS[1] = log_key (sorted set of timestamps)
-# ARGV[1] = limit, ARGV[2] = window, ARGV[3] = current_time, ARGV[4] = request_id
+# ARGV[1] = limit, ARGV[2] = window, ARGV[3] = current_time, ARGV[4] =
+# request_id
 # Returns: {allowed (0/1), remaining, limit, reset_after, retry_after}
 LUA_SCRIPT = """
 local limit = tonumber(ARGV[1])
@@ -83,7 +84,8 @@ def _memory_sliding_window_log_script(
         storage: The MemoryStorage instance (use _get_raw/_set_raw).
 
     Returns:
-        A list: [allowed (1 or 0), remaining (int), limit (int), reset_after (float), retry_after (float)]
+        A list: [allowed (1 or 0), remaining (int), limit (int), reset_after
+        (float), retry_after (float)]
     """
     log_key = keys[0]
 
@@ -93,7 +95,7 @@ def _memory_sliding_window_log_script(
     request_id = args[3]
 
     # Get current log from storage
-    raw_log = storage._get_raw(log_key)
+    raw_log = storage.get_unlocked(log_key)
 
     if raw_log is None:
         log_entries = []
@@ -101,16 +103,18 @@ def _memory_sliding_window_log_script(
         # Parse stored log entries (format: "timestamp1,id1;timestamp2,id2;...")
         log_entries = []
         if raw_log:
-            for entry in raw_log.split(';'):
+            for entry in raw_log.split(";"):
                 if entry:
-                    parts = entry.split(',')
+                    parts = entry.split(",")
                     if len(parts) == 2:
                         timestamp, entry_id = float(parts[0]), parts[1]
                         log_entries.append((timestamp, entry_id))
 
     # Remove expired entries (older than window)
     cutoff = now - window
-    current_entries = [(ts, entry_id) for ts, entry_id in log_entries if ts > cutoff]
+    current_entries = [
+        (ts, entry_id) for ts, entry_id in log_entries if ts > cutoff
+    ]
 
     # Check if we can add this request
     if len(current_entries) < limit:
@@ -118,9 +122,11 @@ def _memory_sliding_window_log_script(
         current_entries.append((now, request_id))
 
         # Store updated log
-        log_str = ';'.join([f"{ts},{entry_id}" for ts, entry_id in current_entries])
+        log_str = ";".join(
+            [f"{ts},{entry_id}" for ts, entry_id in current_entries]
+        )
         ttl = window + 1
-        storage._set_raw(log_key, log_str, ttl)
+        storage.set_unlocked(log_key, log_str, ttl)
 
         remaining = limit - len(current_entries)
 
@@ -143,14 +149,16 @@ def _memory_sliding_window_log_script(
             retry_after = window
 
         # Store log (even if denied, to maintain TTL)
-        log_str = ';'.join([f"{ts},{entry_id}" for ts, entry_id in current_entries])
+        log_str = ";".join(
+            [f"{ts},{entry_id}" for ts, entry_id in current_entries]
+        )
         ttl = window + 1
-        storage._set_raw(log_key, log_str, ttl)
+        storage.set_unlocked(log_key, log_str, ttl)
 
         return [0, 0, limit, retry_after, retry_after]
 
 
-class SlidingWindowLogAlgorithm(BaseAlgorithm):
+class SlidingWindowLogAlgorithm(algorithms_base.BaseAlgorithm):
     """Sliding Window Log rate limiting algorithm.
 
     The sliding window log algorithm maintains a log of all request timestamps
@@ -165,9 +173,13 @@ class SlidingWindowLogAlgorithm(BaseAlgorithm):
     """
 
     def check(
-        self, key: str, rule: RateLimitRule, storage: BaseStorage
-    ) -> RateLimitResult:
-        """Check if a request should be allowed under the sliding window log algorithm.
+        self,
+        key: str,
+        rule: rate_limiter_config.RateLimitRule,
+        storage: storage_base.BaseStorage,
+    ) -> algorithms_base.RateLimitResult:
+        """Check if a request should be allowed under the sliding window log
+        algorithm.
 
         Args:
             key: Unique identifier for the rate limit subject.
@@ -183,7 +195,8 @@ class SlidingWindowLogAlgorithm(BaseAlgorithm):
         # Generate unique request ID for this request
         request_id = f"{now}:{id(self)}"
 
-        # Include rule parameters in the key to ensure different rules are isolated
+        # Include rule parameters in the key to ensure different rules are
+        # isolated
         rule_suffix = f":{rule.window}:{rule.limit}"
         log_key = f"{key}{rule_suffix}:log"
 
@@ -206,7 +219,7 @@ class SlidingWindowLogAlgorithm(BaseAlgorithm):
         reset_after = float(result[3])
         retry_after = float(result[4]) if not allowed else None
 
-        return RateLimitResult(
+        return algorithms_base.RateLimitResult(
             allowed=allowed,
             remaining=remaining,
             limit=limit,

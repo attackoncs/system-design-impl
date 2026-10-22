@@ -2,28 +2,32 @@
 
 from __future__ import annotations
 
+import news_feed_system.notification_service
+import news_feed_system.social_graph
+import news_feed_system.social_graph_cache
 import pytest
-
-from news_feed_system.notification_service import NotificationService
-from news_feed_system.social_graph import InMemorySocialGraph
-from news_feed_system.social_graph_cache import CachedSocialGraph
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def make_service() -> tuple[NotificationService, CachedSocialGraph, InMemorySocialGraph]:
-    """Return a fresh (NotificationService, CachedSocialGraph, InMemorySocialGraph) triple."""
-    graph = InMemorySocialGraph()
-    cached = CachedSocialGraph(backend=graph)
-    service = NotificationService(social_graph=cached)
+
+def make_service() -> (
+    tuple[news_feed_system.notification_service.NotificationService, news_feed_system.social_graph_cache.CachedSocialGraph, news_feed_system.social_graph.InMemorySocialGraph]
+):
+    """Return a fresh (NotificationService, CachedSocialGraph,
+    InMemorySocialGraph) triple.
+    """
+    graph = news_feed_system.social_graph.InMemorySocialGraph()
+    cached = news_feed_system.social_graph_cache.CachedSocialGraph(backend=graph)
+    service = news_feed_system.notification_service.NotificationService(social_graph=cached)
     return service, cached, graph
 
 
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_no_notifications_initially():
@@ -74,7 +78,9 @@ async def test_non_follower_receives_no_notification():
 
 @pytest.mark.asyncio
 async def test_no_followers_no_notifications():
-    """Notifying for an author with zero followers produces no notifications."""
+    """Notifying for an author with zero followers produces no
+    notifications.
+    """
     service, _, _ = make_service()
     await service.notify_followers("lonely_author", "post_1")
     # No exception; no notifications recorded for anyone
@@ -100,7 +106,9 @@ async def test_multiple_posts_accumulate_notifications():
 
 @pytest.mark.asyncio
 async def test_notifications_from_multiple_authors():
-    """A follower who follows several authors receives notifications from all."""
+    """A follower who follows several authors receives notifications from
+    all.
+    """
     service, cached, _ = make_service()
     await cached.add_follow("follower_1", "author_a")
     await cached.add_follow("follower_1", "author_b")
@@ -116,7 +124,9 @@ async def test_notifications_from_multiple_authors():
 
 @pytest.mark.asyncio
 async def test_get_notifications_returns_copy():
-    """get_notifications returns a copy; mutating it does not affect the store."""
+    """get_notifications returns a copy; mutating it does not affect the
+    store.
+    """
     service, cached, _ = make_service()
     await cached.add_follow("follower_1", "author_1")
     await service.notify_followers("author_1", "post_1")

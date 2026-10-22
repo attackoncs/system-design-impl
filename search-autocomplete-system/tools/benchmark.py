@@ -1,15 +1,18 @@
-"""Configurable local trie/cache and real HTTP latency measurement, not a scale claim."""
+"""Configurable local trie/cache and real HTTP latency measurement, not a scale
+claim.
+"""
+
 import argparse
 import json
 import os
-from pathlib import Path
+import pathlib
 import platform
+import threading
 import time
-from threading import Thread
-from urllib.request import urlopen
+import urllib.request
 
-from search_autocomplete import Autocomplete, Store
-from search_autocomplete.http import server
+import search_autocomplete
+import search_autocomplete.http
 
 
 def word(index):
@@ -23,7 +26,10 @@ def word(index):
 
 def quantiles(values):
     values = sorted(values)
-    return {f"p{p}_ms": round(values[int((len(values) - 1) * p / 100)] * 1000, 4) for p in (50, 95, 99)}
+    return {
+        f"p{p}_ms": round(values[int((len(values) - 1) * p / 100)] * 1000, 4)
+        for p in (50, 95, 99)
+    }
 
 
 def main():
@@ -33,9 +39,12 @@ def main():
     parser.add_argument("--http-requests", type=int, default=500)
     parser.add_argument("--output")
     args = parser.parse_args()
-    if min(args.queries, args.requests, args.http_requests) < 1 or args.queries > 26 ** 5:
+    if (
+        min(args.queries, args.requests, args.http_requests) < 1
+        or args.queries > 26**5
+    ):
         parser.error("positive counts required; queries <= 26^5")
-    store = Store()
+    store = search_autocomplete.Store()
     http = thread = None
     try:
         for index in range(args.queries):
@@ -43,7 +52,7 @@ def main():
         started = time.perf_counter()
         store.build(0, 2, 4)
         build_seconds = time.perf_counter() - started
-        service = Autocomplete(store)
+        service = search_autocomplete.Autocomplete(store)
         started = time.perf_counter()
         assert service.suggest("term")
         cold_ms = (time.perf_counter() - started) * 1000
@@ -55,27 +64,45 @@ def main():
             assert service.suggest(prefix)
             timings.append(time.perf_counter() - before)
         request_seconds = time.perf_counter() - started
-        http = server(service)
-        thread = Thread(target=http.serve_forever, daemon=True)
+        http = search_autocomplete.http.server(service)
+        thread = threading.Thread(target=http.serve_forever, daemon=True)
         thread.start()
         url = f"http://127.0.0.1:{http.server_address[1]}/suggest?prefix=term"
         network = []
         for _ in range(args.http_requests):
             before = time.perf_counter()
-            with urlopen(url, timeout=5) as response:
-                assert len(json.load(response)["suggestions"]) == min(5, args.queries)
+            with urllib.request.urlopen(url, timeout=5) as response:
+                assert len(json.load(response)["suggestions"]) == min(
+                    5, args.queries
+                )
             network.append(time.perf_counter() - before)
-        report = {"queries": args.queries, "local_requests": args.requests,
-                  "http_requests": args.http_requests, "shards": len(store.snapshot()["shards"]),
-                  "build_seconds": round(build_seconds, 4), "cold_query_ms": round(cold_ms, 4),
-                  "local_latency": quantiles(timings), "http_latency": quantiles(network),
-                  "local_requests_per_second": round(args.requests / request_seconds, 2),
-                  "environment": {"platform": platform.platform(), "python": platform.python_version(),
-                                  "logical_cpus": os.cpu_count()},
-                  "scope": "single-host, sequential requests; HTTP service contains all shards"}
+        report = {
+            "queries": args.queries,
+            "local_requests": args.requests,
+            "http_requests": args.http_requests,
+            "shards": len(store.snapshot()["shards"]),
+            "build_seconds": round(build_seconds, 4),
+            "cold_query_ms": round(cold_ms, 4),
+            "local_latency": quantiles(timings),
+            "http_latency": quantiles(network),
+            "local_requests_per_second": round(
+                args.requests / request_seconds, 2
+            ),
+            "environment": {
+                "platform": platform.platform(),
+                "python": platform.python_version(),
+                "logical_cpus": os.cpu_count(),
+            },
+            "scope": (
+                "single-host, sequential requests; HTTP service contains all"
+                " shards"
+            ),
+        }
         print(json.dumps(report, indent=2))
         if args.output:
-            Path(args.output).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+            pathlib.Path(args.output).write_text(
+                json.dumps(report, indent=2) + "\n", encoding="utf-8"
+            )
     finally:
         if http:
             http.shutdown()

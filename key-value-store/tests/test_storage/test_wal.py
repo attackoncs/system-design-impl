@@ -11,20 +11,9 @@ Tests cover:
 import asyncio
 import os
 import struct
-import time
-import zlib
 
+import kv_store.storage.wal
 import pytest
-
-from kv_store.storage.wal import (
-    WALEntry,
-    WALEntryType,
-    WriteAheadLog,
-    _CHECKSUM_FORMAT,
-    _CHECKSUM_SIZE,
-    _LENGTH_FORMAT,
-    _LENGTH_SIZE,
-)
 
 
 @pytest.fixture
@@ -36,7 +25,7 @@ def wal_dir(tmp_path):
 @pytest.fixture
 def wal(wal_dir):
     """Provide a fresh WriteAheadLog instance."""
-    return WriteAheadLog(wal_dir)
+    return kv_store.storage.wal.WriteAheadLog(wal_dir)
 
 
 class TestWALAppendAndReplay:
@@ -44,9 +33,9 @@ class TestWALAppendAndReplay:
 
     async def test_append_and_replay_single_put(self, wal):
         """Test appending a single PUT entry and replaying it."""
-        entry = WALEntry(
+        entry = kv_store.storage.wal.WALEntry(
             sequence_number=0,
-            entry_type=WALEntryType.PUT,
+            entry_type=kv_store.storage.wal.WALEntryType.PUT,
             key="hello",
             value=b"world",
             timestamp=1234567890.123,
@@ -57,16 +46,16 @@ class TestWALAppendAndReplay:
 
         assert len(entries) == 1
         assert entries[0].sequence_number == 1
-        assert entries[0].entry_type == WALEntryType.PUT
+        assert entries[0].entry_type == kv_store.storage.wal.WALEntryType.PUT
         assert entries[0].key == "hello"
         assert entries[0].value == b"world"
         assert entries[0].timestamp == 1234567890.123
 
     async def test_append_and_replay_single_delete(self, wal):
         """Test appending a single DELETE entry and replaying it."""
-        entry = WALEntry(
+        entry = kv_store.storage.wal.WALEntry(
             sequence_number=0,
-            entry_type=WALEntryType.DELETE,
+            entry_type=kv_store.storage.wal.WALEntryType.DELETE,
             key="goodbye",
             value=None,
             timestamp=9876543210.456,
@@ -77,7 +66,7 @@ class TestWALAppendAndReplay:
 
         assert len(entries) == 1
         assert entries[0].sequence_number == 1
-        assert entries[0].entry_type == WALEntryType.DELETE
+        assert entries[0].entry_type == kv_store.storage.wal.WALEntryType.DELETE
         assert entries[0].key == "goodbye"
         assert entries[0].value is None
         assert entries[0].timestamp == 9876543210.456
@@ -85,10 +74,10 @@ class TestWALAppendAndReplay:
     async def test_append_and_replay_multiple_entries(self, wal):
         """Test appending multiple entries and replaying them in order."""
         entries_to_write = [
-            WALEntry(0, WALEntryType.PUT, "key1", b"value1", 1.0),
-            WALEntry(0, WALEntryType.PUT, "key2", b"value2", 2.0),
-            WALEntry(0, WALEntryType.DELETE, "key1", None, 3.0),
-            WALEntry(0, WALEntryType.PUT, "key3", b"value3", 4.0),
+            kv_store.storage.wal.WALEntry(0, kv_store.storage.wal.WALEntryType.PUT, "key1", b"value1", 1.0),
+            kv_store.storage.wal.WALEntry(0, kv_store.storage.wal.WALEntryType.PUT, "key2", b"value2", 2.0),
+            kv_store.storage.wal.WALEntry(0, kv_store.storage.wal.WALEntryType.DELETE, "key1", None, 3.0),
+            kv_store.storage.wal.WALEntry(0, kv_store.storage.wal.WALEntryType.PUT, "key3", b"value3", 4.0),
         ]
 
         for entry in entries_to_write:
@@ -102,7 +91,7 @@ class TestWALAppendAndReplay:
         assert entries[1].key == "key2"
         assert entries[1].value == b"value2"
         assert entries[2].key == "key1"
-        assert entries[2].entry_type == WALEntryType.DELETE
+        assert entries[2].entry_type == kv_store.storage.wal.WALEntryType.DELETE
         assert entries[2].value is None
         assert entries[3].key == "key3"
         assert entries[3].value == b"value3"
@@ -119,7 +108,7 @@ class TestWALAppendAndReplay:
 
     async def test_append_with_empty_value(self, wal):
         """Test appending an entry with empty bytes value."""
-        entry = WALEntry(0, WALEntryType.PUT, "key", b"", 1.0)
+        entry = kv_store.storage.wal.WALEntry(0, kv_store.storage.wal.WALEntryType.PUT, "key", b"", 1.0)
         await wal.append(entry)
 
         entries = await wal.replay()
@@ -131,7 +120,7 @@ class TestWALAppendAndReplay:
 
     async def test_append_with_unicode_key(self, wal):
         """Test appending an entry with a unicode key."""
-        entry = WALEntry(0, WALEntryType.PUT, "日本語キー", b"value", 1.0)
+        entry = kv_store.storage.wal.WALEntry(0, kv_store.storage.wal.WALEntryType.PUT, "日本語キー", b"value", 1.0)
         await wal.append(entry)
 
         entries = await wal.replay()
@@ -141,7 +130,7 @@ class TestWALAppendAndReplay:
     async def test_append_with_large_value(self, wal):
         """Test appending an entry with a large value."""
         large_value = b"x" * 10240  # 10 KB
-        entry = WALEntry(0, WALEntryType.PUT, "big", large_value, 1.0)
+        entry = kv_store.storage.wal.WALEntry(0, kv_store.storage.wal.WALEntryType.PUT, "big", large_value, 1.0)
         await wal.append(entry)
 
         entries = await wal.replay()
@@ -155,7 +144,7 @@ class TestWALSequenceNumbers:
     async def test_sequence_numbers_monotonically_increasing(self, wal):
         """Test that sequence numbers increase with each append."""
         for i in range(5):
-            entry = WALEntry(0, WALEntryType.PUT, f"key{i}", b"val", float(i))
+            entry = kv_store.storage.wal.WALEntry(0, kv_store.storage.wal.WALEntryType.PUT, f"key{i}", b"val", float(i))
             await wal.append(entry)
 
         entries = await wal.replay()
@@ -166,7 +155,7 @@ class TestWALSequenceNumbers:
         """Test the sequence_number property reflects current state."""
         assert wal.sequence_number == 0
 
-        entry = WALEntry(0, WALEntryType.PUT, "k", b"v", 1.0)
+        entry = kv_store.storage.wal.WALEntry(0, kv_store.storage.wal.WALEntryType.PUT, "k", b"v", 1.0)
         await wal.append(entry)
         assert wal.sequence_number == 1
 
@@ -174,14 +163,16 @@ class TestWALSequenceNumbers:
         assert wal.sequence_number == 2
 
     async def test_replay_restores_sequence_number(self, wal_dir):
-        """Test that replay restores the sequence number from persisted entries."""
-        wal1 = WriteAheadLog(wal_dir)
+        """Test that replay restores the sequence number from persisted
+        entries.
+        """
+        wal1 = kv_store.storage.wal.WriteAheadLog(wal_dir)
         for i in range(3):
-            entry = WALEntry(0, WALEntryType.PUT, f"key{i}", b"val", float(i))
+            entry = kv_store.storage.wal.WALEntry(0, kv_store.storage.wal.WALEntryType.PUT, f"key{i}", b"val", float(i))
             await wal1.append(entry)
 
         # Create a new WAL instance (simulating restart)
-        wal2 = WriteAheadLog(wal_dir)
+        wal2 = kv_store.storage.wal.WriteAheadLog(wal_dir)
         assert wal2.sequence_number == 0  # Before replay
 
         await wal2.replay()
@@ -194,7 +185,7 @@ class TestWALTruncate:
     async def test_truncate_clears_all_entries(self, wal):
         """Test that truncate removes all entries."""
         for i in range(5):
-            entry = WALEntry(0, WALEntryType.PUT, f"key{i}", b"val", float(i))
+            entry = kv_store.storage.wal.WALEntry(0, kv_store.storage.wal.WALEntryType.PUT, f"key{i}", b"val", float(i))
             await wal.append(entry)
 
         await wal.truncate()
@@ -204,7 +195,7 @@ class TestWALTruncate:
 
     async def test_truncate_creates_empty_file(self, wal, wal_dir):
         """Test that truncate creates/leaves an empty file."""
-        entry = WALEntry(0, WALEntryType.PUT, "key", b"val", 1.0)
+        entry = kv_store.storage.wal.WALEntry(0, kv_store.storage.wal.WALEntryType.PUT, "key", b"val", 1.0)
         await wal.append(entry)
 
         await wal.truncate()
@@ -215,12 +206,12 @@ class TestWALTruncate:
 
     async def test_append_after_truncate(self, wal):
         """Test that appending after truncate works correctly."""
-        entry = WALEntry(0, WALEntryType.PUT, "before", b"val1", 1.0)
+        entry = kv_store.storage.wal.WALEntry(0, kv_store.storage.wal.WALEntryType.PUT, "before", b"val1", 1.0)
         await wal.append(entry)
 
         await wal.truncate()
 
-        entry = WALEntry(0, WALEntryType.PUT, "after", b"val2", 2.0)
+        entry = kv_store.storage.wal.WALEntry(0, kv_store.storage.wal.WALEntryType.PUT, "after", b"val2", 2.0)
         await wal.append(entry)
 
         entries = await wal.replay()
@@ -234,14 +225,14 @@ class TestWALCorruptionHandling:
     async def test_corrupt_checksum_skipped(self, wal, wal_dir):
         """Test that entries with invalid checksums are skipped."""
         # Write a valid entry
-        entry = WALEntry(0, WALEntryType.PUT, "good", b"value", 1.0)
+        entry = kv_store.storage.wal.WALEntry(0, kv_store.storage.wal.WALEntryType.PUT, "good", b"value", 1.0)
         await wal.append(entry)
 
         # Corrupt the checksum by modifying the last 4 bytes of the entry
         wal_path = os.path.join(wal_dir, "wal.log")
         with open(wal_path, "r+b") as f:
             # Seek to the checksum position (end of file minus checksum size)
-            f.seek(-_CHECKSUM_SIZE, 2)
+            f.seek(-kv_store.storage.wal._CHECKSUM_SIZE, 2)
             # Write garbage checksum
             f.write(b"\xff\xff\xff\xff")
 
@@ -249,16 +240,19 @@ class TestWALCorruptionHandling:
         assert len(entries) == 0  # Corrupt entry should be skipped
 
     async def test_partial_entry_at_end_skipped(self, wal, wal_dir):
-        """Test that a partial entry at the end of file is handled gracefully."""
+        """Test that a partial entry at the end of file is handled
+        gracefully.
+        """
         # Write a valid entry first
-        entry = WALEntry(0, WALEntryType.PUT, "good", b"value", 1.0)
+        entry = kv_store.storage.wal.WALEntry(0, kv_store.storage.wal.WALEntryType.PUT, "good", b"value", 1.0)
         await wal.append(entry)
 
-        # Append incomplete data (a length field pointing to more data than exists)
+        # Append incomplete data (a length field pointing to more data than
+        # exists)
         wal_path = os.path.join(wal_dir, "wal.log")
         with open(wal_path, "ab") as f:
             # Write a length that claims 1000 bytes follow, but don't write them
-            f.write(struct.pack(_LENGTH_FORMAT, 1000))
+            f.write(struct.pack(kv_store.storage.wal._LENGTH_FORMAT, 1000))
 
         entries = await wal.replay()
         assert len(entries) == 1  # Only the valid entry should be returned
@@ -267,8 +261,8 @@ class TestWALCorruptionHandling:
     async def test_corrupt_entry_between_valid_entries(self, wal, wal_dir):
         """Test that corruption in the middle stops replay at that point."""
         # Write two valid entries
-        entry1 = WALEntry(0, WALEntryType.PUT, "first", b"val1", 1.0)
-        entry2 = WALEntry(0, WALEntryType.PUT, "second", b"val2", 2.0)
+        entry1 = kv_store.storage.wal.WALEntry(0, kv_store.storage.wal.WALEntryType.PUT, "first", b"val1", 1.0)
+        entry2 = kv_store.storage.wal.WALEntry(0, kv_store.storage.wal.WALEntryType.PUT, "second", b"val2", 2.0)
         await wal.append(entry1)
         await wal.append(entry2)
 
@@ -278,13 +272,17 @@ class TestWALCorruptionHandling:
             data = f.read()
 
         # Find the first entry's length to locate the second entry
-        (first_entry_length,) = struct.unpack(_LENGTH_FORMAT, data[:_LENGTH_SIZE])
-        second_entry_start = _LENGTH_SIZE + first_entry_length
+        (first_entry_length,) = struct.unpack(
+            kv_store.storage.wal._LENGTH_FORMAT, data[:kv_store.storage.wal._LENGTH_SIZE]
+        )
+        second_entry_start = kv_store.storage.wal._LENGTH_SIZE + first_entry_length
 
         # Corrupt the checksum of the first entry
-        checksum_pos = second_entry_start - _CHECKSUM_SIZE
+        checksum_pos = second_entry_start - kv_store.storage.wal._CHECKSUM_SIZE
         corrupted = bytearray(data)
-        corrupted[checksum_pos:checksum_pos + _CHECKSUM_SIZE] = b"\x00\x00\x00\x00"
+        corrupted[checksum_pos : checksum_pos + kv_store.storage.wal._CHECKSUM_SIZE] = (
+            b"\x00\x00\x00\x00"
+        )
 
         with open(wal_path, "wb") as f:
             f.write(bytes(corrupted))
@@ -298,7 +296,7 @@ class TestWALCorruptionHandling:
 
     async def test_truncated_length_field(self, wal, wal_dir):
         """Test handling of a truncated length field at end of file."""
-        entry = WALEntry(0, WALEntryType.PUT, "good", b"value", 1.0)
+        entry = kv_store.storage.wal.WALEntry(0, kv_store.storage.wal.WALEntryType.PUT, "good", b"value", 1.0)
         await wal.append(entry)
 
         # Append only 2 bytes (incomplete length field)
@@ -315,11 +313,15 @@ class TestWALConcurrency:
     """Test concurrent access to the WAL."""
 
     async def test_concurrent_appends_maintain_ordering(self, wal):
-        """Test that concurrent appends produce monotonically increasing sequence numbers."""
+        """Test that concurrent appends produce monotonically increasing
+        sequence numbers.
+        """
         num_entries = 20
 
         async def append_entry(i: int):
-            entry = WALEntry(0, WALEntryType.PUT, f"key{i}", f"val{i}".encode(), float(i))
+            entry = kv_store.storage.wal.WALEntry(
+                0, kv_store.storage.wal.WALEntryType.PUT, f"key{i}", f"val{i}".encode(), float(i)
+            )
             await wal.append(entry)
 
         # Run multiple appends concurrently
@@ -341,9 +343,9 @@ class TestWALDirectoryCreation:
     async def test_creates_directory_if_not_exists(self, tmp_path):
         """Test that the WAL creates its directory if it doesn't exist."""
         wal_dir = str(tmp_path / "nested" / "wal" / "dir")
-        wal = WriteAheadLog(wal_dir)
+        wal = kv_store.storage.wal.WriteAheadLog(wal_dir)
 
-        entry = WALEntry(0, WALEntryType.PUT, "key", b"value", 1.0)
+        entry = kv_store.storage.wal.WALEntry(0, kv_store.storage.wal.WALEntryType.PUT, "key", b"value", 1.0)
         await wal.append(entry)
 
         entries = await wal.replay()
@@ -354,8 +356,8 @@ class TestWALDirectoryCreation:
         wal_dir = str(tmp_path / "existing_wal")
         os.makedirs(wal_dir)
 
-        wal = WriteAheadLog(wal_dir)
-        entry = WALEntry(0, WALEntryType.PUT, "key", b"value", 1.0)
+        wal = kv_store.storage.wal.WriteAheadLog(wal_dir)
+        entry = kv_store.storage.wal.WALEntry(0, kv_store.storage.wal.WALEntryType.PUT, "key", b"value", 1.0)
         await wal.append(entry)
 
         entries = await wal.replay()
@@ -367,22 +369,22 @@ class TestWALDurability:
 
     async def test_data_persists_across_instances(self, wal_dir):
         """Test that data written by one instance is readable by another."""
-        wal1 = WriteAheadLog(wal_dir)
+        wal1 = kv_store.storage.wal.WriteAheadLog(wal_dir)
         entries_to_write = [
-            WALEntry(0, WALEntryType.PUT, "persist1", b"data1", 100.0),
-            WALEntry(0, WALEntryType.PUT, "persist2", b"data2", 200.0),
-            WALEntry(0, WALEntryType.DELETE, "persist1", None, 300.0),
+            kv_store.storage.wal.WALEntry(0, kv_store.storage.wal.WALEntryType.PUT, "persist1", b"data1", 100.0),
+            kv_store.storage.wal.WALEntry(0, kv_store.storage.wal.WALEntryType.PUT, "persist2", b"data2", 200.0),
+            kv_store.storage.wal.WALEntry(0, kv_store.storage.wal.WALEntryType.DELETE, "persist1", None, 300.0),
         ]
         for entry in entries_to_write:
             await wal1.append(entry)
 
         # Create new instance (simulating restart)
-        wal2 = WriteAheadLog(wal_dir)
+        wal2 = kv_store.storage.wal.WriteAheadLog(wal_dir)
         entries = await wal2.replay()
 
         assert len(entries) == 3
         assert entries[0].key == "persist1"
-        assert entries[0].entry_type == WALEntryType.PUT
+        assert entries[0].entry_type == kv_store.storage.wal.WALEntryType.PUT
         assert entries[1].key == "persist2"
         assert entries[2].key == "persist1"
-        assert entries[2].entry_type == WALEntryType.DELETE
+        assert entries[2].entry_type == kv_store.storage.wal.WALEntryType.DELETE

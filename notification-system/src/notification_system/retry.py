@@ -1,32 +1,34 @@
 """Retry handler with exponential backoff and jitter for failed deliveries.
 
-Implements configurable retry logic that distinguishes between retryable
-and non-retryable errors, computes exponential backoff delays with jitter,
-and re-enqueues failed tasks or marks them as permanently failed.
+Implements configurable retry logic that distinguishes between retryable and
+non-retryable errors, computes exponential backoff delays with jitter, and re-
+enqueues failed tasks or marks them as permanently failed.
 """
 
 from __future__ import annotations
 
 import asyncio
+import datetime
 import logging
 import random
-from datetime import datetime, timezone
 
-from notification_system.config import RetryConfig
-from notification_system.exceptions import DeliveryError
-from notification_system.models import NotificationStatus, NotificationTask
-from notification_system.queue import MessageQueue
-from notification_system.tracker import EventTracker
-from notification_system.log import NotificationLog
+import notification_system.config
+import notification_system.exceptions
+import notification_system.log
+import notification_system.models
+import notification_system.queue
+import notification_system.tracker
 
 logger = logging.getLogger(__name__)
 
 
 class RetryHandler:
-    """Handles failed notification deliveries with exponential backoff and jitter.
+    """Handles failed notification deliveries with exponential backoff and
+    jitter.
 
     Computes delay as: min(base_delay * 2^attempt + jitter, max_delay)
-    where jitter is a random value in [0, jitter_factor * base_delay * 2^attempt].
+    where jitter is a random value in [0, jitter_factor * base_delay *
+    2^attempt].
 
     Non-retryable errors (invalid token, permanent rejection) skip retry
     and immediately mark the notification as FAILED.
@@ -34,10 +36,10 @@ class RetryHandler:
 
     def __init__(
         self,
-        config: RetryConfig,
-        queue: MessageQueue,
-        tracker: EventTracker,
-        notification_log: NotificationLog,
+        config: notification_system.config.RetryConfig,
+        queue: notification_system.queue.MessageQueue,
+        tracker: notification_system.tracker.EventTracker,
+        notification_log: notification_system.log.NotificationLog,
     ) -> None:
         self._config = config
         self._queue = queue
@@ -55,11 +57,15 @@ class RetryHandler:
         Returns:
             Delay in seconds.
         """
-        exponential = self._config.base_delay * (2 ** attempt)
+        exponential = self._config.base_delay * (2**attempt)
         jitter = random.uniform(0, self._config.jitter_factor * exponential)
         return min(exponential + jitter, self._config.max_delay)
 
-    async def handle_failure(self, task: NotificationTask, error: DeliveryError) -> None:
+    async def handle_failure(
+        self,
+        task: notification_system.models.NotificationTask,
+        error: notification_system.exceptions.DeliveryError,
+    ) -> None:
         """Handle a failed delivery attempt.
 
         If the error is retryable and max retries not exceeded, re-enqueue
@@ -75,7 +81,7 @@ class RetryHandler:
             recipient_id=task.request.recipient_id,
             channel=task.channel,
             content_summary=task.request.body[:100],
-            status=NotificationStatus.FAILED,
+            status=notification_system.models.NotificationStatus.FAILED,
             attempt=task.attempt + 1,
             error_details=error.reason,
         )
@@ -83,17 +89,23 @@ class RetryHandler:
         # Non-retryable errors: immediate permanent failure
         if not error.retryable:
             self._tracker.record(
-                task.notification_id, task.channel, NotificationStatus.FAILED
+                task.notification_id,
+                task.channel,
+                notification_system.models.NotificationStatus.FAILED,
             )
             logger.info(
-                "Non-retryable error for %s: %s", task.notification_id, error.reason
+                "Non-retryable error for %s: %s",
+                task.notification_id,
+                error.reason,
             )
             return
 
         # Check max retries
         if task.attempt >= self._config.max_retries:
             self._tracker.record(
-                task.notification_id, task.channel, NotificationStatus.FAILED
+                task.notification_id,
+                task.channel,
+                notification_system.models.NotificationStatus.FAILED,
             )
             logger.info(
                 "Max retries (%d) exceeded for %s",
@@ -113,12 +125,12 @@ class RetryHandler:
         await asyncio.sleep(delay)
 
         # Re-enqueue with incremented attempt counter
-        retry_task = NotificationTask(
+        retry_task = notification_system.models.NotificationTask(
             notification_id=task.notification_id,
             request=task.request,
             channel=task.channel,
             attempt=task.attempt + 1,
             created_at=task.created_at,
-            scheduled_at=datetime.now(timezone.utc),
+            scheduled_at=datetime.datetime.now(datetime.timezone.utc),
         )
         await self._queue.enqueue(retry_task)

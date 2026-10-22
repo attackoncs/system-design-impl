@@ -1,7 +1,7 @@
 """In-memory sorted key-value table (MemTable) for the LSM-tree storage engine.
 
-The MemTable provides fast in-memory writes and lookups. When the size threshold
-is reached, the MemTable is frozen and flushed to an SSTable on disk.
+The MemTable provides fast in-memory writes and lookups. When the size
+threshold is reached, the MemTable is frozen and flushed to an SSTable on disk.
 
 A plain Python dict is used for O(1) put/get operations. The entries_sorted()
 method sorts keys on demand for flushing to SSTables.
@@ -9,15 +9,14 @@ method sorts keys on demand for flushing to SSTables.
 Covers: FR-9.2, FR-9.3, FR-10.1
 """
 
-from dataclasses import dataclass
+import dataclasses
 from typing import Iterator, Optional
-
 
 # Approximate overhead per entry in bytes (object headers, dict slot, pointers)
 _ENTRY_OVERHEAD_BYTES = 64
 
 
-@dataclass
+@dataclasses.dataclass
 class MemTableEntry:
     """An entry stored in the MemTable."""
 
@@ -69,7 +68,9 @@ class MemTable:
             # Subtract old entry size
             self._size_bytes -= self._entry_size(existing)
 
-        entry = MemTableEntry(key=key, value=value, timestamp=timestamp, is_tombstone=False)
+        entry = MemTableEntry(
+            key=key, value=value, timestamp=timestamp, is_tombstone=False
+        )
         self._entries[key] = entry
         self._size_bytes += self._entry_size(entry)
 
@@ -93,7 +94,9 @@ class MemTable:
             # Subtract old entry size
             self._size_bytes -= self._entry_size(existing)
 
-        entry = MemTableEntry(key=key, value=None, timestamp=timestamp, is_tombstone=True)
+        entry = MemTableEntry(
+            key=key, value=None, timestamp=timestamp, is_tombstone=True
+        )
         self._entries[key] = entry
         self._size_bytes += self._entry_size(entry)
 
@@ -132,7 +135,9 @@ class MemTable:
             yield self._entries[key]
 
     def clear(self) -> None:
-        """Clear all entries and reset size tracking (after successful flush)."""
+        """Clear all entries and reset size tracking (after successful
+        flush).
+        """
         self._entries.clear()
         self._size_bytes = 0
 

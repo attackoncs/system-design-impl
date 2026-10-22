@@ -2,11 +2,11 @@
 
 import time
 import unittest
-from unittest.mock import Mock, patch
+import unittest.mock
 
-from src.rate_limiter.algorithms.fixed_window import FixedWindowAlgorithm
-from src.rate_limiter.config import Algorithm, RateLimitRule
-from src.rate_limiter.storage.memory import MemoryStorage
+import src.rate_limiter.algorithms.fixed_window
+import src.rate_limiter.config
+import src.rate_limiter.storage.memory
 
 
 class TestFixedWindowAlgorithm(unittest.TestCase):
@@ -14,9 +14,11 @@ class TestFixedWindowAlgorithm(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.algorithm = FixedWindowAlgorithm()
-        self.storage = MemoryStorage()
-        self.rule = RateLimitRule(limit=5, window=60, algorithm=Algorithm.FIXED_WINDOW)
+        self.algorithm = src.rate_limiter.algorithms.fixed_window.FixedWindowAlgorithm()
+        self.storage = src.rate_limiter.storage.memory.MemoryStorage()
+        self.rule = src.rate_limiter.config.RateLimitRule(
+            limit=5, window=60, algorithm=src.rate_limiter.config.Algorithm.FIXED_WINDOW
+        )
         self.key = "test_key"
 
     def test_allows_requests_within_limit(self):
@@ -55,7 +57,7 @@ class TestFixedWindowAlgorithm(unittest.TestCase):
         self.assertFalse(result.allowed)
 
         # Simulate moving to next window by mocking time
-        with patch('time.time', return_value=time.time() + 61):
+        with unittest.mock.patch("time.time", return_value=time.time() + 61):
             # Should be allowed again in new window
             result = self.algorithm.check(self.key, self.rule, self.storage)
             self.assertTrue(result.allowed)
@@ -65,44 +67,54 @@ class TestFixedWindowAlgorithm(unittest.TestCase):
     def test_reset_after_calculation(self):
         """Test that reset_after shows correct time until window reset."""
         # Use a time that's clearly within a window (not at boundary)
-        base_time = 1000030.0  # 10 seconds into a window (window: 1000020-1000080)
+        base_time = (
+            1000030.0  # 10 seconds into a window (window: 1000020-1000080)
+        )
 
-        with patch('time.time', return_value=base_time):
+        with unittest.mock.patch("time.time", return_value=base_time):
             result = self.algorithm.check(self.key, self.rule, self.storage)
             self.assertTrue(result.allowed)
 
             # Should reset after approximately 50 seconds (60 - 10 = 50)
             expected_reset = 50.0
-            self.assertAlmostEqual(result.reset_after, expected_reset, delta=0.1)
+            self.assertAlmostEqual(
+                result.reset_after, expected_reset, delta=0.1
+            )
 
         # Test at different point in window
-        with patch('time.time', return_value=base_time + 20):
+        with unittest.mock.patch("time.time", return_value=base_time + 20):
             result = self.algorithm.check(self.key, self.rule, self.storage)
             self.assertTrue(result.allowed)
 
             # Should reset after approximately 30 seconds (60 - 30 = 30)
             expected_reset = 30.0
-            self.assertAlmostEqual(result.reset_after, expected_reset, delta=0.1)
+            self.assertAlmostEqual(
+                result.reset_after, expected_reset, delta=0.1
+            )
 
     def test_retry_after_for_denied_requests(self):
         """Test that retry_after is set correctly for denied requests."""
         # Use a time that's clearly within a window (not at boundary)
-        base_time = 1000030.0  # 10 seconds into a window (window: 1000020-1000080)
+        base_time = (
+            1000030.0  # 10 seconds into a window (window: 1000020-1000080)
+        )
 
         # Fill the window
         for i in range(5):
-            with patch('time.time', return_value=base_time):
+            with unittest.mock.patch("time.time", return_value=base_time):
                 result = self.algorithm.check(self.key, self.rule, self.storage)
                 self.assertTrue(result.allowed)
 
         # Try one more request (still within same window)
-        with patch('time.time', return_value=base_time + 10):
+        with unittest.mock.patch("time.time", return_value=base_time + 10):
             result = self.algorithm.check(self.key, self.rule, self.storage)
             self.assertFalse(result.allowed)
 
             # Should retry after approximately 40 seconds (60 - 20 = 40)
             expected_retry = 40.0
-            self.assertAlmostEqual(result.retry_after, expected_retry, delta=0.1)
+            self.assertAlmostEqual(
+                result.retry_after, expected_retry, delta=0.1
+            )
 
     def test_different_keys_are_isolated(self):
         """Test that different keys have independent counters."""
@@ -121,8 +133,12 @@ class TestFixedWindowAlgorithm(unittest.TestCase):
 
     def test_different_rules_are_isolated(self):
         """Test that different rules affect the same key independently."""
-        rule1 = RateLimitRule(limit=3, window=60, algorithm=Algorithm.FIXED_WINDOW)
-        rule2 = RateLimitRule(limit=5, window=60, algorithm=Algorithm.FIXED_WINDOW)
+        rule1 = src.rate_limiter.config.RateLimitRule(
+            limit=3, window=60, algorithm=src.rate_limiter.config.Algorithm.FIXED_WINDOW
+        )
+        rule2 = src.rate_limiter.config.RateLimitRule(
+            limit=5, window=60, algorithm=src.rate_limiter.config.Algorithm.FIXED_WINDOW
+        )
 
         # Use up rule1
         for i in range(3):
@@ -142,16 +158,20 @@ class TestFixedWindowAlgorithm(unittest.TestCase):
         """Test behavior right at window boundaries."""
         # Use a time that's clearly within a window
         base_time = 1000030.0  # 30 seconds into a window
-        window_size = 60
 
-        # Make requests at the end of a window (e.g., at time 59 seconds into window)
-        with patch('time.time', return_value=base_time + 29):  # 59 seconds into window
+        # Make requests at the end of a window (e.g., at time 59 seconds into
+        # window)
+        with unittest.mock.patch(
+            "time.time", return_value=base_time + 29
+        ):  # 59 seconds into window
             for i in range(5):
                 result = self.algorithm.check(self.key, self.rule, self.storage)
                 self.assertTrue(result.allowed)
 
         # Make a request at the beginning of next window
-        with patch('time.time', return_value=base_time + 61):  # 1 second into next window
+        with unittest.mock.patch(
+            "time.time", return_value=base_time + 61
+        ):  # 1 second into next window
             result = self.algorithm.check(self.key, self.rule, self.storage)
             self.assertTrue(result.allowed)
             self.assertEqual(result.remaining, 4)
@@ -169,13 +189,12 @@ class TestFixedWindowAlgorithm(unittest.TestCase):
         window_start_key = f"{self.key}{rule_suffix}:window_start"
 
         # Keys should exist
-        self.assertIsNotNone(self.storage._get_raw(counter_key))
-        self.assertIsNotNone(self.storage._get_raw(window_start_key))
+        self.assertIsNotNone(self.storage.get_unlocked(counter_key))
+        self.assertIsNotNone(self.storage.get_unlocked(window_start_key))
 
     def test_atomic_operations(self):
         """Test that operations are atomic under concurrent access."""
         import threading
-        import time
 
         results = []
         errors = []
@@ -219,5 +238,5 @@ class TestFixedWindowAlgorithm(unittest.TestCase):
         self.assertEqual(set(remaining_counts), {0, 1, 2, 3, 4})
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

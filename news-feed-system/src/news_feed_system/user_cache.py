@@ -1,16 +1,16 @@
 """User profile cache with LRU eviction and TTL-based expiration.
 
-Provides fast access to user profile data during feed hydration and
-fanout filtering, avoiding repeated lookups to the user store.
+Provides fast access to user profile data during feed hydration and fanout
+filtering, avoiding repeated lookups to the user store.
 """
 
 from __future__ import annotations
 
+import collections
 import time
-from collections import OrderedDict
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Optional
 
-from news_feed_system.models import UserProfile
+import news_feed_system.models
 
 
 class UserCache:
@@ -22,7 +22,8 @@ class UserCache:
     Args:
         capacity: Maximum number of entries the cache can hold.
         ttl_seconds: Time-to-live for each entry in seconds.
-        clock: Callable returning the current time in seconds (default: time.monotonic).
+        clock: Callable returning the current time in seconds (default:
+            time.monotonic).
     """
 
     def __init__(
@@ -36,7 +37,9 @@ class UserCache:
         self._clock = clock or time.monotonic
         # OrderedDict preserves insertion order; we move to end on access
         # Maps user_id -> (UserProfile, expiry_timestamp)
-        self._store: OrderedDict[str, tuple[UserProfile, float]] = OrderedDict()
+        self._store: collections.OrderedDict[
+            str, tuple[news_feed_system.models.UserProfile, float]
+        ] = collections.OrderedDict()
 
     @property
     def capacity(self) -> int:
@@ -47,7 +50,7 @@ class UserCache:
         """Return the number of entries currently in the cache."""
         return len(self._store)
 
-    def put(self, user_profile: UserProfile) -> None:
+    def put(self, user_profile: news_feed_system.models.UserProfile) -> None:
         """Add or update a user profile in the cache.
 
         If the cache is at capacity and the user_id is not already present,
@@ -69,7 +72,9 @@ class UserCache:
                 self._store.popitem(last=False)
             self._store[user_id] = (user_profile, expiry)
 
-    def get(self, user_id: str) -> Optional[UserProfile]:
+    def get(
+        self, user_id: str
+    ) -> Optional[news_feed_system.models.UserProfile]:
         """Retrieve a user profile by user_id.
 
         Returns None if the entry is not found or has expired.
@@ -95,7 +100,9 @@ class UserCache:
         self._store.move_to_end(user_id)
         return profile
 
-    def get_batch(self, user_ids: list[str]) -> dict[str, UserProfile]:
+    def get_batch(
+        self, user_ids: list[str]
+    ) -> dict[str, news_feed_system.models.UserProfile]:
         """Retrieve multiple user profiles in a single operation.
 
         Only returns entries that are found and not expired.
@@ -107,7 +114,7 @@ class UserCache:
         Returns:
             Dictionary mapping user_id to UserProfile for found entries.
         """
-        results: dict[str, UserProfile] = {}
+        results: dict[str, news_feed_system.models.UserProfile] = {}
         for user_id in user_ids:
             profile = self.get(user_id)
             if profile is not None:

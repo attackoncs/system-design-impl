@@ -1,11 +1,11 @@
 """URL Frontier with priority front queues and politeness back queues."""
 
+import collections
 import heapq
 import time
-from collections import deque
 from typing import Optional
 
-from web_crawler.models import FrontierEntry
+import web_crawler.models
 
 
 class URLFrontier:
@@ -21,22 +21,26 @@ class URLFrontier:
     def __init__(self, per_host_delay: float = 1.0) -> None:
         self._per_host_delay = per_host_delay
         # Front queue: min-heap ordered by (priority_value, counter, entry)
-        self._front_queue: list[tuple[int, int, FrontierEntry]] = []
+        self._front_queue: list[
+            tuple[int, int, web_crawler.models.FrontierEntry]
+        ] = []
         self._counter = 0  # Tie-breaker for heap stability
         # Back queues: host -> deque of entries waiting for politeness
-        self._back_queues: dict[str, deque[FrontierEntry]] = {}
+        self._back_queues: dict[
+            str, collections.deque[web_crawler.models.FrontierEntry]
+        ] = {}
         # Per-host last access timestamps (monotonic)
         self._host_last_access: dict[str, float] = {}
         self._size = 0
 
-    def put(self, entry: FrontierEntry) -> None:
+    def put(self, entry: web_crawler.models.FrontierEntry) -> None:
         """Add a URL to the frontier.
 
         Assigns to front queue by priority and back queue by host.
         """
         # Add to back queue for the host
         if entry.host not in self._back_queues:
-            self._back_queues[entry.host] = deque()
+            self._back_queues[entry.host] = collections.deque()
         self._back_queues[entry.host].append(entry)
 
         # Add to front queue (priority heap)
@@ -47,16 +51,16 @@ class URLFrontier:
         self._counter += 1
         self._size += 1
 
-    def get(self) -> Optional[FrontierEntry]:
+    def get(self) -> Optional[web_crawler.models.FrontierEntry]:
         """Dequeue the next URL respecting priority and politeness.
 
-        Returns the highest-priority URL whose host's politeness delay
-        has elapsed. Returns None if no URL is currently available.
+        Returns the highest-priority URL whose host's politeness delay has
+        elapsed. Returns None if no URL is currently available.
         """
         now = time.monotonic()
-        skipped: list[tuple[int, int, FrontierEntry]] = []
+        skipped: list[tuple[int, int, web_crawler.models.FrontierEntry]] = []
 
-        result: Optional[FrontierEntry] = None
+        result: Optional[web_crawler.models.FrontierEntry] = None
         while self._front_queue:
             priority_val, counter, entry = heapq.heappop(self._front_queue)
 

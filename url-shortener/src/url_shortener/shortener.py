@@ -1,51 +1,56 @@
 """URL Shortener orchestrator module.
 
-Coordinates between hash strategies, storage backends, and click tracking
-to provide the full shorten/redirect flow.
+Coordinates between hash strategies, storage backends, and click tracking to
+provide the full shorten/redirect flow.
 """
 
-from datetime import datetime, timezone
+import datetime
+import urllib.parse
 from typing import Optional
-from urllib.parse import urlparse
 
-from url_shortener.exceptions import ShortCodeNotFoundError, URLValidationError
-from url_shortener.models import ClickRecord, RedirectType, URLMapping
-from url_shortener.storage import InMemoryStorage, StorageBackend
-from url_shortener.strategies import HashCollisionStrategy, HashStrategy
+import url_shortener.exceptions
+import url_shortener.storage
+import url_shortener.strategies
+from url_shortener import models
 
 
 class URLShortener:
     """Main orchestrator for URL shortening and redirecting.
 
-    Coordinates between hash strategies, storage backends, and
-    click tracking to provide the full shorten/redirect flow.
+    Coordinates between hash strategies, storage backends, and click tracking
+    to provide the full shorten/redirect flow.
     """
 
     def __init__(
         self,
-        strategy: Optional[HashStrategy] = None,
-        storage: Optional[StorageBackend] = None,
-        default_redirect_type: RedirectType = RedirectType.TEMPORARY,
+        strategy: Optional[url_shortener.strategies.HashStrategy] = None,
+        storage: Optional[url_shortener.storage.StorageBackend] = None,
+        default_redirect_type: models.RedirectType = models.RedirectType.TEMPORARY,
         domain: str = "http://short.url",
     ) -> None:
         """Initialize the URL shortener.
 
         Args:
-            strategy: Hash strategy for code generation. Defaults to HashCollisionStrategy.
-            storage: Storage backend for persistence. Defaults to InMemoryStorage.
-            default_redirect_type: Default redirect type for new mappings. Defaults to 302.
+            strategy: Hash strategy for code generation. Defaults to
+                HashCollisionStrategy.
+            storage: Storage backend for persistence. Defaults to
+                InMemoryStorage.
+            default_redirect_type: Default redirect type for new mappings.
+                Defaults to 302.
             domain: Custom domain for constructing short URLs.
         """
-        self._strategy = strategy or HashCollisionStrategy()
-        self._storage = storage or InMemoryStorage()
+        self._strategy = (
+            strategy or url_shortener.strategies.HashCollisionStrategy()
+        )
+        self._storage = storage or url_shortener.storage.InMemoryStorage()
         self._default_redirect_type = default_redirect_type
         self._domain = domain.rstrip("/")
-        self._clicks: dict[str, list[ClickRecord]] = {}
+        self._clicks: dict[str, list[models.ClickRecord]] = {}
 
     def shorten(
         self,
         long_url: str,
-        redirect_type: Optional[RedirectType] = None,
+        redirect_type: Optional[models.RedirectType] = None,
     ) -> str:
         """Shorten a long URL to a short code.
 
@@ -70,7 +75,7 @@ class URLShortener:
         short_code = self._strategy.generate(long_url, self._storage)
 
         # Store the mapping
-        mapping = URLMapping(
+        mapping = models.URLMapping(
             short_code=short_code,
             long_url=long_url,
             redirect_type=redirect_type or self._default_redirect_type,
@@ -83,7 +88,7 @@ class URLShortener:
         self,
         short_code: str,
         client_id: Optional[str] = None,
-    ) -> tuple[str, RedirectType]:
+    ) -> tuple[str, models.RedirectType]:
         """Resolve a short code to the original long URL.
 
         Args:
@@ -98,14 +103,14 @@ class URLShortener:
         """
         mapping = self._storage.get_by_short_code(short_code)
         if mapping is None:
-            raise ShortCodeNotFoundError(
+            raise url_shortener.exceptions.ShortCodeNotFoundError(
                 f"Short code '{short_code}' not found"
             )
 
         # Record click for analytics
-        click = ClickRecord(
+        click = models.ClickRecord(
             short_code=short_code,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.datetime.now(datetime.timezone.utc),
             client_id=client_id,
         )
         self._clicks.setdefault(short_code, []).append(click)
@@ -123,7 +128,9 @@ class URLShortener:
         """
         return len(self._clicks.get(short_code, []))
 
-    def get_click_records(self, short_code: str) -> list[ClickRecord]:
+    def get_click_records(
+        self, short_code: str
+    ) -> list[models.ClickRecord]:
         """Get all click records for a short code.
 
         Args:
@@ -144,14 +151,16 @@ class URLShortener:
             URLValidationError: If the URL is invalid.
         """
         if not url or not url.strip():
-            raise URLValidationError("URL cannot be empty")
+            raise url_shortener.exceptions.URLValidationError(
+                "URL cannot be empty"
+            )
 
-        parsed = urlparse(url)
+        parsed = urllib.parse.urlparse(url)
         if not parsed.scheme:
-            raise URLValidationError(
+            raise url_shortener.exceptions.URLValidationError(
                 f"URL missing scheme (http/https): '{url}'"
             )
         if not parsed.netloc:
-            raise URLValidationError(
+            raise url_shortener.exceptions.URLValidationError(
                 f"URL missing network location: '{url}'"
             )

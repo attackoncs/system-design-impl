@@ -9,24 +9,20 @@ templates, and querying status.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Optional
 
-from notification_system.config import NotificationConfig
-from notification_system.contacts import ContactInfoStore
-from notification_system.dedup import Deduplicator
-from notification_system.exceptions import ValidationError
-from notification_system.models import (
-    Channel,
-    NotificationRequest,
-    NotificationStatus,
-    NotificationTask,
-)
-from notification_system.queue import MessageQueue
-from notification_system.rate_limiter import SlidingWindowRateLimiter
-from notification_system.settings import NotificationSettings
-from notification_system.templates import TemplateRegistry
-from notification_system.tracker import EventTracker
+import notification_system.config
+import notification_system.contacts
+import notification_system.dedup
+import notification_system.exceptions
+import notification_system.models
+import notification_system.queue
+import notification_system.rate_limiter
+import notification_system.settings
+import notification_system.templates
+import notification_system.tracker
 
 
 class NotificationService:
@@ -40,14 +36,22 @@ class NotificationService:
 
     def __init__(
         self,
-        config: Optional[NotificationConfig] = None,
-        queue: Optional[MessageQueue] = None,
-        settings: Optional[NotificationSettings] = None,
-        contacts: Optional[ContactInfoStore] = None,
-        rate_limiter: Optional[SlidingWindowRateLimiter] = None,
-        deduplicator: Optional[Deduplicator] = None,
-        tracker: Optional[EventTracker] = None,
-        template_registry: Optional[TemplateRegistry] = None,
+        config: Optional[notification_system.config.NotificationConfig] = None,
+        queue: Optional[notification_system.queue.MessageQueue] = None,
+        settings: Optional[
+            notification_system.settings.NotificationSettings
+        ] = None,
+        contacts: Optional[
+            notification_system.contacts.ContactInfoStore
+        ] = None,
+        rate_limiter: Optional[
+            notification_system.rate_limiter.SlidingWindowRateLimiter
+        ] = None,
+        deduplicator: Optional[notification_system.dedup.Deduplicator] = None,
+        tracker: Optional[notification_system.tracker.EventTracker] = None,
+        template_registry: Optional[
+            notification_system.templates.TemplateRegistry
+        ] = None,
     ) -> None:
         """Initialize the NotificationService with all pipeline components.
 
@@ -61,51 +65,68 @@ class NotificationService:
             tracker: Lifecycle event tracker.
             template_registry: Template registry for content resolution.
         """
-        self._config = config or NotificationConfig()
-        self._queue = queue or MessageQueue(max_depth=self._config.queue_max_depth)
-        self._settings = settings or NotificationSettings()
-        self._contacts = contacts or ContactInfoStore()
-        self._rate_limiter = rate_limiter or SlidingWindowRateLimiter(
-            per_channel_limits=self._config.per_channel_rate_limits,
-            global_limit=self._config.global_rate_limit,
+        self._config = config or notification_system.config.NotificationConfig()
+        self._queue = queue or notification_system.queue.MessageQueue(
+            max_depth=self._config.queue_max_depth
         )
-        self._deduplicator = deduplicator or Deduplicator(
-            window_seconds=self._config.dedup_window_seconds
+        self._settings = (
+            settings or notification_system.settings.NotificationSettings()
         )
-        self._tracker = tracker or EventTracker()
-        self._templates = template_registry or TemplateRegistry()
+        self._contacts = (
+            contacts or notification_system.contacts.ContactInfoStore()
+        )
+        self._rate_limiter = (
+            rate_limiter
+            or notification_system.rate_limiter.SlidingWindowRateLimiter(
+                per_channel_limits=self._config.per_channel_rate_limits,
+                global_limit=self._config.global_rate_limit,
+            )
+        )
+        self._deduplicator = (
+            deduplicator
+            or notification_system.dedup.Deduplicator(
+                window_seconds=self._config.dedup_window_seconds
+            )
+        )
+        self._tracker = tracker or notification_system.tracker.EventTracker()
+        self._templates = (
+            template_registry
+            or notification_system.templates.TemplateRegistry()
+        )
 
     @property
-    def config(self) -> NotificationConfig:
+    def config(self) -> notification_system.config.NotificationConfig:
         """The system configuration."""
         return self._config
 
     @property
-    def queue(self) -> MessageQueue:
+    def queue(self) -> notification_system.queue.MessageQueue:
         """The message queue."""
         return self._queue
 
     @property
-    def settings(self) -> NotificationSettings:
+    def settings(self) -> notification_system.settings.NotificationSettings:
         """The notification settings store."""
         return self._settings
 
     @property
-    def contacts(self) -> ContactInfoStore:
+    def contacts(self) -> notification_system.contacts.ContactInfoStore:
         """The contact info store."""
         return self._contacts
 
     @property
-    def tracker(self) -> EventTracker:
+    def tracker(self) -> notification_system.tracker.EventTracker:
         """The event tracker."""
         return self._tracker
 
     @property
-    def templates(self) -> TemplateRegistry:
+    def templates(self) -> notification_system.templates.TemplateRegistry:
         """The template registry."""
         return self._templates
 
-    async def send(self, request: NotificationRequest) -> str:
+    async def send(
+        self, request: notification_system.models.NotificationRequest
+    ) -> str:
         """Send a single notification through the pipeline.
 
         Pipeline steps:
@@ -136,28 +157,32 @@ class NotificationService:
             request.recipient_id, request.channel
         )
         if endpoint is None:
-            raise ValidationError(
+            raise notification_system.exceptions.ValidationError(
                 f"No contact info for user '{request.recipient_id}' "
                 f"on channel '{request.channel.value}'",
                 field="recipient_id",
             )
 
         # 2. Check preferences: reject if user opted out
-        if not self._settings.is_opted_in(request.recipient_id, request.channel):
+        if not self._settings.is_opted_in(
+            request.recipient_id, request.channel
+        ):
             # Record UNSUBSCRIBED event before rejecting
             self._tracker.record(
                 notification_id,
                 request.channel,
-                NotificationStatus.UNSUBSCRIBED,
+                notification_system.models.NotificationStatus.UNSUBSCRIBED,
             )
-            raise ValidationError(
+            raise notification_system.exceptions.ValidationError(
                 f"User '{request.recipient_id}' has opted out of "
                 f"'{request.channel.value}'"
             )
 
         # Record CREATED event
         self._tracker.record(
-            notification_id, request.channel, NotificationStatus.CREATED
+            notification_id,
+            request.channel,
+            notification_system.models.NotificationStatus.CREATED,
         )
 
         # 3. Resolve content (template or direct)
@@ -174,7 +199,7 @@ class NotificationService:
         )
 
         # 6. Enqueue to the appropriate channel queue
-        task = NotificationTask(
+        task = notification_system.models.NotificationTask(
             notification_id=notification_id,
             request=request,
             channel=request.channel,
@@ -183,13 +208,15 @@ class NotificationService:
 
         # Record QUEUED event
         self._tracker.record(
-            notification_id, request.channel, NotificationStatus.QUEUED
+            notification_id,
+            request.channel,
+            notification_system.models.NotificationStatus.QUEUED,
         )
 
         return notification_id
 
     async def send_batch(
-        self, requests: list[NotificationRequest]
+        self, requests: list[notification_system.models.NotificationRequest]
     ) -> list[str]:
         """Send notifications to multiple recipients in a single batch.
 
@@ -208,12 +235,16 @@ class NotificationService:
             try:
                 nid = await self.send(request)
                 results.append(nid)
-            except Exception:
+            # Isolate this operation; record failures before continuing.
+            except Exception:  # pylint: disable=broad-exception-caught
+                logging.getLogger(__name__).exception(
+                    "Failure isolated in %s", "send_batch"
+                )
                 results.append("")
         return results
 
     def _resolve_content(
-        self, request: NotificationRequest
+        self, request: notification_system.models.NotificationRequest
     ) -> tuple[str, str]:
         """Resolve notification content from template or direct fields.
 
@@ -234,7 +265,7 @@ class NotificationService:
         if request.template_id:
             template = self._templates.get(request.template_id)
             if template is None:
-                raise ValidationError(
+                raise notification_system.exceptions.ValidationError(
                     f"Template '{request.template_id}' not found",
                     field="template_id",
                 )

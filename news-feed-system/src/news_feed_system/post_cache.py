@@ -1,18 +1,18 @@
 """Two-tier post cache with hot and normal tiers.
 
 Provides a content cache for posts with automatic promotion and demotion
-between hot (popular/recent) and normal tiers based on access patterns.
-New posts are placed in the hot cache. When the hot cache reaches capacity,
-the least recently used entries are demoted to the normal cache. Posts in
-the normal cache that are accessed frequently are promoted to the hot cache.
+between hot (popular/recent) and normal tiers based on access patterns. New
+posts are placed in the hot cache. When the hot cache reaches capacity, the
+least recently used entries are demoted to the normal cache. Posts in the
+normal cache that are accessed frequently are promoted to the hot cache.
 """
 
 from __future__ import annotations
 
-from collections import OrderedDict
+import collections
 from typing import Optional
 
-from news_feed_system.models import Post
+import news_feed_system.models
 
 
 class PostCache:
@@ -38,19 +38,29 @@ class PostCache:
         access_threshold: int = 5,
     ) -> None:
         if hot_capacity <= 0:
-            raise ValueError(f"hot_capacity must be positive, got {hot_capacity}")
+            raise ValueError(
+                f"hot_capacity must be positive, got {hot_capacity}"
+            )
         if normal_capacity <= 0:
-            raise ValueError(f"normal_capacity must be positive, got {normal_capacity}")
+            raise ValueError(
+                f"normal_capacity must be positive, got {normal_capacity}"
+            )
         if access_threshold <= 0:
-            raise ValueError(f"access_threshold must be positive, got {access_threshold}")
+            raise ValueError(
+                f"access_threshold must be positive, got {access_threshold}"
+            )
 
         self._hot_capacity = hot_capacity
         self._normal_capacity = normal_capacity
         self._access_threshold = access_threshold
 
         # OrderedDict for LRU: most recently used at the end
-        self._hot: OrderedDict[str, Post] = OrderedDict()
-        self._normal: OrderedDict[str, Post] = OrderedDict()
+        self._hot: collections.OrderedDict[
+            str, news_feed_system.models.Post
+        ] = collections.OrderedDict()
+        self._normal: collections.OrderedDict[
+            str, news_feed_system.models.Post
+        ] = collections.OrderedDict()
 
         # Track access counts for posts in the normal tier
         self._access_counts: dict[str, int] = {}
@@ -80,7 +90,7 @@ class PostCache:
         """Current number of posts in the normal tier."""
         return len(self._normal)
 
-    def put(self, post: Post) -> None:
+    def put(self, post: news_feed_system.models.Post) -> None:
         """Add a new post to the cache.
 
         New posts are always placed in the hot cache. If the post already
@@ -110,7 +120,7 @@ class PostCache:
 
         self._hot[post_id] = post
 
-    def get(self, post_id: str) -> Optional[Post]:
+    def get(self, post_id: str) -> Optional[news_feed_system.models.Post]:
         """Retrieve a post by post_id.
 
         Checks the hot cache first, then the normal cache. Accessing a
@@ -163,7 +173,7 @@ class PostCache:
         # Reset access count for demoted post
         self._access_counts[post_id] = 0
 
-    def _promote_to_hot(self, post_id: str) -> Post:
+    def _promote_to_hot(self, post_id: str) -> news_feed_system.models.Post:
         """Promote a post from normal to hot cache.
 
         Args:

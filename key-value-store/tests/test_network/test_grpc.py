@@ -9,21 +9,17 @@ Tests cover:
 
 from __future__ import annotations
 
-import asyncio
+import dataclasses
 import time
-from dataclasses import dataclass, field
 from typing import Optional
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import grpc
 import grpc.aio
+import kv_store.network.grpc_client
+import kv_store.network.grpc_server
+import kv_store.replication.vector_clock
 import pytest
-
-from kv_store.network.grpc_server import GRPCServer, KVStoreServicer
-from kv_store.network.grpc_client import GRPCClient, NodeUnavailableError
 from kv_store.network import kvstore_pb2, kvstore_pb2_grpc
-from kv_store.replication.vector_clock import VectorClock
-
 
 # --- Mock Components ---
 
@@ -53,7 +49,7 @@ class MockStorageEngine:
         self._data[key] = (b"", timestamp, True)
 
 
-@dataclass
+@dataclasses.dataclass
 class MockStorageResult:
     key: str
     value: Optional[bytes]
@@ -66,7 +62,7 @@ class MockCoordinator:
     """Mock request coordinator for testing."""
 
     def __init__(self):
-        self._data: dict[str, tuple[bytes, VectorClock]] = {}
+        self._data: dict[str, tuple[bytes, kv_store.replication.vector_clock.VectorClock]] = {}
 
     async def put(
         self,
@@ -75,10 +71,12 @@ class MockCoordinator:
         client_clock=None,
         consistency=None,
     ):
-        clock = client_clock if client_clock else VectorClock()
+        clock = client_clock if client_clock else kv_store.replication.vector_clock.VectorClock()
         new_clock = clock.increment("test-node")
         self._data[key] = (value, new_clock)
-        return MockPutResult(success=True, vector_clock=new_clock, replicas_acknowledged=3)
+        return MockPutResult(
+            success=True, vector_clock=new_clock, replicas_acknowledged=3
+        )
 
     async def get(self, key: str, consistency=None):
         if key in self._data:
@@ -99,33 +97,33 @@ class MockCoordinator:
         )
 
     async def delete(self, key: str, client_clock=None, consistency=None):
-        clock = client_clock if client_clock else VectorClock()
+        clock = client_clock if client_clock else kv_store.replication.vector_clock.VectorClock()
         new_clock = clock.increment("test-node")
         if key in self._data:
             del self._data[key]
         return MockDeleteResult(success=True, vector_clock=new_clock)
 
 
-@dataclass
+@dataclasses.dataclass
 class MockPutResult:
     success: bool
-    vector_clock: VectorClock
+    vector_clock: kv_store.replication.vector_clock.VectorClock
     replicas_acknowledged: int
 
 
-@dataclass
+@dataclasses.dataclass
 class MockGetResult:
     found: bool
     value: Optional[bytes]
-    vector_clock: Optional[VectorClock]
+    vector_clock: Optional[kv_store.replication.vector_clock.VectorClock]
     has_conflict: bool
-    conflicting_values: list = field(default_factory=list)
+    conflicting_values: list = dataclasses.field(default_factory=list)
 
 
-@dataclass
+@dataclasses.dataclass
 class MockDeleteResult:
     success: bool
-    vector_clock: VectorClock
+    vector_clock: kv_store.replication.vector_clock.VectorClock
 
 
 class MockGossipProtocol:
@@ -154,18 +152,20 @@ class MockMerkleTree:
         for bucket_id, local_hash in self._bucket_hashes.items():
             remote_hash = other_bucket_hashes.get(bucket_id, "")
             if local_hash != remote_hash:
-                diffs.append(MockSyncDiff(
-                    bucket_id=bucket_id,
-                    local_hash=local_hash,
-                    remote_hash=remote_hash,
-                ))
+                diffs.append(
+                    MockSyncDiff(
+                        bucket_id=bucket_id,
+                        local_hash=local_hash,
+                        remote_hash=remote_hash,
+                    )
+                )
         return diffs
 
     def get_keys_in_bucket(self, bucket_id):
         return [f"key-in-bucket-{bucket_id}"]
 
 
-@dataclass
+@dataclasses.dataclass
 class MockSyncDiff:
     bucket_id: int
     local_hash: str
@@ -198,7 +198,7 @@ def mock_merkle():
 @pytest.fixture
 async def grpc_server(mock_coordinator, mock_storage, mock_gossip, mock_merkle):
     """Create and start a gRPC server on a random port for testing."""
-    server = GRPCServer(
+    server = kv_store.network.grpc_server.GRPCServer(
         coordinator=mock_coordinator,
         storage_engine=mock_storage,
         gossip_protocol=mock_gossip,
@@ -212,7 +212,7 @@ async def grpc_server(mock_coordinator, mock_storage, mock_gossip, mock_merkle):
         ("grpc.max_receive_message_length", server._max_message_size),
     ]
     aio_server = grpc.aio.server(options=options)
-    servicer = KVStoreServicer(
+    servicer = kv_store.network.grpc_server.KVStoreServicer(
         coordinator=mock_coordinator,
         storage_engine=mock_storage,
         gossip_protocol=mock_gossip,
@@ -238,7 +238,7 @@ class TestGRPCServerLifecycle:
         self, mock_coordinator, mock_storage, mock_gossip, mock_merkle
     ):
         """Server should start and stop without errors."""
-        server = GRPCServer(
+        server = kv_store.network.grpc_server.GRPCServer(
             coordinator=mock_coordinator,
             storage_engine=mock_storage,
             gossip_protocol=mock_gossip,
@@ -258,7 +258,7 @@ class TestGRPCServerLifecycle:
         self, mock_coordinator, mock_storage, mock_gossip, mock_merkle
     ):
         """Stopping a server that hasn't started should not raise."""
-        server = GRPCServer(
+        server = kv_store.network.grpc_server.GRPCServer(
             coordinator=mock_coordinator,
             storage_engine=mock_storage,
             gossip_protocol=mock_gossip,
@@ -274,7 +274,9 @@ class TestGRPCServerLifecycle:
 
 
 class TestGRPCEndToEnd:
-    """Tests for Put/Get/Delete RPCs working end-to-end via in-process server."""
+    """Tests for Put/Get/Delete RPCs working end-to-end via in-process
+    server.
+    """
 
     @pytest.mark.asyncio
     async def test_put_and_get(self, grpc_server):
@@ -282,9 +284,9 @@ class TestGRPCEndToEnd:
         server, port = grpc_server
         target = f"127.0.0.1:{port}"
 
-        client = GRPCClient(timeout=5.0)
+        client = kv_store.network.grpc_client.GRPCClient(timeout=5.0)
         try:
-            clock = VectorClock()
+            clock = kv_store.replication.vector_clock.VectorClock()
 
             # Put
             success = await client.put(target, "test-key", b"test-value", clock)
@@ -304,7 +306,7 @@ class TestGRPCEndToEnd:
         server, port = grpc_server
         target = f"127.0.0.1:{port}"
 
-        client = GRPCClient(timeout=5.0)
+        client = kv_store.network.grpc_client.GRPCClient(timeout=5.0)
         try:
             result = await client.get(target, "nonexistent-key")
             assert result is None
@@ -317,9 +319,9 @@ class TestGRPCEndToEnd:
         server, port = grpc_server
         target = f"127.0.0.1:{port}"
 
-        client = GRPCClient(timeout=5.0)
+        client = kv_store.network.grpc_client.GRPCClient(timeout=5.0)
         try:
-            clock = VectorClock()
+            clock = kv_store.replication.vector_clock.VectorClock()
 
             # Put
             success = await client.put(target, "del-key", b"del-value", clock)
@@ -330,7 +332,8 @@ class TestGRPCEndToEnd:
             assert result is not None
 
             # Delete
-            # Use the stub directly for delete since our client doesn't expose delete
+            # Use the stub directly for delete since our client doesn't expose
+            # delete
             stub = kvstore_pb2_grpc.KVStoreServiceStub(
                 client._get_channel(target)
             )
@@ -352,14 +355,14 @@ class TestGRPCClientUnavailable:
     @pytest.mark.asyncio
     async def test_put_to_unavailable_node(self):
         """Put to an unavailable node should raise NodeUnavailableError."""
-        client = GRPCClient(timeout=1.0)
+        client = kv_store.network.grpc_client.GRPCClient(timeout=1.0)
         try:
-            with pytest.raises(NodeUnavailableError) as exc_info:
+            with pytest.raises(kv_store.network.grpc_client.NodeUnavailableError) as exc_info:
                 await client.put(
                     "127.0.0.1:59999",  # No server running here
                     "key",
                     b"value",
-                    VectorClock(),
+                    kv_store.replication.vector_clock.VectorClock(),
                 )
             assert "127.0.0.1:59999" in str(exc_info.value)
         finally:
@@ -368,24 +371,26 @@ class TestGRPCClientUnavailable:
     @pytest.mark.asyncio
     async def test_get_from_unavailable_node(self):
         """Get from an unavailable node should raise NodeUnavailableError."""
-        client = GRPCClient(timeout=1.0)
+        client = kv_store.network.grpc_client.GRPCClient(timeout=1.0)
         try:
-            with pytest.raises(NodeUnavailableError):
+            with pytest.raises(kv_store.network.grpc_client.NodeUnavailableError):
                 await client.get("127.0.0.1:59999", "key")
         finally:
             await client.close()
 
     @pytest.mark.asyncio
     async def test_replicate_to_unavailable_node(self):
-        """Replicate to an unavailable node should raise NodeUnavailableError."""
-        client = GRPCClient(timeout=1.0)
+        """Replicate to an unavailable node should raise
+        NodeUnavailableError.
+        """
+        client = kv_store.network.grpc_client.GRPCClient(timeout=1.0)
         try:
-            with pytest.raises(NodeUnavailableError):
+            with pytest.raises(kv_store.network.grpc_client.NodeUnavailableError):
                 await client.replicate(
                     "127.0.0.1:59999",
                     "key",
                     b"value",
-                    VectorClock(),
+                    kv_store.replication.vector_clock.VectorClock(),
                     timestamp=time.time(),
                 )
         finally:
@@ -401,7 +406,7 @@ class TestConnectionPooling:
     @pytest.mark.asyncio
     async def test_reuses_channel_for_same_target(self):
         """Multiple calls to the same target should reuse the same channel."""
-        client = GRPCClient()
+        client = kv_store.network.grpc_client.GRPCClient()
         try:
             target = "127.0.0.1:50051"
 
@@ -417,7 +422,7 @@ class TestConnectionPooling:
     @pytest.mark.asyncio
     async def test_different_targets_get_different_channels(self):
         """Different targets should get different channels."""
-        client = GRPCClient()
+        client = kv_store.network.grpc_client.GRPCClient()
         try:
             channel1 = client._get_channel("127.0.0.1:50051")
             channel2 = client._get_channel("127.0.0.1:50052")
@@ -430,7 +435,7 @@ class TestConnectionPooling:
     @pytest.mark.asyncio
     async def test_close_clears_all_channels(self):
         """Closing the client should clear all channels."""
-        client = GRPCClient()
+        client = kv_store.network.grpc_client.GRPCClient()
 
         # Create some channels
         client._get_channel("127.0.0.1:50051")
@@ -453,9 +458,9 @@ class TestReplicateRPC:
         server, port = grpc_server
         target = f"127.0.0.1:{port}"
 
-        client = GRPCClient(timeout=5.0)
+        client = kv_store.network.grpc_client.GRPCClient(timeout=5.0)
         try:
-            clock = VectorClock({"node-1": 1})
+            clock = kv_store.replication.vector_clock.VectorClock({"node-1": 1})
             success = await client.replicate(
                 target,
                 key="replicated-key",
@@ -480,9 +485,9 @@ class TestReplicateRPC:
         server, port = grpc_server
         target = f"127.0.0.1:{port}"
 
-        client = GRPCClient(timeout=5.0)
+        client = kv_store.network.grpc_client.GRPCClient(timeout=5.0)
         try:
-            clock = VectorClock({"node-1": 1})
+            clock = kv_store.replication.vector_clock.VectorClock({"node-1": 1})
             success = await client.replicate(
                 target,
                 key="tomb-key",

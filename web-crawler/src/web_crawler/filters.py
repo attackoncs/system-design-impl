@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import urllib.parse
 from typing import Callable, List, Optional, Set
-from urllib.parse import urlparse
 
 
 class URLFilter:
@@ -27,13 +27,15 @@ class URLFilter:
         custom_filters: Optional[List[Callable[[str], bool]]] = None,
     ) -> None:
         self._extension_blacklist: Set[str] = set(
-            ext.lower() for ext in (extension_blacklist or [])
+            ext.lower() for ext in extension_blacklist or []
         )
         self._domain_whitelist: Optional[Set[str]] = (
-            set(d.lower() for d in domain_whitelist) if domain_whitelist else None
+            set(d.lower() for d in domain_whitelist)
+            if domain_whitelist
+            else None
         )
         self._domain_blacklist: Set[str] = set(
-            d.lower() for d in (domain_blacklist or [])
+            d.lower() for d in domain_blacklist or []
         )
         self._max_url_length: int = max_url_length
         self._custom_filters: List[Callable[[str], bool]] = custom_filters or []
@@ -47,7 +49,7 @@ class URLFilter:
         Returns:
             True if the URL is accepted, False if rejected.
         """
-        parsed = urlparse(url)
+        parsed = urllib.parse.urlparse(url)
 
         # 1. Scheme check (http/https only)
         if parsed.scheme.lower() not in ("http", "https"):

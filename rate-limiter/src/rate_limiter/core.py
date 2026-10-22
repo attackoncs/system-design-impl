@@ -1,21 +1,25 @@
-"""Core RateLimiter orchestrator that ties algorithms, storage, and config together."""
+"""Core RateLimiter orchestrator that ties algorithms, storage, and config
+together.
+"""
 
 from __future__ import annotations
 
 import logging
 from typing import Any, Optional
 
-from .algorithms.base import BaseAlgorithm, RateLimitResult
-from .algorithms.fixed_window import FixedWindowAlgorithm
-from .algorithms.leaking_bucket import LeakingBucketAlgorithm
-from .algorithms.sliding_window_counter import SlidingWindowCounterAlgorithm
-from .algorithms.sliding_window_log import SlidingWindowLogAlgorithm
-from .algorithms.token_bucket import TokenBucketAlgorithm
-from .config import Algorithm, RateLimitRule, RateLimiterConfig
-from .keys import ip_key
-from .storage.base import BaseStorage
-from .storage.memory import MemoryStorage
-from .storage.redis import RedisStorage
+from rate_limiter import config as rate_limiter_config
+from rate_limiter import keys as rate_limiter_keys
+from rate_limiter.algorithms import base as algorithms_base
+from rate_limiter.algorithms import (
+    fixed_window,
+    leaking_bucket,
+    sliding_window_counter,
+    sliding_window_log,
+    token_bucket,
+)
+from rate_limiter.storage import base as storage_base
+from rate_limiter.storage import memory as storage_memory
+from rate_limiter.storage import redis as storage_redis
 
 logger = logging.getLogger(__name__)
 
@@ -23,12 +27,13 @@ logger = logging.getLogger(__name__)
 class RateLimiter:
     """Main orchestrator that ties algorithms, storage, and config together.
 
-    The RateLimiter class is the primary entry point for rate limiting operations.
-    It initializes the appropriate storage backend and algorithm implementations,
-    and provides methods to check rate limits against rules and requests.
+    The RateLimiter class is the primary entry point for rate limiting
+    operations. It initializes the appropriate storage backend and algorithm
+    implementations, and provides methods to check rate limits against rules
+    and requests.
     """
 
-    def __init__(self, config: RateLimiterConfig) -> None:
+    def __init__(self, config: rate_limiter_config.RateLimiterConfig) -> None:
         """Initialize the rate limiter with configuration.
 
         Args:
@@ -38,7 +43,7 @@ class RateLimiter:
         self._storage = self._create_storage()
         self._algorithms = self._load_algorithms()
 
-    def _create_storage(self) -> BaseStorage:
+    def _create_storage(self) -> storage_base.BaseStorage:
         """Create the appropriate storage backend based on configuration.
 
         Returns:
@@ -48,27 +53,46 @@ class RateLimiter:
             ValueError: If storage_backend is not recognized.
         """
         if self._config.storage_backend == "memory":
-            return MemoryStorage()
+            return storage_memory.MemoryStorage()
         elif self._config.storage_backend == "redis":
-            return RedisStorage(self._config.redis_url)
+            return storage_redis.RedisStorage(self._config.redis_url)
         else:
-            raise ValueError(f"Unsupported storage backend: {self._config.storage_backend}")
+            raise ValueError(
+                f"Unsupported storage backend: {self._config.storage_backend}"
+            )
 
-    def _load_algorithms(self) -> dict[Algorithm, BaseAlgorithm]:
+    def _load_algorithms(
+        self,
+    ) -> dict[
+        rate_limiter_config.Algorithm,
+        algorithms_base.BaseAlgorithm,
+    ]:
         """Load all algorithm implementations.
 
         Returns:
             Dictionary mapping Algorithm enum to algorithm instances.
         """
         return {
-            Algorithm.TOKEN_BUCKET: TokenBucketAlgorithm(),
-            Algorithm.LEAKING_BUCKET: LeakingBucketAlgorithm(),
-            Algorithm.FIXED_WINDOW: FixedWindowAlgorithm(),
-            Algorithm.SLIDING_WINDOW_LOG: SlidingWindowLogAlgorithm(),
-            Algorithm.SLIDING_WINDOW_COUNTER: SlidingWindowCounterAlgorithm(),
+            rate_limiter_config.Algorithm.TOKEN_BUCKET: (
+                token_bucket.TokenBucketAlgorithm()
+            ),
+            rate_limiter_config.Algorithm.LEAKING_BUCKET: (
+                leaking_bucket.LeakingBucketAlgorithm()
+            ),
+            rate_limiter_config.Algorithm.FIXED_WINDOW: (
+                fixed_window.FixedWindowAlgorithm()
+            ),
+            rate_limiter_config.Algorithm.SLIDING_WINDOW_LOG: (
+                sliding_window_log.SlidingWindowLogAlgorithm()
+            ),
+            rate_limiter_config.Algorithm.SLIDING_WINDOW_COUNTER: (
+                sliding_window_counter.SlidingWindowCounterAlgorithm()
+            ),
         }
 
-    def check(self, key: str, rule: RateLimitRule) -> RateLimitResult:
+    def check(
+        self, key: str, rule: rate_limiter_config.RateLimitRule
+    ) -> algorithms_base.RateLimitResult:
         """Check if a request should be allowed against a specific rule.
 
         Args:
@@ -76,18 +100,25 @@ class RateLimiter:
             rule: The rate limiting rule to apply.
 
         Returns:
-            RateLimitResult indicating if the request is allowed and associated metadata.
+            RateLimitResult indicating if the request is allowed and associated
+            metadata.
         """
         algorithm = self._algorithms[rule.algorithm]
         try:
             return algorithm.check(key, rule, self._storage)
-        except Exception as e:
+        # Isolate this operation; record failures before continuing.
+        except Exception as e:  # pylint: disable=broad-exception-caught
             # Handle storage failures based on fail_open config
+            logging.getLogger(__name__).exception(
+                "Failure isolated in %s", "check"
+            )
             if self._config.fail_open:
                 logger.warning(
-                    "Rate limiter storage error (fail-open, allowing request): %s", e
+                    "Rate limiter storage error (fail-open, allowing"
+                    " request): %s",
+                    e,
                 )
-                return RateLimitResult(
+                return algorithms_base.RateLimitResult(
                     allowed=True,
                     remaining=rule.limit,
                     limit=rule.limit,
@@ -96,9 +127,11 @@ class RateLimiter:
                 )
             else:
                 logger.warning(
-                    "Rate limiter storage error (fail-closed, denying request): %s", e
+                    "Rate limiter storage error (fail-closed, denying"
+                    " request): %s",
+                    e,
                 )
-                return RateLimitResult(
+                return algorithms_base.RateLimitResult(
                     allowed=False,
                     remaining=0,
                     limit=rule.limit,
@@ -106,21 +139,29 @@ class RateLimiter:
                     retry_after=float(rule.window),
                 )
 
-    def check_request(self, request_context: Any, rules: Optional[list[RateLimitRule]] = None) -> RateLimitResult:
+    def check_request(
+        self,
+        request_context: Any,
+        rules: Optional[list[rate_limiter_config.RateLimitRule]] = None,
+    ) -> algorithms_base.RateLimitResult:
         """Check a request against all applicable rules.
 
         Evaluates all rules against the request and returns the most restrictive
         result (first denial, or lowest remaining count if all allowed).
 
         Args:
-            request_context: Request object or context containing information needed
-                for key resolution (IP, user ID, etc.). Can also be a plain string
+            request_context: Request object or context containing information
+                needed
+                for key resolution (IP, user ID, etc.). Can also be a plain
+                string
                 to use directly as the rate limit key.
-            rules: Optional list of rules to check. If None, uses all rules from config.
+            rules: Rules to check; None uses all configured rules.
 
         Returns:
-            RateLimitResult indicating if the request is allowed. If multiple rules
-            apply, returns the most restrictive result (denial preferred over allowance,
+            RateLimitResult indicating if the request is allowed. If multiple
+            rules
+            apply, returns the most restrictive result (denial preferred over
+            allowance,
             lowest remaining count if all allowed).
         """
         if rules is None:
@@ -128,7 +169,7 @@ class RateLimiter:
 
         if not rules:
             # No rules to check, allow by default
-            return RateLimitResult(
+            return algorithms_base.RateLimitResult(
                 allowed=True,
                 remaining=0,
                 limit=0,
@@ -141,7 +182,8 @@ class RateLimiter:
             # Determine key for this rule
             key = self._resolve_key(request_context, rule)
 
-            # Include rule parameters in the key to ensure different rules are isolated
+            # Include rule parameters in the key to ensure different rules are
+            # isolated
             rule_suffix = f":{rule.window}:{rule.limit}:{rule.algorithm.value}"
             full_key = f"{self._config.key_prefix}{key}{rule_suffix}"
 
@@ -151,7 +193,9 @@ class RateLimiter:
         # Return the most restrictive result
         return self._most_restrictive_result(results)
 
-    def _resolve_key(self, request_context: Any, rule: RateLimitRule) -> str:
+    def _resolve_key(
+        self, request_context: Any, rule: rate_limiter_config.RateLimitRule
+    ) -> str:
         """Resolve the rate limit key from the request context and rule.
 
         Args:
@@ -170,9 +214,11 @@ class RateLimiter:
             return rule.key_func(request_context)
 
         # Default to IP-based key resolution
-        return ip_key(request_context)
+        return rate_limiter_keys.ip_key(request_context)
 
-    def _most_restrictive_result(self, results: list[RateLimitResult]) -> RateLimitResult:
+    def _most_restrictive_result(
+        self, results: list[algorithms_base.RateLimitResult]
+    ) -> algorithms_base.RateLimitResult:
         """Determine the most restrictive result from a list.
 
         Denial is preferred over allowance. If all allowed, the result with the
@@ -185,7 +231,7 @@ class RateLimiter:
             The most restrictive RateLimitResult.
         """
         if not results:
-            return RateLimitResult(
+            return algorithms_base.RateLimitResult(
                 allowed=True,
                 remaining=0,
                 limit=0,
@@ -197,12 +243,16 @@ class RateLimiter:
         denied_results = [r for r in results if not r.allowed]
         if denied_results:
             # Return the denied result with the shortest retry_after
-            return min(denied_results, key=lambda r: r.retry_after or float('inf'))
+            return min(
+                denied_results, key=lambda r: r.retry_after or float("inf")
+            )
 
         # All allowed, return the result with the lowest remaining count
         return min(results, key=lambda r: r.remaining)
 
-    def update_rules(self, rules: list[RateLimitRule]) -> None:
+    def update_rules(
+        self, rules: list[rate_limiter_config.RateLimitRule]
+    ) -> None:
         """Dynamically update rules at runtime.
 
         Args:
@@ -211,7 +261,7 @@ class RateLimiter:
         self._config.rules = rules
 
     @property
-    def config(self) -> RateLimiterConfig:
+    def config(self) -> rate_limiter_config.RateLimiterConfig:
         """Get the current configuration.
 
         Returns:
@@ -220,7 +270,7 @@ class RateLimiter:
         return self._config
 
     @property
-    def storage(self) -> BaseStorage:
+    def storage(self) -> storage_base.BaseStorage:
         """Get the storage backend instance.
 
         Returns:

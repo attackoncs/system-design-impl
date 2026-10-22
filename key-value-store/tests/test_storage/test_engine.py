@@ -9,19 +9,15 @@ Tests cover:
 - Key/value size validation
 """
 
-import os
-import time
-
+import kv_store.config
+import kv_store.storage.engine
 import pytest
-
-from kv_store.config import StorageConfig
-from kv_store.storage.engine import StorageEngine
 
 
 @pytest.fixture
 def storage_config(tmp_path):
     """Provide a StorageConfig pointing at a temporary directory."""
-    return StorageConfig(
+    return kv_store.config.StorageConfig(
         data_dir=str(tmp_path / "data"),
         wal_dir=str(tmp_path / "data" / "wal"),
         sstable_dir=str(tmp_path / "data" / "sstables"),
@@ -34,7 +30,7 @@ def storage_config(tmp_path):
 @pytest.fixture
 async def engine(storage_config):
     """Provide a started StorageEngine, stopped after the test."""
-    eng = StorageEngine(storage_config)
+    eng = kv_store.storage.engine.StorageEngine(storage_config)
     await eng.start()
     yield eng
     await eng.stop()
@@ -117,9 +113,11 @@ class TestDataSurvivesRestart:
     """Test that data persists across engine restarts via WAL replay."""
 
     async def test_data_survives_restart(self, storage_config):
-        """Data written before stop is available after a fresh start (WAL replay)."""
+        """Data written before stop is available after a fresh start (WAL
+        replay).
+        """
         # Write data with first engine instance
-        engine1 = StorageEngine(storage_config)
+        engine1 = kv_store.storage.engine.StorageEngine(storage_config)
         await engine1.start()
         await engine1.put("persist_key", b"persist_value", 100.0)
         await engine1.put("another_key", b"another_value", 200.0)
@@ -127,7 +125,7 @@ class TestDataSurvivesRestart:
         engine1._started = False  # bypass the flush in stop()
 
         # Start a new engine instance — should replay WAL
-        engine2 = StorageEngine(storage_config)
+        engine2 = kv_store.storage.engine.StorageEngine(storage_config)
         await engine2.start()
 
         result1 = await engine2.get("persist_key")
@@ -145,13 +143,13 @@ class TestDataSurvivesRestart:
 
     async def test_delete_survives_restart(self, storage_config):
         """A delete (tombstone) persists across restarts via WAL replay."""
-        engine1 = StorageEngine(storage_config)
+        engine1 = kv_store.storage.engine.StorageEngine(storage_config)
         await engine1.start()
         await engine1.put("key", b"value", 1.0)
         await engine1.delete("key", 2.0)
         engine1._started = False  # bypass flush in stop()
 
-        engine2 = StorageEngine(storage_config)
+        engine2 = kv_store.storage.engine.StorageEngine(storage_config)
         await engine2.start()
 
         result = await engine2.get("key")
@@ -168,7 +166,7 @@ class TestMemtableFlushCreatesSSTable:
 
     async def test_flush_creates_sstable_file(self, tmp_path):
         """When MemTable exceeds threshold, a flush creates an SSTable file."""
-        config = StorageConfig(
+        config = kv_store.config.StorageConfig(
             data_dir=str(tmp_path / "data"),
             wal_dir=str(tmp_path / "data" / "wal"),
             sstable_dir=str(tmp_path / "data" / "sstables"),
@@ -177,7 +175,7 @@ class TestMemtableFlushCreatesSSTable:
             compaction_threshold=4,
         )
 
-        engine = StorageEngine(config)
+        engine = kv_store.storage.engine.StorageEngine(config)
         await engine.start()
 
         # Write enough data to exceed the 100-byte memtable threshold
@@ -193,7 +191,7 @@ class TestMemtableFlushCreatesSSTable:
 
     async def test_flush_clears_memtable(self, tmp_path):
         """After flush, the MemTable is cleared (size resets)."""
-        config = StorageConfig(
+        config = kv_store.config.StorageConfig(
             data_dir=str(tmp_path / "data"),
             wal_dir=str(tmp_path / "data" / "wal"),
             sstable_dir=str(tmp_path / "data" / "sstables"),
@@ -202,7 +200,7 @@ class TestMemtableFlushCreatesSSTable:
             compaction_threshold=4,
         )
 
-        engine = StorageEngine(config)
+        engine = kv_store.storage.engine.StorageEngine(config)
         await engine.start()
 
         # Write enough to trigger flush
@@ -220,7 +218,7 @@ class TestReadAfterFlush:
 
     async def test_read_after_flush_finds_data_in_sstable(self, tmp_path):
         """Data flushed to SSTable is still retrievable via get."""
-        config = StorageConfig(
+        config = kv_store.config.StorageConfig(
             data_dir=str(tmp_path / "data"),
             wal_dir=str(tmp_path / "data" / "wal"),
             sstable_dir=str(tmp_path / "data" / "sstables"),
@@ -229,7 +227,7 @@ class TestReadAfterFlush:
             compaction_threshold=4,
         )
 
-        engine = StorageEngine(config)
+        engine = kv_store.storage.engine.StorageEngine(config)
         await engine.start()
 
         # Write data that will be flushed
@@ -250,7 +248,7 @@ class TestReadAfterFlush:
 
     async def test_read_after_flush_with_fresh_engine(self, tmp_path):
         """Data in SSTables is found by a fresh engine instance (no WAL)."""
-        config = StorageConfig(
+        config = kv_store.config.StorageConfig(
             data_dir=str(tmp_path / "data"),
             wal_dir=str(tmp_path / "data" / "wal"),
             sstable_dir=str(tmp_path / "data" / "sstables"),
@@ -260,14 +258,14 @@ class TestReadAfterFlush:
         )
 
         # Write and flush data
-        engine1 = StorageEngine(config)
+        engine1 = kv_store.storage.engine.StorageEngine(config)
         await engine1.start()
         await engine1.put("sst_key", b"sst_value", 1.0)
         await engine1.put("sst_key2", b"y" * 80, 2.0)
         await engine1.stop()  # stop flushes remaining memtable
 
         # Start fresh engine — WAL is truncated after flush, data is in SSTable
-        engine2 = StorageEngine(config)
+        engine2 = kv_store.storage.engine.StorageEngine(config)
         await engine2.start()
 
         result = await engine2.get("sst_key")

@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """Demonstration of the consistent hashing library.
 
-Shows ring creation, key assignment, server addition/removal,
-redistribution analysis, and distribution statistics.
+Shows ring creation, key assignment, server addition/removal, redistribution
+analysis, and distribution statistics.
 """
 
 import sys
-sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent / "src"))
 
+sys.path.insert(
+    0, str(__import__("pathlib").Path(__file__).resolve().parent.parent / "src")
+)
+
+import consistent_hashing.stats
 from consistent_hashing import ConsistentHashRing, compute_distribution
-from consistent_hashing.stats import compute_redistribution
 
 
 def print_separator(title: str) -> None:
@@ -28,7 +31,7 @@ def print_stats(stats) -> None:
     print(f"  Balance ratio: {stats.balance_ratio:.4f} (lower is better)")
     print(f"  Min keys: {stats.min_keys}")
     print(f"  Max keys: {stats.max_keys}")
-    print(f"  Keys per server:")
+    print("  Keys per server:")
     for server, count in sorted(stats.keys_per_server.items()):
         bar = "#" * (count // 5)
         print(f"    {server:>12}: {count:4d} {bar}")
@@ -36,7 +39,6 @@ def print_stats(stats) -> None:
 
 def main() -> None:
     """Run the consistent hashing demonstration."""
-
     # --- 1. Ring Creation ---
     print_separator("1. Creating Hash Ring with 3 Servers")
 
@@ -44,7 +46,7 @@ def main() -> None:
     ring = ConsistentHashRing(nodes=servers, num_virtual_nodes=150)
 
     print(f"  Servers: {ring.nodes}")
-    print(f"  Virtual nodes per server: 150")
+    print("  Virtual nodes per server: 150")
     print(f"  Total virtual nodes: {ring.total_virtual_nodes}")
 
     # --- 2. Key Assignment ---
@@ -58,7 +60,7 @@ def main() -> None:
         server = ring.get_node(key)
         print(f"    {key:>10} -> {server}")
 
-    print(f"\n  Replication example (get_nodes with count=2):")
+    print("\n  Replication example (get_nodes with count=2):")
     for key in sample_keys[:3]:
         replicas = ring.get_nodes(key, count=2)
         print(f"    {key:>10} -> {replicas}")
@@ -84,16 +86,19 @@ def main() -> None:
     assignment_after = {k: ring.get_node(k) for k in keys}
 
     # Compute redistribution
-    redist = compute_redistribution(keys, assignment_before, assignment_after)
+    redist = consistent_hashing.stats.compute_redistribution(keys, assignment_before, assignment_after)
     moved_count = redist["total_moved"]
-    print(f"\n  Keys redistributed: {moved_count}/{len(keys)} ({moved_count/len(keys)*100:.1f}%)")
+    print(
+        f"\n  Keys redistributed: {moved_count}/{len(keys)}"
+        f" ({moved_count/len(keys)*100:.1f}%)"
+    )
     print(f"  Theoretical ideal: ~{len(keys)//4} ({100/4:.1f}%)")
 
     # Show some moved keys
     moved = redist["moved"]
     sample_moved = list(moved.items())[:5]
     if sample_moved:
-        print(f"\n  Sample moved keys:")
+        print("\n  Sample moved keys:")
         for key, info in sample_moved:
             print(f"    {key:>10}: {info['from']} -> {info['to']}")
 
@@ -114,9 +119,14 @@ def main() -> None:
 
     assignment_after_remove = {k: ring.get_node(k) for k in keys}
 
-    redist_remove = compute_redistribution(keys, assignment_before_remove, assignment_after_remove)
+    redist_remove = consistent_hashing.stats.compute_redistribution(
+        keys, assignment_before_remove, assignment_after_remove
+    )
     moved_count_remove = redist_remove["total_moved"]
-    print(f"\n  Keys redistributed: {moved_count_remove}/{len(keys)} ({moved_count_remove/len(keys)*100:.1f}%)")
+    print(
+        f"\n  Keys redistributed: {moved_count_remove}/{len(keys)}"
+        f" ({moved_count_remove/len(keys)*100:.1f}%)"
+    )
 
     # Show where removed server's keys went
     moved_remove = redist_remove["moved"]
@@ -125,7 +135,7 @@ def main() -> None:
         dest = info["to"]
         destinations[dest] = destinations.get(dest, 0) + 1
 
-    print(f"\n  Keys from 'web-2' redistributed to:")
+    print("\n  Keys from 'web-2' redistributed to:")
     for dest, count in sorted(destinations.items()):
         print(f"    {dest}: {count} keys")
 
@@ -141,8 +151,14 @@ def main() -> None:
     print("    - Deterministic key-to-server mapping")
     print("    - Minimal redistribution on topology changes")
     print("    - Balanced distribution with virtual nodes")
-    print(f"\n  Adding 'web-4': only {moved_count/len(keys)*100:.1f}% of keys moved (ideal: 25%)")
-    print(f"  Removing 'web-2': only {moved_count_remove/len(keys)*100:.1f}% of keys moved")
+    print(
+        f"\n  Adding 'web-4': only {moved_count/len(keys)*100:.1f}% of keys"
+        " moved (ideal: 25%)"
+    )
+    print(
+        f"  Removing 'web-2': only {moved_count_remove/len(keys)*100:.1f}% of"
+        " keys moved"
+    )
     print()
 
 

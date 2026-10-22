@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
-from functools import wraps
+import functools
 from typing import Any, Callable, Optional
 
-from .config import RateLimitRule
-from .core import RateLimiter
+from rate_limiter import config as rate_limiter_config
+from rate_limiter import core as rate_limiter_core
+from rate_limiter import keys as rate_limiter_keys
 
 
 class RateLimitExceededException(Exception):
     """Exception raised when a rate limit is exceeded.
 
-    This exception can be caught by applications to handle rate limiting
-    in a custom way, such as returning a specific response format.
+    This exception can be caught by applications to handle rate limiting in a
+    custom way, such as returning a specific response format.
     """
 
     def __init__(
@@ -38,7 +39,7 @@ def rate_limit(
     window: int,
     algorithm: str = "token_bucket",
     key_func: Optional[Callable[[Any], str]] = None,
-    limiter: Optional[RateLimiter] = None,
+    limiter: Optional[rate_limiter_core.RateLimiter] = None,
     raise_exception: bool = True,
 ) -> Callable:
     """Decorator to apply rate limiting to a function or route handler.
@@ -95,27 +96,27 @@ def rate_limit(
             return {"data": "value"}
         ```
     """
-    from .config import Algorithm
 
     # Convert algorithm string to enum
     try:
-        algo = Algorithm(algorithm.lower())
-    except ValueError:
+        algo = rate_limiter_config.Algorithm(algorithm.lower())
+    except ValueError as error:
         raise ValueError(
-            f"Unknown algorithm: {algorithm}. "
-            f"Valid options: {', '.join(a.value for a in Algorithm)}"
-        )
+            f"Unknown algorithm: {algorithm}. Valid options:"
+            f" {', '.join(a.value for a in rate_limiter_config.Algorithm)}"
+        ) from error
 
     # Create a limiter if not provided
     if limiter is None:
-        from .config import RateLimiterConfig
 
-        rule = RateLimitRule(limit=limit, window=window, algorithm=algo)
-        config = RateLimiterConfig(rules=[rule])
-        limiter = RateLimiter(config)
+        rule = rate_limiter_config.RateLimitRule(
+            limit=limit, window=window, algorithm=algo
+        )
+        config = rate_limiter_config.RateLimiterConfig(rules=[rule])
+        limiter = rate_limiter_core.RateLimiter(config)
 
     def decorator(func: Callable) -> Callable:
-        @wraps(func)
+        @functools.wraps(func)
         def wrapper(*args, **kwargs) -> Any:
             # Determine the key for rate limiting
             if key_func is not None:
@@ -124,17 +125,20 @@ def rate_limit(
             else:
                 # Try to extract from request context
                 # For Flask/FastAPI, the first argument is often the request
-                request_context = args[0] if args else kwargs.get('request', None)
+                request_context = (
+                    args[0] if args else kwargs.get("request", None)
+                )
                 if request_context is not None:
-                    from .keys import ip_key
 
-                    key = ip_key(request_context)
+                    key = rate_limiter_keys.ip_key(request_context)
                 else:
                     # Fallback to function name
                     key = f"func:{func.__name__}"
 
             # Check rate limit using the limiter's config
-            rule = RateLimitRule(limit=limit, window=window, algorithm=algo, key_func=key_func)
+            rule = rate_limiter_config.RateLimitRule(
+                limit=limit, window=window, algorithm=algo, key_func=key_func
+            )
             result = limiter.check(key, rule)
 
             if not result.allowed:
@@ -170,7 +174,10 @@ def _rate_limit_response(result: Any) -> dict:
         "status_code": 429,
         "content": {
             "error": "Too Many Requests",
-            "message": f"Rate limit exceeded. Try again in {result.retry_after or result.reset_after:.1f} seconds.",
+            "message": (
+                "Rate limit exceeded. Try again in"
+                f" {result.retry_after or result.reset_after:.1f} seconds."
+            ),
             "retry_after": result.retry_after or result.reset_after,
         },
         "headers": {
@@ -185,24 +192,34 @@ def _rate_limit_response(result: Any) -> dict:
 # Convenience decorators for specific algorithms
 def rate_limit_token_bucket(limit: int, window: int, **kwargs) -> Callable:
     """Rate limit using token bucket algorithm."""
-    return rate_limit(limit=limit, window=window, algorithm="token_bucket", **kwargs)
+    return rate_limit(
+        limit=limit, window=window, algorithm="token_bucket", **kwargs
+    )
 
 
 def rate_limit_leaking_bucket(limit: int, window: int, **kwargs) -> Callable:
     """Rate limit using leaking bucket algorithm."""
-    return rate_limit(limit=limit, window=window, algorithm="leaking_bucket", **kwargs)
+    return rate_limit(
+        limit=limit, window=window, algorithm="leaking_bucket", **kwargs
+    )
 
 
 def rate_limit_fixed_window(limit: int, window: int, **kwargs) -> Callable:
     """Rate limit using fixed window counter algorithm."""
-    return rate_limit(limit=limit, window=window, algorithm="fixed_window", **kwargs)
+    return rate_limit(
+        limit=limit, window=window, algorithm="fixed_window", **kwargs
+    )
 
 
 def rate_limit_sliding_window(limit: int, window: int, **kwargs) -> Callable:
     """Rate limit using sliding window log algorithm."""
-    return rate_limit(limit=limit, window=window, algorithm="sliding_window_log", **kwargs)
+    return rate_limit(
+        limit=limit, window=window, algorithm="sliding_window_log", **kwargs
+    )
 
 
 def rate_limit_sliding_counter(limit: int, window: int, **kwargs) -> Callable:
     """Rate limit using sliding window counter algorithm."""
-    return rate_limit(limit=limit, window=window, algorithm="sliding_window_counter", **kwargs)
+    return rate_limit(
+        limit=limit, window=window, algorithm="sliding_window_counter", **kwargs
+    )

@@ -1,15 +1,15 @@
-"""Authentication module with abstract interface and in-memory implementation."""
+"""Authentication module with abstract interface and in-memory
+implementation.
+"""
 
-from abc import ABC, abstractmethod
+import abc
 from typing import Optional
 
-from news_feed_system.exceptions import AuthenticationError
 
-
-class Authenticator(ABC):
+class Authenticator(abc.ABC):
     """Abstract interface for token validation."""
 
-    @abstractmethod
+    @abc.abstractmethod
     async def validate_token(self, token: str) -> Optional[str]:
         """Validate an auth token and return the associated user_id.
 
@@ -19,7 +19,6 @@ class Authenticator(ABC):
         Returns:
             The user_id associated with the token, or None if invalid.
         """
-        ...
 
 
 class InMemoryAuthenticator(Authenticator):

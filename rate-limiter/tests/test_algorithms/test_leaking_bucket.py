@@ -3,28 +3,29 @@
 import time
 
 import pytest
-
-from rate_limiter.algorithms.leaking_bucket import LeakingBucketAlgorithm
-from rate_limiter.config import RateLimitRule
-from rate_limiter.storage.memory import MemoryStorage
+import rate_limiter.algorithms.leaking_bucket
+import rate_limiter.config
+import rate_limiter.storage.memory
 
 
 @pytest.fixture
 def algorithm():
     """Create a LeakingBucketAlgorithm instance."""
-    return LeakingBucketAlgorithm()
+    return rate_limiter.algorithms.leaking_bucket.LeakingBucketAlgorithm()
 
 
 @pytest.fixture
 def storage():
     """Create a fresh MemoryStorage instance."""
-    return MemoryStorage()
+    return rate_limiter.storage.memory.MemoryStorage()
 
 
 @pytest.fixture
 def rule():
-    """Create a standard rule: capacity=5, drain_rate=0.5/sec (5 requests per 10 seconds)."""
-    return RateLimitRule(limit=5, window=10)
+    """Create a standard rule: capacity=5, drain_rate=0.5/sec (5 requests per
+    10 seconds).
+    """
+    return rate_limiter.config.RateLimitRule(limit=5, window=10)
 
 
 def _fill_queue(algorithm, storage, rule, key="user:1"):
@@ -57,7 +58,9 @@ class TestAllowWhenQueueHasSpace:
 class TestAllowMultipleRequests:
     """Tests for allowing multiple requests up to capacity."""
 
-    def test_all_requests_up_to_capacity_allowed(self, algorithm, storage, rule):
+    def test_all_requests_up_to_capacity_allowed(
+        self, algorithm, storage, rule
+    ):
         """All requests up to the capacity should be allowed."""
         results = []
         for _ in range(rule.limit):
@@ -65,7 +68,9 @@ class TestAllowMultipleRequests:
 
         assert all(r.allowed for r in results)
 
-    def test_last_request_at_capacity_has_zero_remaining(self, algorithm, storage, rule):
+    def test_last_request_at_capacity_has_zero_remaining(
+        self, algorithm, storage, rule
+    ):
         """The last allowed request should report remaining = 0."""
         for _ in range(rule.limit - 1):
             algorithm.check("user:1", rule, storage)
@@ -111,7 +116,9 @@ class TestDrainOverTime:
     """Tests for queue draining behavior over time."""
 
     def test_drain_allows_request_after_wait(self, algorithm, storage, rule):
-        """After filling the queue and waiting for drain, a new request should be allowed."""
+        """After filling the queue and waiting for drain, a new request should
+        be allowed.
+        """
         # Fill the queue until denied
         result = _fill_queue(algorithm, storage, rule)
         assert result is not None
@@ -124,12 +131,15 @@ class TestDrainOverTime:
         assert result.allowed is True
 
     def test_still_denied_before_drain(self, algorithm, storage, rule):
-        """Request should still be denied if not enough time has passed for drain."""
+        """Request should still be denied if not enough time has passed for
+        drain.
+        """
         # Fill the queue until denied
         result = _fill_queue(algorithm, storage, rule)
         assert result is not None
 
-        # Drain rate = 0.5/sec, need 2 seconds for 1 item. Wait much less than that.
+        # Drain rate = 0.5/sec, need 2 seconds for 1 item. Wait much less than
+        # that.
         time.sleep(0.1)
 
         result = algorithm.check("user:1", rule, storage)
@@ -139,7 +149,9 @@ class TestDrainOverTime:
 class TestRemainingDecreases:
     """Tests for remaining count decreasing with each request."""
 
-    def test_remaining_decreases_with_each_request(self, algorithm, storage, rule):
+    def test_remaining_decreases_with_each_request(
+        self, algorithm, storage, rule
+    ):
         """Remaining should decrease by 1 with each request."""
         results = []
         for _ in range(rule.limit):
@@ -152,7 +164,9 @@ class TestRemainingDecreases:
 class TestDifferentKeysIndependent:
     """Tests for independent queues per key."""
 
-    def test_different_keys_have_independent_queues(self, algorithm, storage, rule):
+    def test_different_keys_have_independent_queues(
+        self, algorithm, storage, rule
+    ):
         """Different keys should have independent queues."""
         # Fill the queue for user:1 until denied
         result = _fill_queue(algorithm, storage, rule, key="user:1")

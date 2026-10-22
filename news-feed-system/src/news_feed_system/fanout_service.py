@@ -14,15 +14,15 @@ Feed filtering is applied before fanout:
 
 from __future__ import annotations
 
+import collections
 import logging
-from collections import defaultdict
 from typing import Dict, List, Optional, Set
 
-from news_feed_system.config import FanoutConfig
-from news_feed_system.models import FanoutTask, Post
-from news_feed_system.post_cache import PostCache
-from news_feed_system.queue import MessageQueue
-from news_feed_system.social_graph_cache import CachedSocialGraph
+import news_feed_system.config
+import news_feed_system.models
+import news_feed_system.post_cache
+import news_feed_system.queue
+import news_feed_system.social_graph_cache
 
 logger = logging.getLogger(__name__)
 
@@ -43,19 +43,19 @@ class FanoutService:
 
     def __init__(
         self,
-        social_graph: CachedSocialGraph,
-        post_cache: PostCache,
-        queue: MessageQueue,
-        config: Optional[FanoutConfig] = None,
+        social_graph: news_feed_system.social_graph_cache.CachedSocialGraph,
+        post_cache: news_feed_system.post_cache.PostCache,
+        queue: news_feed_system.queue.MessageQueue,
+        config: Optional[news_feed_system.config.FanoutConfig] = None,
     ) -> None:
         self._social_graph = social_graph
         self._post_cache = post_cache
         self._queue = queue
-        self._config = config or FanoutConfig()
+        self._config = config or news_feed_system.config.FanoutConfig()
 
         # user_id -> set of muted user_ids
         # mute_lists[follower_id] = {author_id, ...}
-        self._mute_lists: Dict[str, Set[str]] = defaultdict(set)
+        self._mute_lists: Dict[str, Set[str]] = collections.defaultdict(set)
 
     @property
     def celebrity_threshold(self) -> int:
@@ -105,7 +105,8 @@ class FanoutService:
     # ------------------------------------------------------------------
 
     async def is_celebrity(self, user_id: str) -> bool:
-        """Return True if the user's follower count meets the celebrity threshold.
+        """Return True if the user's follower count meets the celebrity
+        threshold.
 
         Requirement 3.1: classify users as celebrities when
         follower_count >= celebrity_threshold.
@@ -123,7 +124,7 @@ class FanoutService:
     # Core fanout logic (Requirements 3.3, 3.4, 4.1–4.4)
     # ------------------------------------------------------------------
 
-    async def fanout(self, post: Post) -> None:
+    async def fanout(self, post: news_feed_system.models.Post) -> None:
         """Distribute a post to followers using the hybrid push/pull model.
 
         For non-celebrity authors (Requirement 3.3):
@@ -163,7 +164,8 @@ class FanoutService:
 
         if not filtered:
             logger.debug(
-                "No eligible followers for post %s after filtering", post.post_id
+                "No eligible followers for post %s after filtering",
+                post.post_id,
             )
             return
 
@@ -210,7 +212,9 @@ class FanoutService:
 
         return result
 
-    async def _enqueue_batches(self, post: Post, followers: List[str]) -> None:
+    async def _enqueue_batches(
+        self, post: news_feed_system.models.Post, followers: List[str]
+    ) -> None:
         """Split followers into batches and enqueue FanoutTask items.
 
         Requirement 4.4: create FanoutTask items and enqueue to MessageQueue.
@@ -222,7 +226,7 @@ class FanoutService:
         batch_size = self._config.batch_size
         for i in range(0, len(followers), batch_size):
             batch = followers[i : i + batch_size]
-            task = FanoutTask(
+            task = news_feed_system.models.FanoutTask(
                 post_id=post.post_id,
                 author_id=post.author_id,
                 target_user_ids=batch,

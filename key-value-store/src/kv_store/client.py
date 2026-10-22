@@ -1,8 +1,8 @@
 """Client API for the distributed key-value store.
 
-Provides a high-level async client (KVClient) that connects to the cluster
-via gRPC, supports put/get/delete operations with tunable consistency,
-automatic retry on transient failures, and failover to alternate seed nodes.
+Provides a high-level async client (KVClient) that connects to the cluster via
+gRPC, supports put/get/delete operations with tunable consistency, automatic
+retry on transient failures, and failover to alternate seed nodes.
 
 Covers: FR-1.1, FR-1.2, FR-1.3, FR-1.5
 """
@@ -10,21 +10,20 @@ Covers: FR-1.1, FR-1.2, FR-1.3, FR-1.5
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
-from dataclasses import dataclass, field
 from typing import Optional
 
 import grpc
 import grpc.aio
 
-from kv_store.network import kvstore_pb2
-from kv_store.network import kvstore_pb2_grpc
-from kv_store.replication.vector_clock import VectorClock
+from kv_store.network import kvstore_pb2, kvstore_pb2_grpc
+from kv_store.replication import vector_clock as replication_vector_clock
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclasses.dataclass
 class ClientConfig:
     """Configuration for the KVClient.
 
@@ -35,13 +34,13 @@ class ClientConfig:
         retry_delay: Delay in seconds between retries.
     """
 
-    seed_nodes: list[str] = field(default_factory=list)
+    seed_nodes: list[str] = dataclasses.field(default_factory=list)
     timeout: float = 5.0
     retry_count: int = 3
     retry_delay: float = 0.5
 
 
-@dataclass
+@dataclasses.dataclass
 class KVResponse:
     """Response from a KV operation.
 
@@ -55,12 +54,16 @@ class KVResponse:
 
     success: bool
     value: Optional[bytes] = None
-    vector_clock: Optional[VectorClock] = None
+    vector_clock: Optional[replication_vector_clock.VectorClock] = None
     has_conflict: bool = False
-    conflicting_values: list[tuple[bytes, VectorClock]] = field(default_factory=list)
+    conflicting_values: list[
+        tuple[bytes, replication_vector_clock.VectorClock]
+    ] = dataclasses.field(default_factory=list)
 
 
-def _vector_clock_to_proto(clock: VectorClock) -> kvstore_pb2.VectorClockProto:
+def _vector_clock_to_proto(
+    clock: replication_vector_clock.VectorClock,
+) -> kvstore_pb2.VectorClockProto:
     """Convert a VectorClock to its protobuf representation."""
     proto = kvstore_pb2.VectorClockProto()
     for node_id, counter in clock.to_dict().items():
@@ -69,10 +72,12 @@ def _vector_clock_to_proto(clock: VectorClock) -> kvstore_pb2.VectorClockProto:
     return proto
 
 
-def _proto_to_vector_clock(proto: kvstore_pb2.VectorClockProto) -> VectorClock:
+def _proto_to_vector_clock(
+    proto: kvstore_pb2.VectorClockProto,
+) -> replication_vector_clock.VectorClock:
     """Convert a VectorClockProto to a VectorClock instance."""
     entries = {entry.node_id: entry.counter for entry in proto.entries}
-    return VectorClock.from_dict(entries)
+    return replication_vector_clock.VectorClock.from_dict(entries)
 
 
 class KVClient:
@@ -92,7 +97,8 @@ class KVClient:
         """Initialize the KVClient.
 
         Args:
-            config: Client configuration with seed nodes, timeout, and retry settings.
+            config: Client configuration with seed nodes, timeout, and retry
+                settings.
         """
         self._config = config
         self._channel: Optional[grpc.aio.Channel] = None
@@ -113,7 +119,9 @@ class KVClient:
 
         last_error: Optional[Exception] = None
         for i in range(len(self._config.seed_nodes)):
-            node_index = (self._current_node_index + i) % len(self._config.seed_nodes)
+            node_index = (self._current_node_index + i) % len(
+                self._config.seed_nodes
+            )
             target = self._config.seed_nodes[node_index]
             try:
                 channel = grpc.aio.insecure_channel(target)
@@ -125,12 +133,20 @@ class KVClient:
                 self._connected = True
                 logger.info("Connected to seed node: %s", target)
                 return
-            except Exception as e:
+            # Isolate this operation; record failures before continuing.
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                logging.getLogger(__name__).exception(
+                    "Failure isolated in %s", "connect"
+                )
                 logger.warning("Failed to connect to %s: %s", target, e)
                 last_error = e
                 try:
                     await channel.close()
-                except Exception:
+                # Isolate this operation; record failures before continuing.
+                except Exception:  # pylint: disable=broad-exception-caught
+                    logging.getLogger(__name__).exception(
+                        "Failure isolated in %s", "connect"
+                    )
                     pass
 
         raise ConnectionError(
@@ -160,7 +176,7 @@ class KVClient:
         key: str,
         value: bytes,
         consistency: Optional[str] = None,
-        vector_clock: Optional[VectorClock] = None,
+        vector_clock: Optional[replication_vector_clock.VectorClock] = None,
     ) -> KVResponse:
         """Store a key-value pair in the cluster.
 
@@ -225,7 +241,9 @@ class KVClient:
 
         result_clock = _proto_to_vector_clock(response.vector_clock)
 
-        conflicting_values: list[tuple[bytes, VectorClock]] = []
+        conflicting_values: list[
+            tuple[bytes, replication_vector_clock.VectorClock]
+        ] = []
         if response.has_conflict:
             for cv in response.conflicting_values:
                 cv_clock = _proto_to_vector_clock(cv.vector_clock)
@@ -243,7 +261,7 @@ class KVClient:
         self,
         key: str,
         consistency: Optional[str] = None,
-        vector_clock: Optional[VectorClock] = None,
+        vector_clock: Optional[replication_vector_clock.VectorClock] = None,
     ) -> KVResponse:
         """Delete a key from the cluster using a tombstone marker.
 
@@ -293,7 +311,9 @@ class KVClient:
             grpc.RpcError: If a non-retryable error occurs.
         """
         if not self._connected or self._stub is None:
-            raise ConnectionError("Client is not connected. Call connect() first.")
+            raise ConnectionError(
+                "Client is not connected. Call connect() first."
+            )
 
         nodes_tried = 0
         total_nodes = len(self._config.seed_nodes)
@@ -304,7 +324,10 @@ class KVClient:
                 try:
                     return await rpc_call(self._stub)
                 except grpc.RpcError as e:
-                    if hasattr(e, "code") and e.code() == grpc.StatusCode.UNAVAILABLE:
+                    if (
+                        hasattr(e, "code")
+                        and e.code() == grpc.StatusCode.UNAVAILABLE
+                    ):
                         logger.warning(
                             "RPC unavailable (attempt %d/%d) on node %s: %s",
                             attempt + 1,
@@ -328,25 +351,30 @@ class KVClient:
                 await self._failover_to_next_node()
 
         raise ConnectionError(
-            "All seed nodes exhausted after retries. "
-            f"Tried {total_nodes} node(s) with {self._config.retry_count} retries each."
+            f"All seed nodes exhausted after retries. Tried {total_nodes}"
+            f" node(s) with {self._config.retry_count} retries each."
         )
 
     async def _failover_to_next_node(self) -> None:
         """Failover to the next seed node in the list.
 
-        Closes the current channel and connects to the next available seed node.
+        Closes the current channel and connects to the next available seed
+        node.
         """
         # Close current channel
         if self._channel is not None:
             try:
                 await self._channel.close()
-            except Exception:
+            # Isolate this operation; record failures before continuing.
+            except Exception:  # pylint: disable=broad-exception-caught
+                logging.getLogger(__name__).exception(
+                    "Failure isolated in %s", "_failover_to_next_node"
+                )
                 pass
 
         # Move to next node
-        self._current_node_index = (
-            (self._current_node_index + 1) % len(self._config.seed_nodes)
+        self._current_node_index = (self._current_node_index + 1) % len(
+            self._config.seed_nodes
         )
         target = self._config.seed_nodes[self._current_node_index]
 

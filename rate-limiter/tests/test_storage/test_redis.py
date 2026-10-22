@@ -2,31 +2,30 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+import unittest.mock
 
 import fakeredis
 import pytest
-
-from rate_limiter.storage.redis import RedisStorage
+import rate_limiter.storage.redis
 
 
 @pytest.fixture
-def redis_storage() -> RedisStorage:
+def redis_storage() -> rate_limiter.storage.redis.RedisStorage:
     """Create a RedisStorage instance backed by fakeredis."""
     fake_redis = fakeredis.FakeRedis(decode_responses=False)
-    with patch("redis.Redis.from_url", return_value=fake_redis):
-        storage = RedisStorage(redis_url="redis://localhost:6379")
+    with unittest.mock.patch("redis.Redis.from_url", return_value=fake_redis):
+        storage = rate_limiter.storage.redis.RedisStorage(redis_url="redis://localhost:6379")
     return storage
 
 
 class TestRedisStorageGet:
     """Tests for RedisStorage.get method."""
 
-    def test_get_nonexistent_key(self, redis_storage: RedisStorage):
+    def test_get_nonexistent_key(self, redis_storage: rate_limiter.storage.redis.RedisStorage):
         """Getting a key that was never set returns None."""
         assert redis_storage.get("nonexistent") is None
 
-    def test_set_and_get(self, redis_storage: RedisStorage):
+    def test_set_and_get(self, redis_storage: rate_limiter.storage.redis.RedisStorage):
         """Basic set followed by get returns the stored value."""
         redis_storage.set("key1", "value1")
         assert redis_storage.get("key1") == "value1"
@@ -35,7 +34,7 @@ class TestRedisStorageGet:
 class TestRedisStorageTTL:
     """Tests for TTL behavior."""
 
-    def test_set_with_ttl(self, redis_storage: RedisStorage):
+    def test_set_with_ttl(self, redis_storage: rate_limiter.storage.redis.RedisStorage):
         """Value is stored when TTL is specified."""
         redis_storage.set("key1", "value1", ttl=60)
         assert redis_storage.get("key1") == "value1"
@@ -44,19 +43,19 @@ class TestRedisStorageTTL:
 class TestRedisStorageIncrement:
     """Tests for RedisStorage.increment method."""
 
-    def test_increment_new_key(self, redis_storage: RedisStorage):
+    def test_increment_new_key(self, redis_storage: rate_limiter.storage.redis.RedisStorage):
         """Incrementing a non-existent key starts from 0 and returns 1."""
         result = redis_storage.increment("counter")
         assert result == 1
 
-    def test_increment_existing_key(self, redis_storage: RedisStorage):
+    def test_increment_existing_key(self, redis_storage: rate_limiter.storage.redis.RedisStorage):
         """Incrementing an existing key increases the value correctly."""
         redis_storage.increment("counter")
         redis_storage.increment("counter")
         result = redis_storage.increment("counter")
         assert result == 3
 
-    def test_increment_with_ttl(self, redis_storage: RedisStorage):
+    def test_increment_with_ttl(self, redis_storage: rate_limiter.storage.redis.RedisStorage):
         """Increment with TTL sets expiration on the key."""
         redis_storage.increment("counter", ttl=120)
         # Verify the value was incremented
@@ -69,9 +68,11 @@ class TestRedisStorageIncrement:
 class TestRedisStorageExecuteAtomic:
     """Tests for RedisStorage.execute_atomic (Lua script execution)."""
 
-    def test_execute_atomic_lua_script(self, redis_storage: RedisStorage):
+    def test_execute_atomic_lua_script(self, redis_storage: rate_limiter.storage.redis.RedisStorage):
         """A simple Lua script executes correctly via eval."""
         script = "return redis.call('SET', KEYS[1], ARGV[1])"
-        result = redis_storage.execute_atomic(script, ["lua_key"], ["lua_value"])
+        result = redis_storage.execute_atomic(
+            script, ["lua_key"], ["lua_value"]
+        )
         assert result == b"OK"
         assert redis_storage.get("lua_key") == "lua_value"

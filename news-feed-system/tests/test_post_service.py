@@ -13,39 +13,34 @@ Tests cover:
 Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 13.1, 13.2, 13.3
 """
 
-import asyncio
 import sys
-from typing import Optional
-from unittest.mock import MagicMock, patch
+import unittest.mock
 
 import pytest
-import pytest_asyncio
 
 # AsyncMock was added in Python 3.8; provide a simple shim for 3.7
 if sys.version_info >= (3, 8):
     from unittest.mock import AsyncMock
 else:
-    class AsyncMock(MagicMock):
+
+    class AsyncMock(unittest.mock.MagicMock):
         """Minimal AsyncMock shim for Python < 3.8."""
+
         async def __call__(self, *args, **kwargs):
             return super().__call__(*args, **kwargs)
 
-from news_feed_system.auth import InMemoryAuthenticator
-from news_feed_system.config import FanoutConfig, RateLimitConfig
-from news_feed_system.exceptions import (
-    AuthenticationError,
-    RateLimitError,
-    ValidationError,
-)
-from news_feed_system.fanout_service import FanoutService
-from news_feed_system.models import FeedRequest, Post
-from news_feed_system.post_cache import PostCache
-from news_feed_system.post_service import PostService
-from news_feed_system.queue import MessageQueue
-from news_feed_system.rate_limiter import SlidingWindowRateLimiter
-from news_feed_system.social_graph import InMemorySocialGraph
-from news_feed_system.social_graph_cache import CachedSocialGraph
 
+import news_feed_system.auth
+import news_feed_system.config
+import news_feed_system.exceptions
+import news_feed_system.fanout_service
+import news_feed_system.models
+import news_feed_system.post_cache
+import news_feed_system.post_service
+import news_feed_system.queue
+import news_feed_system.rate_limiter
+import news_feed_system.social_graph
+import news_feed_system.social_graph_cache
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
@@ -58,26 +53,26 @@ def _make_service(
     notification_service=None,
 ):
     """Build a PostService with in-memory collaborators."""
-    auth = InMemoryAuthenticator()
+    auth = news_feed_system.auth.InMemoryAuthenticator()
     auth.register_token("valid-token", "user-1")
 
-    rate_limiter = SlidingWindowRateLimiter(
-        RateLimitConfig(max_posts=max_posts, window_seconds=window_seconds)
+    rate_limiter = news_feed_system.rate_limiter.SlidingWindowRateLimiter(
+        news_feed_system.config.RateLimitConfig(max_posts=max_posts, window_seconds=window_seconds)
     )
 
-    post_cache = PostCache(hot_capacity=100, normal_capacity=1000)
+    post_cache = news_feed_system.post_cache.PostCache(hot_capacity=100, normal_capacity=1000)
 
-    social_graph = InMemorySocialGraph()
-    cached_graph = CachedSocialGraph(social_graph)
-    queue = MessageQueue(max_size=1000)
-    fanout_service = FanoutService(
+    social_graph = news_feed_system.social_graph.InMemorySocialGraph()
+    cached_graph = news_feed_system.social_graph_cache.CachedSocialGraph(social_graph)
+    queue = news_feed_system.queue.MessageQueue(max_size=1000)
+    fanout_service = news_feed_system.fanout_service.FanoutService(
         social_graph=cached_graph,
         post_cache=post_cache,
         queue=queue,
-        config=FanoutConfig(celebrity_threshold=5000),
+        config=news_feed_system.config.FanoutConfig(celebrity_threshold=5000),
     )
 
-    service = PostService(
+    service = news_feed_system.post_service.PostService(
         authenticator=auth,
         rate_limiter=rate_limiter,
         post_cache=post_cache,
@@ -96,7 +91,9 @@ def _make_service(
 async def test_publish_returns_post_id():
     """Successful publish returns a non-empty string post_id."""
     service, _, _, _ = _make_service()
-    request = FeedRequest(user_id="user-1", auth_token="valid-token", content="Hello!")
+    request = news_feed_system.models.FeedRequest(
+        user_id="user-1", auth_token="valid-token", content="Hello!"
+    )
     post_id = await service.publish(request)
     assert isinstance(post_id, str)
     assert len(post_id) > 0
@@ -106,7 +103,9 @@ async def test_publish_returns_post_id():
 async def test_publish_returns_unique_post_ids():
     """Each publish call returns a distinct post_id."""
     service, _, _, _ = _make_service()
-    request = FeedRequest(user_id="user-1", auth_token="valid-token", content="Hello!")
+    request = news_feed_system.models.FeedRequest(
+        user_id="user-1", auth_token="valid-token", content="Hello!"
+    )
     id1 = await service.publish(request)
     id2 = await service.publish(request)
     assert id1 != id2
@@ -121,7 +120,9 @@ async def test_publish_returns_unique_post_ids():
 async def test_publish_persists_post_to_cache():
     """After publish, the post is retrievable from PostCache."""
     service, _, post_cache, _ = _make_service()
-    request = FeedRequest(user_id="user-1", auth_token="valid-token", content="Cached!")
+    request = news_feed_system.models.FeedRequest(
+        user_id="user-1", auth_token="valid-token", content="Cached!"
+    )
     post_id = await service.publish(request)
     cached_post = post_cache.get(post_id)
     assert cached_post is not None
@@ -139,8 +140,10 @@ async def test_publish_persists_post_to_cache():
 async def test_publish_empty_content_raises_validation_error():
     """Empty content string raises ValidationError."""
     service, _, _, _ = _make_service()
-    request = FeedRequest(user_id="user-1", auth_token="valid-token", content="")
-    with pytest.raises(ValidationError):
+    request = news_feed_system.models.FeedRequest(
+        user_id="user-1", auth_token="valid-token", content=""
+    )
+    with pytest.raises(news_feed_system.exceptions.ValidationError):
         await service.publish(request)
 
 
@@ -148,8 +151,10 @@ async def test_publish_empty_content_raises_validation_error():
 async def test_publish_whitespace_content_raises_validation_error():
     """Whitespace-only content raises ValidationError."""
     service, _, _, _ = _make_service()
-    request = FeedRequest(user_id="user-1", auth_token="valid-token", content="   ")
-    with pytest.raises(ValidationError):
+    request = news_feed_system.models.FeedRequest(
+        user_id="user-1", auth_token="valid-token", content="   "
+    )
+    with pytest.raises(news_feed_system.exceptions.ValidationError):
         await service.publish(request)
 
 
@@ -162,10 +167,10 @@ async def test_publish_whitespace_content_raises_validation_error():
 async def test_publish_invalid_token_raises_authentication_error():
     """An unregistered token raises AuthenticationError."""
     service, _, _, _ = _make_service()
-    request = FeedRequest(
+    request = news_feed_system.models.FeedRequest(
         user_id="user-1", auth_token="bad-token", content="Hello!"
     )
-    with pytest.raises(AuthenticationError):
+    with pytest.raises(news_feed_system.exceptions.AuthenticationError):
         await service.publish(request)
 
 
@@ -174,8 +179,10 @@ async def test_publish_revoked_token_raises_authentication_error():
     """A revoked token raises AuthenticationError."""
     service, auth, _, _ = _make_service()
     auth.revoke_token("valid-token")
-    request = FeedRequest(user_id="user-1", auth_token="valid-token", content="Hello!")
-    with pytest.raises(AuthenticationError):
+    request = news_feed_system.models.FeedRequest(
+        user_id="user-1", auth_token="valid-token", content="Hello!"
+    )
+    with pytest.raises(news_feed_system.exceptions.AuthenticationError):
         await service.publish(request)
 
 
@@ -188,12 +195,14 @@ async def test_publish_revoked_token_raises_authentication_error():
 async def test_publish_rate_limit_exceeded_raises_rate_limit_error():
     """Exceeding the rate limit raises RateLimitError."""
     service, _, _, _ = _make_service(max_posts=2, window_seconds=3600.0)
-    request = FeedRequest(user_id="user-1", auth_token="valid-token", content="Post!")
+    request = news_feed_system.models.FeedRequest(
+        user_id="user-1", auth_token="valid-token", content="Post!"
+    )
 
     await service.publish(request)
     await service.publish(request)
 
-    with pytest.raises(RateLimitError) as exc_info:
+    with pytest.raises(news_feed_system.exceptions.RateLimitError) as exc_info:
         await service.publish(request)
 
     err = exc_info.value
@@ -212,11 +221,13 @@ async def test_publish_triggers_fanout():
     service, _, _, fanout_service = _make_service()
     fanout_service.fanout = AsyncMock()
 
-    request = FeedRequest(user_id="user-1", auth_token="valid-token", content="Fanout!")
+    request = news_feed_system.models.FeedRequest(
+        user_id="user-1", auth_token="valid-token", content="Fanout!"
+    )
     post_id = await service.publish(request)
 
     fanout_service.fanout.assert_called_once()
-    called_post: Post = fanout_service.fanout.call_args[0][0]
+    called_post: news_feed_system.models.Post = fanout_service.fanout.call_args[0][0]
     assert called_post.post_id == post_id
     assert called_post.author_id == "user-1"
 
@@ -229,11 +240,13 @@ async def test_publish_triggers_fanout():
 @pytest.mark.asyncio
 async def test_publish_triggers_notification_service():
     """notify_followers() is called when NotificationService is provided."""
-    mock_notifier = MagicMock()
+    mock_notifier = unittest.mock.MagicMock()
     mock_notifier.notify_followers = AsyncMock()
 
     service, _, _, _ = _make_service(notification_service=mock_notifier)
-    request = FeedRequest(user_id="user-1", auth_token="valid-token", content="Notify!")
+    request = news_feed_system.models.FeedRequest(
+        user_id="user-1", auth_token="valid-token", content="Notify!"
+    )
     post_id = await service.publish(request)
 
     mock_notifier.notify_followers.assert_called_once_with("user-1", post_id)
@@ -243,7 +256,9 @@ async def test_publish_triggers_notification_service():
 async def test_publish_without_notification_service_succeeds():
     """PostService works correctly when notification_service is None."""
     service, _, _, _ = _make_service(notification_service=None)
-    request = FeedRequest(user_id="user-1", auth_token="valid-token", content="No notif!")
+    request = news_feed_system.models.FeedRequest(
+        user_id="user-1", auth_token="valid-token", content="No notif!"
+    )
     post_id = await service.publish(request)
     assert post_id is not None
 
@@ -257,9 +272,9 @@ async def test_publish_without_notification_service_succeeds():
 async def test_validation_checked_before_auth():
     """ValidationError is raised even when the token is invalid."""
     service, _, _, _ = _make_service()
-    request = FeedRequest(user_id="user-1", auth_token="bad-token", content="")
+    request = news_feed_system.models.FeedRequest(user_id="user-1", auth_token="bad-token", content="")
     # Should raise ValidationError, not AuthenticationError
-    with pytest.raises(ValidationError):
+    with pytest.raises(news_feed_system.exceptions.ValidationError):
         await service.publish(request)
 
 
@@ -272,7 +287,7 @@ async def test_validation_checked_before_auth():
 async def test_publish_preserves_media_urls():
     """Media URLs from the request are stored in the persisted post."""
     service, _, post_cache, _ = _make_service()
-    request = FeedRequest(
+    request = news_feed_system.models.FeedRequest(
         user_id="user-1",
         auth_token="valid-token",
         content="With media",
@@ -286,9 +301,11 @@ async def test_publish_preserves_media_urls():
 
 @pytest.mark.asyncio
 async def test_publish_preserves_selective_sharing():
-    """Selective sharing list from the request is stored in the persisted post."""
+    """Selective sharing list from the request is stored in the persisted
+    post.
+    """
     service, _, post_cache, _ = _make_service()
-    request = FeedRequest(
+    request = news_feed_system.models.FeedRequest(
         user_id="user-1",
         auth_token="valid-token",
         content="Selective",

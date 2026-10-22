@@ -1,27 +1,30 @@
-from abc import ABC, abstractmethod
+"""Storage interfaces and in-memory URL mapping implementations."""
+
+import abc
 from typing import Optional
 
-from url_shortener.models import URLMapping, RedirectType
+import url_shortener.models
 
 
-class StorageBackend(ABC):
+class StorageBackend(abc.ABC):
     """Abstract interface for URL mapping persistence.
 
-    Any storage backend can be used with any hash strategy,
-    keeping the storage layer stateless with respect to code generation.
+    Any storage backend can be used with any hash strategy, keeping the storage
+    layer stateless with respect to code generation.
     """
 
-    @abstractmethod
-    def save(self, mapping: URLMapping) -> None:
+    @abc.abstractmethod
+    def save(self, mapping: url_shortener.models.URLMapping) -> None:
         """Save a URL mapping to storage.
 
         Args:
             mapping: The URLMapping to persist.
         """
-        ...
 
-    @abstractmethod
-    def get_by_short_code(self, short_code: str) -> Optional[URLMapping]:
+    @abc.abstractmethod
+    def get_by_short_code(
+        self, short_code: str
+    ) -> Optional[url_shortener.models.URLMapping]:
         """Retrieve a URL mapping by its short code.
 
         Args:
@@ -30,10 +33,11 @@ class StorageBackend(ABC):
         Returns:
             The URLMapping if found, None otherwise.
         """
-        ...
 
-    @abstractmethod
-    def get_by_long_url(self, long_url: str) -> Optional[URLMapping]:
+    @abc.abstractmethod
+    def get_by_long_url(
+        self, long_url: str
+    ) -> Optional[url_shortener.models.URLMapping]:
         """Retrieve a URL mapping by the original long URL.
 
         Args:
@@ -42,9 +46,8 @@ class StorageBackend(ABC):
         Returns:
             The URLMapping if found, None otherwise.
         """
-        ...
 
-    @abstractmethod
+    @abc.abstractmethod
     def exists(self, short_code: str) -> bool:
         """Check if a short code exists in storage.
 
@@ -54,7 +57,6 @@ class StorageBackend(ABC):
         Returns:
             True if the short code exists, False otherwise.
         """
-        ...
 
 
 class InMemoryStorage(StorageBackend):
@@ -64,19 +66,23 @@ class InMemoryStorage(StorageBackend):
     """
 
     def __init__(self) -> None:
-        self._by_short_code: dict[str, URLMapping] = {}
-        self._by_long_url: dict[str, URLMapping] = {}
+        self._by_short_code: dict[str, url_shortener.models.URLMapping] = {}
+        self._by_long_url: dict[str, url_shortener.models.URLMapping] = {}
 
-    def save(self, mapping: URLMapping) -> None:
+    def save(self, mapping: url_shortener.models.URLMapping) -> None:
         """Save mapping with bidirectional indexing."""
         self._by_short_code[mapping.short_code] = mapping
         self._by_long_url[mapping.long_url] = mapping
 
-    def get_by_short_code(self, short_code: str) -> Optional[URLMapping]:
+    def get_by_short_code(
+        self, short_code: str
+    ) -> Optional[url_shortener.models.URLMapping]:
         """O(1) lookup by short code."""
         return self._by_short_code.get(short_code)
 
-    def get_by_long_url(self, long_url: str) -> Optional[URLMapping]:
+    def get_by_long_url(
+        self, long_url: str
+    ) -> Optional[url_shortener.models.URLMapping]:
         """O(1) lookup by long URL."""
         return self._by_long_url.get(long_url)
 

@@ -15,8 +15,8 @@ from url_shortener.strategies import (
     HashCollisionStrategy,
     HashStrategy,
     IDGenerator,
-    encode_base62,
     decode_base62,
+    encode_base62,
 )
 
 __all__ = [

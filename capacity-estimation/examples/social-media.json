@@ -1,0 +1,13 @@
+{
+  "monthly_active_users": 300000000,
+  "daily_active_ratio": "0.5",
+  "writes_per_dau": 2,
+  "reads_per_dau": 0,
+  "peak_factor": 2,
+  "metadata_size": "0 B",
+  "media_fraction": "0.1",
+  "media_size": "1 MB",
+  "retention_days": 1825,
+  "replicas": 1,
+  "availability_percent": "99.99"
+}

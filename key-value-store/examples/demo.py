@@ -1,52 +1,64 @@
 #!/usr/bin/env python3
 """Demonstration of the distributed key-value store.
 
-Shows single-node storage operations, vector clock conflict detection,
-and describes multi-node cluster setup. This demo uses the StorageEngine
-directly for single-node operations and simulates multi-node scenarios
-using the replication layer components.
+Shows single-node storage operations, vector clock conflict detection, and
+describes multi-node cluster setup. This demo uses the StorageEngine directly
+for single-node operations and simulates multi-node scenarios using the
+replication layer components.
 
 Run with: python examples/demo.py
 """
 
 import asyncio
+import pathlib
 import sys
 import tempfile
 import time
-from pathlib import Path
 
 # Ensure the src directory is on the path for direct execution
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
 
 # Import modules directly — avoid triggering kv_store/__init__.py which
 # imports KVNode (requires consistent-hashing to be installed).
-# When running via `pip install -e .`, all deps are available and this works fine.
+# When running via `pip install -e .`, all deps are available and this works
+# fine.
 # For standalone execution, we import submodules directly.
 try:
-    from kv_store.config import StorageConfig, ReplicationConfig, NodeConfig
-    from kv_store.storage.engine import StorageEngine
+    from kv_store.config import ReplicationConfig, StorageConfig
+    from kv_store.replication.quorum import (
+        ConsistencyLevel,
+        QuorumConfig,
+        QuorumManager,
+    )
     from kv_store.replication.vector_clock import VectorClock
-    from kv_store.replication.quorum import QuorumManager, ConsistencyLevel, QuorumConfig
+    from kv_store.storage.engine import StorageEngine
 except ImportError:
     # If the top-level __init__ fails due to missing consistent_hashing,
     # patch sys.modules to allow submodule imports
-    import importlib
     import types
 
     # Create a minimal kv_store package without triggering __init__
     if "kv_store" not in sys.modules:
         kv_store_mod = types.ModuleType("kv_store")
-        kv_store_mod.__path__ = [str(Path(__file__).resolve().parent.parent / "src" / "kv_store")]
+        kv_store_mod.__path__ = [
+            str(pathlib.Path(__file__).resolve().parent.parent / "src" / "kv_store")
+        ]
         sys.modules["kv_store"] = kv_store_mod
 
-    from kv_store.config import StorageConfig, ReplicationConfig, NodeConfig
-    from kv_store.storage.engine import StorageEngine
+    from kv_store.config import ReplicationConfig, StorageConfig
+    from kv_store.replication.quorum import (
+        ConsistencyLevel,
+        QuorumConfig,
+        QuorumManager,
+    )
     from kv_store.replication.vector_clock import VectorClock
-    from kv_store.replication.quorum import QuorumManager, ConsistencyLevel, QuorumConfig
+    from kv_store.storage.engine import StorageEngine
 
-# Optional imports that require the full cluster stack (needs consistent-hashing)
+# Optional imports that require the full cluster stack (needs
+# consistent-hashing)
 try:
     from kv_store.cluster.gossip import GossipProtocol, MemberInfo, NodeStatus
+
     HAS_CLUSTER = True
 except ImportError:
     HAS_CLUSTER = False
@@ -81,7 +93,10 @@ async def demo_single_node_operations() -> None:
         pairs = [
             ("user:1001", b'{"name": "Alice", "email": "alice@example.com"}'),
             ("user:1002", b'{"name": "Bob", "email": "bob@example.com"}'),
-            ("user:1003", b'{"name": "Charlie", "email": "charlie@example.com"}'),
+            (
+                "user:1003",
+                b'{"name": "Charlie", "email": "charlie@example.com"}',
+            ),
             ("config:theme", b"dark"),
             ("config:lang", b"en-US"),
         ]
@@ -120,7 +135,9 @@ async def demo_single_node_operations() -> None:
 
         result = await engine2.get("user:1001")
         if result and result.found:
-            print(f"    GET user:1001 = {result.value[:40].decode()} (recovered!)")
+            print(
+                f"    GET user:1001 = {result.value[:40].decode()} (recovered!)"
+            )
 
         await engine2.stop()
         print("    Engine stopped cleanly")
@@ -166,8 +183,14 @@ async def demo_vector_clocks() -> None:
     # Detect conflict
     has_conflict = clock_from_node1.conflicts_with(clock_from_node2)
     print(f"\n    Conflict detected? {has_conflict}")
-    print(f"    Node-1 dominates Node-2? {clock_from_node1.dominates(clock_from_node2)}")
-    print(f"    Node-2 dominates Node-1? {clock_from_node2.dominates(clock_from_node1)}")
+    print(
+        "    Node-1 dominates Node-2?"
+        f" {clock_from_node1.dominates(clock_from_node2)}"
+    )
+    print(
+        "    Node-2 dominates Node-1?"
+        f" {clock_from_node2.dominates(clock_from_node1)}"
+    )
 
     # --- Conflict resolution via merge ---
     print("\n  Resolving conflict (client merges):")
@@ -193,20 +216,31 @@ async def demo_quorum_configuration() -> None:
 
     print("  Default configuration: N=3, W=2, R=2")
     default_qc = qm.get_quorum_config()
-    print(f"    Strongly consistent (W+R > N)? {default_qc.is_strongly_consistent()}")
+    print(
+        "    Strongly consistent (W+R > N)?"
+        f" {default_qc.is_strongly_consistent()}"
+    )
     print(f"    W + R = {default_qc.w + default_qc.r} > N = {default_qc.n}")
 
     print("\n  Consistency levels:")
     for level in ConsistencyLevel:
         qc = QuorumConfig.from_consistency_level(level, n=3)
         strong = "yes" if qc.is_strongly_consistent() else "no"
-        print(f"    {level.value:>8}: W={qc.w}, R={qc.r}, N={qc.n} "
-              f"(strong consistency: {strong})")
+        print(
+            f"    {level.value:>8}: W={qc.w}, R={qc.r}, N={qc.n} "
+            f"(strong consistency: {strong})"
+        )
 
     print("\n  Trade-offs:")
-    print("    ONE (W=1, R=1):    Fastest, eventual consistency, risk of stale reads")
+    print(
+        "    ONE (W=1, R=1):    Fastest, eventual consistency, risk of stale"
+        " reads"
+    )
     print("    QUORUM (W=2, R=2): Balanced, strong consistency with N=3")
-    print("    ALL (W=3, R=3):    Slowest, highest consistency, lowest availability")
+    print(
+        "    ALL (W=3, R=3):    Slowest, highest consistency, lowest"
+        " availability"
+    )
 
 
 async def demo_multi_node_cluster() -> None:
@@ -229,7 +263,10 @@ async def demo_multi_node_cluster() -> None:
     print("  To start a 3-node cluster programmatically:")
     print()
     print("    from kv_store import KVNode, NodeConfig")
-    print("    from kv_store.config import NetworkConfig, ClusterConfig, StorageConfig")
+    print(
+        "    from kv_store.config import NetworkConfig, ClusterConfig,"
+        " StorageConfig"
+    )
     print()
     print("    # Node 1 (seed node)")
     print("    node1_config = NodeConfig(")
@@ -268,19 +305,26 @@ async def demo_node_failure_recovery() -> None:
 
     print("  Failure detection via Gossip Protocol:")
     print("    - Each node sends heartbeats every 1 second (configurable)")
-    print("    - If no heartbeat received for 5 seconds → node marked SUSPECTED")
+    print(
+        "    - If no heartbeat received for 5 seconds → node marked SUSPECTED"
+    )
     print("    - If still no heartbeat after 10 seconds → node marked DOWN")
     print()
     print("  When a node fails:")
     print("    1. Gossip protocol detects the failure")
     print("    2. Sloppy quorum routes writes to next healthy node")
-    print("    3. Substitute node stores data with 'hint' for intended recipient")
+    print(
+        "    3. Substitute node stores data with 'hint' for intended recipient"
+    )
     print()
     print("  When the node recovers:")
     print("    1. Node restarts and replays its WAL")
     print("    2. Gossip protocol detects the recovery (heartbeat resumes)")
     print("    3. Hinted handoff pushes stored hints back to recovered node")
-    print("    4. Anti-entropy (Merkle tree) repairs any remaining inconsistencies")
+    print(
+        "    4. Anti-entropy (Merkle tree) repairs any remaining"
+        " inconsistencies"
+    )
     print()
 
     # Demonstrate with gossip protocol directly (if available)
@@ -295,19 +339,32 @@ async def demo_node_failure_recovery() -> None:
         )
 
         # Simulate receiving membership info from other nodes
-        gossip.merge_membership([
-            MemberInfo(node_id="node-2", address="localhost:50052",
-                       heartbeat_counter=10, status=NodeStatus.ALIVE),
-            MemberInfo(node_id="node-3", address="localhost:50053",
-                       heartbeat_counter=8, status=NodeStatus.ALIVE),
-        ])
+        gossip.merge_membership(
+            [
+                MemberInfo(
+                    node_id="node-2",
+                    address="localhost:50052",
+                    heartbeat_counter=10,
+                    status=NodeStatus.ALIVE,
+                ),
+                MemberInfo(
+                    node_id="node-3",
+                    address="localhost:50053",
+                    heartbeat_counter=8,
+                    status=NodeStatus.ALIVE,
+                ),
+            ]
+        )
 
         alive = gossip.get_alive_nodes()
         print(f"    Alive nodes: {[n.node_id for n in alive]}")
         print(f"    Node-2 status: {gossip.get_node_status('node-2')}")
         print(f"    Node-3 status: {gossip.get_node_status('node-3')}")
     else:
-        print("  (Gossip simulation skipped — install consistent-hashing for full demo)")
+        print(
+            "  (Gossip simulation skipped — install consistent-hashing for full"
+            " demo)"
+        )
 
 
 async def demo_client_usage() -> None:
@@ -327,12 +384,14 @@ async def demo_client_usage() -> None:
     print()
     print("    async with KVClient(config) as client:")
     print("        # Put a value")
-    print('        resp = await client.put("user:1001", b\'{"name": "Alice"}\')')
-    print(f"        # resp.success = True, resp.vector_clock = VectorClock(...)")
+    print(
+        '        resp = await client.put("user:1001", b\'{"name": "Alice"}\')'
+    )
+    print("        # resp.success = True, resp.vector_clock = VectorClock(...)")
     print()
     print("        # Get a value")
     print('        resp = await client.get("user:1001")')
-    print("        # resp.value = b'{\"name\": \"Alice\"}'")
+    print('        # resp.value = b\'{"name": "Alice"}\'')
     print()
     print("        # Handle conflicts")
     print("        if resp.has_conflict:")

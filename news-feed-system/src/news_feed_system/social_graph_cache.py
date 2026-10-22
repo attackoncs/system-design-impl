@@ -9,7 +9,7 @@ from __future__ import annotations
 import time
 from typing import Callable, Dict, List, Optional, Tuple
 
-from news_feed_system.social_graph import SocialGraph
+import news_feed_system.social_graph
 
 
 class CachedSocialGraph:
@@ -21,7 +21,7 @@ class CachedSocialGraph:
 
     def __init__(
         self,
-        backend: SocialGraph,
+        backend: news_feed_system.social_graph.SocialGraph,
         ttl_seconds: float = 300.0,
         clock: Optional[Callable[[], float]] = None,
     ) -> None:

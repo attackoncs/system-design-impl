@@ -1,11 +1,13 @@
-"""Quorum logic for managing read and write consistency in the distributed store.
+"""Quorum logic for managing read and write consistency in the distributed
+store.
 
 Implements tunable consistency levels (ONE, QUORUM, ALL) and manages concurrent
-replica operations. The QuorumManager sends requests to all N replicas concurrently
-and waits for the required number of acknowledgments (W for writes, R for reads).
+replica operations. The QuorumManager sends requests to all N replicas
+concurrently and waits for the required number of acknowledgments (W for
+writes, R for reads).
 
-Strong consistency is guaranteed when W + R > N, ensuring read and write quorums
-always overlap.
+Strong consistency is guaranteed when W + R > N, ensuring read and write
+quorums always overlap.
 
 Covers: FR-4.1, FR-4.2, FR-4.3, FR-4.4, FR-4.5, FR-4.6
 """
@@ -13,15 +15,15 @@ Covers: FR-4.1, FR-4.2, FR-4.3, FR-4.4, FR-4.5, FR-4.6
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
-from enum import Enum
+import dataclasses
+import enum
 from typing import Any, Callable, Coroutine, Optional
 
-from kv_store.config import ReplicationConfig
-from kv_store.replication.vector_clock import VectorClock
+from kv_store import config as kv_store_config
+from kv_store.replication import vector_clock as replication_vector_clock
 
 
-class ConsistencyLevel(Enum):
+class ConsistencyLevel(enum.Enum):
     """Predefined consistency levels for read/write operations."""
 
     ONE = "one"  # W=1, R=1 (eventual consistency)
@@ -29,7 +31,7 @@ class ConsistencyLevel(Enum):
     ALL = "all"  # W=N, R=N (strongest, lowest availability)
 
 
-@dataclass
+@dataclasses.dataclass
 class QuorumConfig:
     """Quorum parameters for a single operation.
 
@@ -75,7 +77,7 @@ class QuorumConfig:
             raise ValueError(f"Unknown consistency level: {level}")
 
 
-@dataclass
+@dataclasses.dataclass
 class QuorumResult:
     """Result of a quorum operation.
 
@@ -84,30 +86,38 @@ class QuorumResult:
         responses_received: Number of successful responses collected.
         responses_required: Number of responses needed for quorum.
         failed_nodes: List of node IDs that failed to respond.
-        values: For reads, collected (value, vector_clock) pairs from responding nodes.
+        values: Read results as (value, vector_clock) pairs.
     """
 
     success: bool
     responses_received: int
     responses_required: int
-    failed_nodes: list[str] = field(default_factory=list)
-    values: list[tuple[bytes, VectorClock]] = field(default_factory=list)
+    failed_nodes: list[str] = dataclasses.field(default_factory=list)
+    values: list[tuple[bytes, replication_vector_clock.VectorClock]] = (
+        dataclasses.field(default_factory=list)
+    )
 
 
 # Type aliases for the write and read callables
 WriteCallable = Callable[
-    [str, str, bytes, VectorClock], Coroutine[Any, Any, bool]
+    [str, str, bytes, replication_vector_clock.VectorClock],
+    Coroutine[Any, Any, bool],
 ]  # (node_id, key, value, vector_clock) -> success
 ReadCallable = Callable[
-    [str, str], Coroutine[Any, Any, Optional[tuple[bytes, VectorClock]]]
+    [str, str],
+    Coroutine[
+        Any,
+        Any,
+        Optional[tuple[bytes, replication_vector_clock.VectorClock]],
+    ],
 ]  # (node_id, key) -> (value, vector_clock) or None
 
 
 class QuorumManager:
     """Manages quorum logic for read and write operations.
 
-    Determines how many acknowledgments are needed, tracks responses,
-    and decides when a quorum is satisfied or has failed.
+    Determines how many acknowledgments are needed, tracks responses, and
+    decides when a quorum is satisfied or has failed.
 
     The actual network calls are delegated to write/read callables passed
     during construction, allowing the gRPC client to be injected later.
@@ -115,7 +125,7 @@ class QuorumManager:
 
     def __init__(
         self,
-        config: ReplicationConfig,
+        config: kv_store_config.ReplicationConfig,
         write_func: Optional[WriteCallable] = None,
         read_func: Optional[ReadCallable] = None,
     ) -> None:
@@ -126,7 +136,8 @@ class QuorumManager:
             write_func: Async callable for writing to a replica node.
                         Signature: (node_id, key, value, vector_clock) -> bool
             read_func: Async callable for reading from a replica node.
-                       Signature: (node_id, key) -> Optional[(value, vector_clock)]
+                       Signature: (node_id, key) -> Optional[(value,
+                           vector_clock)]
         """
         self._config = config
         self._write_func = write_func
@@ -135,7 +146,8 @@ class QuorumManager:
     def get_quorum_config(
         self, consistency: Optional[ConsistencyLevel] = None
     ) -> QuorumConfig:
-        """Get the quorum config, optionally overriding with a consistency level.
+        """Get the quorum config, optionally overriding with a consistency
+        level.
 
         If no consistency level is provided, uses the defaults from the
         ReplicationConfig.
@@ -160,7 +172,7 @@ class QuorumManager:
         self,
         key: str,
         value: bytes,
-        vector_clock: VectorClock,
+        vector_clock: replication_vector_clock.VectorClock,
         replica_nodes: list[str],
         quorum_config: QuorumConfig,
     ) -> QuorumResult:
@@ -245,7 +257,7 @@ class QuorumManager:
         # Collect successful responses and track failures
         success_count = 0
         failed_nodes: list[str] = []
-        values: list[tuple[bytes, VectorClock]] = []
+        values: list[tuple[bytes, replication_vector_clock.VectorClock]] = []
 
         for node_id, result in zip(replica_nodes, results):
             if isinstance(result, Exception):
@@ -254,7 +266,8 @@ class QuorumManager:
                 success_count += 1
                 values.append(result)
             else:
-                # None means key not found on this node, still counts as a response
+                # None means key not found on this node, still counts as a
+                # response
                 success_count += 1
 
         return QuorumResult(

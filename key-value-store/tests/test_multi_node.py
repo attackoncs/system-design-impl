@@ -11,64 +11,56 @@ Uses mocked inter-node communication to test coordination logic
 without requiring actual gRPC connections.
 """
 
-import asyncio
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+import unittest.mock
 
+import kv_store.cluster.gossip
+import kv_store.cluster.hinted_handoff
+import kv_store.cluster.membership
+import kv_store.config
+import kv_store.replication.coordinator
+import kv_store.replication.quorum
+import kv_store.replication.vector_clock
+import kv_store.storage.engine
 import pytest
-
 from consistent_hashing import ConsistentHashRing
-
-from kv_store.cluster.gossip import GossipProtocol, MemberInfo, NodeStatus
-from kv_store.cluster.hinted_handoff import HintedData, HintedHandoffManager
-from kv_store.cluster.membership import ClusterMembership
-from kv_store.config import (
-    NodeConfig,
-    StorageConfig,
-    ReplicationConfig,
-    ClusterConfig,
-    NetworkConfig,
-)
-from kv_store.replication.coordinator import (
-    RequestCoordinator,
-    QuorumNotMetError,
-)
-from kv_store.replication.quorum import (
-    ConsistencyLevel,
-    QuorumConfig,
-    QuorumManager,
-)
-from kv_store.replication.vector_clock import VectorClock
-from kv_store.storage.engine import StorageEngine
 
 
 class MembershipAdapter:
     """Adapter that makes ClusterMembership conform to the coordinator's
-    MembershipProtocol (which expects get_alive_members to return list[str])."""
+    MembershipProtocol (which expects get_alive_members to return
+    list[str]).
+    """
 
-    def __init__(self, membership: ClusterMembership):
+    def __init__(self, membership: kv_store.cluster.membership.ClusterMembership):
         self._membership = membership
 
     def is_node_alive(self, node_id: str) -> bool:
         return self._membership.is_node_alive(node_id)
 
     def get_alive_members(self) -> list[str]:
-        """Return alive member node IDs as strings (coordinator expects this)."""
+        """Return alive member node IDs as strings (coordinator expects
+        this).
+        """
         members = self._membership.get_alive_members()
         return [m.node_id for m in members]
 
 
 class HintedHandoffAdapter:
-    """Adapter that bridges the coordinator's store_hint(node_id, key, value, clock)
-    interface with the HintedHandoffManager's store_hint(HintedData) interface."""
+    """Adapter that bridges the coordinator's store_hint(node_id, key, value,
+    clock) interface with the HintedHandoffManager's store_hint(HintedData)
+    interface.
+    """
 
-    def __init__(self, manager: HintedHandoffManager, source_node_id: str):
+    def __init__(self, manager: kv_store.cluster.hinted_handoff.HintedHandoffManager, source_node_id: str):
         self._manager = manager
         self._source_node_id = source_node_id
 
-    def store_hint(self, target_node_id: str, key: str, value: bytes, vector_clock):
+    def store_hint(
+        self, target_node_id: str, key: str, value: bytes, vector_clock
+    ):
         """Store a hint using the coordinator's expected interface."""
-        hint = HintedData(
+        hint = kv_store.cluster.hinted_handoff.HintedData(
             target_node_id=target_node_id,
             key=key,
             value=value,
@@ -88,18 +80,22 @@ class HintedHandoffAdapter:
 class InProcessNode:
     """A lightweight in-process node for testing coordination logic.
 
-    Wraps a StorageEngine with a RequestCoordinator, using mocked gRPC
-    for inter-node communication.
+    Wraps a StorageEngine with a RequestCoordinator, using mocked gRPC for
+    inter-node communication.
     """
 
-    def __init__(self, node_id: str, storage_config: StorageConfig, all_nodes: dict):
+    def __init__(
+        self, node_id: str, storage_config: kv_store.config.StorageConfig, all_nodes: dict
+    ):
         self.node_id = node_id
-        self.storage_engine = StorageEngine(storage_config)
-        self.hash_ring = ConsistentHashRing(hash_function=None, num_virtual_nodes=10)
+        self.storage_engine = kv_store.storage.engine.StorageEngine(storage_config)
+        self.hash_ring = ConsistentHashRing(
+            hash_function=None, num_virtual_nodes=10
+        )
         self.all_nodes = all_nodes  # Reference to all nodes for routing
 
         # Gossip protocol
-        self.gossip = GossipProtocol(
+        self.gossip = kv_store.cluster.gossip.GossipProtocol(
             node_id=node_id,
             address=f"localhost:{50051 + hash(node_id) % 1000}",
             gossip_interval=100.0,  # Disable auto-gossip in tests
@@ -108,7 +104,7 @@ class InProcessNode:
         )
 
         # Membership (with adapter for coordinator's expected interface)
-        self._raw_membership = ClusterMembership(
+        self._raw_membership = kv_store.cluster.membership.ClusterMembership(
             node_id=node_id,
             address=f"localhost:{50051 + hash(node_id) % 1000}",
             gossip=self.gossip,
@@ -118,24 +114,28 @@ class InProcessNode:
         self.membership = MembershipAdapter(self._raw_membership)
 
         # Hinted handoff with adapter for coordinator's interface
-        self._hinted_handoff_mgr = HintedHandoffManager(
+        self._hinted_handoff_mgr = kv_store.cluster.hinted_handoff.HintedHandoffManager(
             node_id=node_id,
             handoff_interval=100.0,  # Disable auto-handoff in tests
             is_node_alive_func=self.membership.is_node_alive,
         )
-        self.hinted_handoff = HintedHandoffAdapter(self._hinted_handoff_mgr, node_id)
+        self.hinted_handoff = HintedHandoffAdapter(
+            self._hinted_handoff_mgr, node_id
+        )
 
         # Mock gRPC client that routes to other in-process nodes
-        self.grpc_client = MagicMock()
-        self.grpc_client.put = AsyncMock(side_effect=self._route_put)
-        self.grpc_client.get = AsyncMock(side_effect=self._route_get)
+        self.grpc_client = unittest.mock.MagicMock()
+        self.grpc_client.put = unittest.mock.AsyncMock(side_effect=self._route_put)
+        self.grpc_client.get = unittest.mock.AsyncMock(side_effect=self._route_get)
 
         # Quorum manager
-        replication_config = ReplicationConfig(n_replicas=3, w_quorum=2, r_quorum=2)
-        self.quorum_manager = QuorumManager(replication_config)
+        replication_config = kv_store.config.ReplicationConfig(
+            n_replicas=3, w_quorum=2, r_quorum=2
+        )
+        self.quorum_manager = kv_store.replication.quorum.QuorumManager(replication_config)
 
         # Request coordinator
-        self.coordinator = RequestCoordinator(
+        self.coordinator = kv_store.replication.coordinator.RequestCoordinator(
             node_id=node_id,
             hash_ring=self.hash_ring,
             quorum_manager=self.quorum_manager,
@@ -147,7 +147,9 @@ class InProcessNode:
 
         self._alive = True
 
-    async def _route_put(self, target: str, key: str, value: bytes, vector_clock: VectorClock) -> bool:
+    async def _route_put(
+        self, target: str, key: str, value: bytes, vector_clock: kv_store.replication.vector_clock.VectorClock
+    ) -> bool:
         """Route a put request to another in-process node."""
         target_node = self.all_nodes.get(target)
         if target_node is None or not target_node._alive:
@@ -163,7 +165,7 @@ class InProcessNode:
         result = await target_node.storage_engine.get(key)
         if result is None or not result.found or result.is_tombstone:
             return None
-        return (result.value, VectorClock())
+        return (result.value, kv_store.replication.vector_clock.VectorClock())
 
     async def start(self):
         await self.storage_engine.start()
@@ -187,7 +189,7 @@ async def three_node_cluster(tmp_path):
     node_ids = ["node-1", "node-2", "node-3"]
 
     for node_id in node_ids:
-        config = StorageConfig(
+        config = kv_store.config.StorageConfig(
             data_dir=str(tmp_path / node_id / "data"),
             wal_dir=str(tmp_path / node_id / "data" / "wal"),
             sstable_dir=str(tmp_path / node_id / "data" / "sstables"),
@@ -201,11 +203,14 @@ async def three_node_cluster(tmp_path):
     for node in all_nodes.values():
         await node.start()
 
-    # Set up cluster membership: add all nodes to each node's hash ring and gossip
+    # Set up cluster membership: add all nodes to each node's hash ring and
+    # gossip
     for node in all_nodes.values():
         for other_id, other_node in all_nodes.items():
             if other_id != node.node_id:
-                node.gossip.add_seed_node(other_id, f"localhost:{50051 + hash(other_id) % 1000}")
+                node.gossip.add_seed_node(
+                    other_id, f"localhost:{50051 + hash(other_id) % 1000}"
+                )
             # Add all nodes to hash ring
             if other_id not in node.hash_ring.nodes:
                 node.hash_ring.add_node(other_id, 10)
@@ -227,7 +232,9 @@ class TestClusterFormation:
         """All nodes have all other nodes in their gossip membership."""
         for node_id, node in three_node_cluster.items():
             members = node.gossip.members
-            assert len(members) == 3, f"Node {node_id} sees {len(members)} members"
+            assert (
+                len(members) == 3
+            ), f"Node {node_id} sees {len(members)} members"
             for other_id in three_node_cluster:
                 assert other_id in members
 
@@ -259,7 +266,9 @@ class TestReplication:
         node1 = three_node_cluster["node-1"]
 
         # Put via node-1's coordinator
-        result = await node1.coordinator.put("replicated-key", b"replicated-value")
+        result = await node1.coordinator.put(
+            "replicated-key", b"replicated-value"
+        )
         assert result.success is True
 
         # The data should be on at least W=2 nodes
@@ -297,7 +306,9 @@ class TestReplication:
 class TestNodeFailureAndRecovery:
     """Test node failure and recovery with hinted handoff."""
 
-    async def test_hinted_handoff_stores_hint_on_failure(self, three_node_cluster):
+    async def test_hinted_handoff_stores_hint_on_failure(
+        self, three_node_cluster
+    ):
         """When a node is down, hints are stored for later delivery."""
         node1 = three_node_cluster["node-1"]
         node3 = three_node_cluster["node-3"]
@@ -313,7 +324,7 @@ class TestNodeFailureAndRecovery:
             if result.success:
                 # Hints should be stored for the failed node
                 assert node1.hinted_handoff.pending_count >= 0
-        except QuorumNotMetError:
+        except kv_store.replication.coordinator.QuorumNotMetError:
             # This is also acceptable if the key maps to node-3 as primary
             pass
 
@@ -334,7 +345,7 @@ class TestNodeFailureAndRecovery:
                 result = await node1.coordinator.put(f"failover-{i}", b"value")
                 if result.success:
                     successes += 1
-            except QuorumNotMetError:
+            except kv_store.replication.coordinator.QuorumNotMetError:
                 pass
 
         # At least some writes should succeed (those not requiring node-3)
@@ -349,8 +360,8 @@ class TestQuorumWithNodeDown:
     async def test_quorum_write_with_two_nodes(self, three_node_cluster):
         """Quorum write (W=2) succeeds with 2 out of 3 nodes."""
         node1 = three_node_cluster["node-1"]
-        node2 = three_node_cluster["node-2"]
-        node3 = three_node_cluster["node-3"]
+        three_node_cluster["node-2"]
+        three_node_cluster["node-3"]
 
         # Write data while all nodes are up
         result = await node1.coordinator.put("quorum-key", b"quorum-value")
@@ -384,7 +395,7 @@ class TestQuorumWithNodeDown:
         for i in range(10):
             try:
                 await node1.coordinator.put(f"fail-key-{i}", b"value")
-            except QuorumNotMetError:
+            except kv_store.replication.coordinator.QuorumNotMetError:
                 failures += 1
 
         # At least some should fail since 2 of 3 nodes are down
@@ -397,25 +408,31 @@ class TestQuorumWithNodeDown:
 class TestSloppyQuorum:
     """Test sloppy quorum routes to substitute node."""
 
-    async def test_sloppy_quorum_substitutes_unavailable_node(self, three_node_cluster):
-        """When a target replica is down, sloppy quorum routes to a substitute."""
+    async def test_sloppy_quorum_substitutes_unavailable_node(
+        self, three_node_cluster
+    ):
+        """When a target replica is down, sloppy quorum routes to a
+        substitute.
+        """
         node1 = three_node_cluster["node-1"]
-        node3 = three_node_cluster["node-3"]
+        three_node_cluster["node-3"]
 
         # Mark node-3 as down in node-1's gossip
         node3_info = node1.gossip.members.get("node-3")
         if node3_info:
-            node3_info.status = NodeStatus.DOWN
+            node3_info.status = kv_store.cluster.gossip.NodeStatus.DOWN
 
         # The coordinator should find substitute nodes
         # Write should still succeed if W=2 can be met with remaining nodes
         successes = 0
         for i in range(5):
             try:
-                result = await node1.coordinator.put(f"sloppy-{i}", b"sloppy-val")
+                result = await node1.coordinator.put(
+                    f"sloppy-{i}", b"sloppy-val"
+                )
                 if result.success:
                     successes += 1
-            except QuorumNotMetError:
+            except kv_store.replication.coordinator.QuorumNotMetError:
                 pass
 
         # With sloppy quorum, writes should succeed more often
@@ -423,9 +440,11 @@ class TestSloppyQuorum:
 
         # Restore node-3 status
         if node3_info:
-            node3_info.status = NodeStatus.ALIVE
+            node3_info.status = kv_store.cluster.gossip.NodeStatus.ALIVE
 
-    async def test_hinted_data_stored_for_unavailable_node(self, three_node_cluster):
+    async def test_hinted_data_stored_for_unavailable_node(
+        self, three_node_cluster
+    ):
         """Hints are stored when a node is unavailable during sloppy quorum."""
         node1 = three_node_cluster["node-1"]
         node3 = three_node_cluster["node-3"]
@@ -434,7 +453,7 @@ class TestSloppyQuorum:
         node3.mark_down()
         node3_info = node1.gossip.members.get("node-3")
         if node3_info:
-            node3_info.status = NodeStatus.DOWN
+            node3_info.status = kv_store.cluster.gossip.NodeStatus.DOWN
 
         initial_hints = node1.hinted_handoff.pending_count
 
@@ -442,7 +461,7 @@ class TestSloppyQuorum:
         for i in range(5):
             try:
                 await node1.coordinator.put(f"hint-sloppy-{i}", b"value")
-            except QuorumNotMetError:
+            except kv_store.replication.coordinator.QuorumNotMetError:
                 pass
 
         # Hints should have been stored for the failed writes
@@ -453,4 +472,4 @@ class TestSloppyQuorum:
 
         node3.mark_alive()
         if node3_info:
-            node3_info.status = NodeStatus.ALIVE
+            node3_info.status = kv_store.cluster.gossip.NodeStatus.ALIVE

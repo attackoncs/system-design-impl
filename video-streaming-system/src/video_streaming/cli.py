@@ -1,17 +1,21 @@
+"""Command-line entry points for video APIs and independent workers."""
+
 import argparse
 import json
 import os
-from pathlib import Path
+import pathlib
 
-from .http import server
-from .media import FFmpegMedia
-from .service import VideoService
-from .worker import Worker
-from .remote_storage import S3Objects
+import video_streaming.http
+import video_streaming.media
+import video_streaming.remote_storage
+import video_streaming.service
+import video_streaming.worker
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Local video API and durable media workers")
+    parser = argparse.ArgumentParser(
+        description="Local video API and durable media workers"
+    )
     parser.add_argument("--root", default=".runtime/video")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("token").add_argument("owner")
@@ -24,14 +28,23 @@ def main():
     worker.add_argument("--once", action="store_true")
     worker.add_argument("--media-timeout", type=float, default=600)
     args = parser.parse_args()
-    root = Path(args.root).resolve()
+    root = pathlib.Path(args.root).resolve()
     root.mkdir(parents=True, exist_ok=True)
-    objects = (S3Objects(root / "objects", os.environ["VIDEO_S3_BUCKET"],
-                endpoint=os.environ.get("VIDEO_S3_ENDPOINT"),
-                prefix=os.environ.get("VIDEO_S3_PREFIX", "video/"),
-                region=os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))
-               if os.environ.get("VIDEO_S3_BUCKET") else root / "objects")
-    service = VideoService(os.environ.get("VIDEO_DATABASE_DSN") or root / "metadata.sqlite3", objects)
+    objects = (
+        video_streaming.remote_storage.S3Objects(
+            root / "objects",
+            os.environ["VIDEO_S3_BUCKET"],
+            endpoint=os.environ.get("VIDEO_S3_ENDPOINT"),
+            prefix=os.environ.get("VIDEO_S3_PREFIX", "video/"),
+            region=os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
+        )
+        if os.environ.get("VIDEO_S3_BUCKET")
+        else root / "objects"
+    )
+    service = video_streaming.service.VideoService(
+        os.environ.get("VIDEO_DATABASE_DSN") or root / "metadata.sqlite3",
+        objects,
+    )
     try:
         if args.command == "token":
             print(service.issue(args.owner), flush=True)
@@ -39,10 +52,14 @@ def main():
             print(json.dumps(service.cleanup()))
         elif args.command == "worker":
             print("Video worker ready", flush=True)
-            media = FFmpegMedia(timeout=args.media_timeout)
-            Worker(service, media, args.name, lease=args.media_timeout + 60).run(args.once)
+            media = video_streaming.media.FFmpegMedia(
+                timeout=args.media_timeout
+            )
+            video_streaming.worker.Worker(
+                service, media, args.name, lease=args.media_timeout + 60
+            ).run(args.once)
         else:
-            http = server(service, args.host, args.port)
+            http = video_streaming.http.server(service, args.host, args.port)
             print("Video API ready", flush=True)
             try:
                 http.serve_forever()

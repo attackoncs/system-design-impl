@@ -6,8 +6,8 @@ request attributes such as IP address, user ID, and custom combinations.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable
-
 
 # Type alias for key functions
 KeyFunc = Callable[[Any], str]
@@ -33,31 +33,35 @@ def ip_key(request: Any) -> str:
     forwarded_for = None
 
     # Check if request has headers attribute and it's a dict-like object
-    headers = getattr(request, 'headers', None)
-    if headers is not None and hasattr(headers, 'get') and callable(headers.get):
-        forwarded_for = headers.get('X-Forwarded-For')
+    headers = getattr(request, "headers", None)
+    if (
+        headers is not None
+        and hasattr(headers, "get")
+        and callable(headers.get)
+    ):
+        forwarded_for = headers.get("X-Forwarded-For")
         if not forwarded_for:
-            forwarded_for = headers.get('x-forwarded-for')
+            forwarded_for = headers.get("x-forwarded-for")
 
         # If no forwarded header, try FastAPI client host
         if not forwarded_for:
-            client = getattr(request, 'client', None)
-            if client is not None and hasattr(client, 'host'):
-                host = getattr(client, 'host', None)
+            client = getattr(request, "client", None)
+            if client is not None and hasattr(client, "host"):
+                host = getattr(client, "host", None)
                 if isinstance(host, str):
                     return host
             # Try Flask remote_addr
-            remote_addr = getattr(request, 'remote_addr', None)
+            remote_addr = getattr(request, "remote_addr", None)
             if isinstance(remote_addr, str):
                 return remote_addr
 
     # Handle X-Forwarded-For (can contain multiple IPs: client, proxy1, proxy2)
     if forwarded_for and isinstance(forwarded_for, str):
         # Get the first IP (original client)
-        ips = [ip.strip() for ip in forwarded_for.split(',')]
-        return ips[0] if ips else '127.0.0.1'
+        ips = [ip.strip() for ip in forwarded_for.split(",")]
+        return ips[0] if ips else "127.0.0.1"
 
-    return '127.0.0.1'  # Fallback
+    return "127.0.0.1"  # Fallback
 
 
 def user_id_key(request: Any) -> str:
@@ -75,35 +79,43 @@ def user_id_key(request: Any) -> str:
         For authenticated users: rate_limit(key_func=user_id_key)
     """
     # FastAPI with authentication dependency
-    if hasattr(request, 'user') and request.user is not None:
+    if hasattr(request, "user") and request.user is not None:
         user = request.user
-        if hasattr(user, 'id') and isinstance(user.id, (str, int)):
+        if hasattr(user, "id") and isinstance(user.id, (str, int)):
             return str(user.id)
 
         # Flask-Login
-        if hasattr(user, 'is_authenticated') and user.is_authenticated:
-            if hasattr(user, 'id') and isinstance(user.id, (str, int)):
+        if hasattr(user, "is_authenticated") and user.is_authenticated:
+            if hasattr(user, "id") and isinstance(user.id, (str, int)):
                 return str(user.id)
 
     # JWT in Authorization header
-    headers = getattr(request, 'headers', None)
-    if headers is not None and hasattr(headers, 'get') and callable(headers.get):
-        auth_header = (
-            headers.get('Authorization') or
-            headers.get('authorization')
+    headers = getattr(request, "headers", None)
+    if (
+        headers is not None
+        and hasattr(headers, "get")
+        and callable(headers.get)
+    ):
+        auth_header = headers.get("Authorization") or headers.get(
+            "authorization"
         )
-        if auth_header and isinstance(auth_header, str) and auth_header.startswith('Bearer '):
+        if (
+            auth_header
+            and isinstance(auth_header, str)
+            and auth_header.startswith("Bearer ")
+        ):
             # In real implementation, you'd decode the JWT here
             # For now, just use the token as identifier
             token = auth_header[7:]  # Remove 'Bearer ' prefix
             return f"jwt:{hash(token) % 1000000}"  # Simple hash for demo
 
     # API key in header
-    if headers is not None and hasattr(headers, 'get') and callable(headers.get):
-        api_key = (
-            headers.get('X-API-Key') or
-            headers.get('x-api-key')
-        )
+    if (
+        headers is not None
+        and hasattr(headers, "get")
+        and callable(headers.get)
+    ):
+        api_key = headers.get("X-API-Key") or headers.get("x-api-key")
         if api_key and isinstance(api_key, str):
             return f"api_key:{hash(api_key) % 1000000}"
 
@@ -133,17 +145,22 @@ def composite_key(*key_funcs: KeyFunc) -> KeyFunc:
             return request.path
         endpoint_ip_key = composite_key(endpoint_key, ip_key)
     """
+
     def combined_key_func(request: Any) -> str:
         key_parts = []
         for key_func in key_funcs:
             try:
                 part = key_func(request)
                 key_parts.append(str(part))
-            except Exception:
+            # Isolate this operation; record failures before continuing.
+            except Exception:  # pylint: disable=broad-exception-caught
                 # If any key function fails, use a safe fallback
-                key_parts.append('error')
+                logging.getLogger(__name__).exception(
+                    "Failure isolated in %s", "combined_key_func"
+                )
+                key_parts.append("error")
 
-        return ':'.join(key_parts)
+        return ":".join(key_parts)
 
     return combined_key_func
 
@@ -157,28 +174,28 @@ def path_key(request: Any) -> str:
     Returns:
         Request path as string for use as rate limiting key
     """
-    path = getattr(request, 'path', None)
+    path = getattr(request, "path", None)
     if path is not None:
         return path
 
-    url = getattr(request, 'url', None)
+    url = getattr(request, "url", None)
     if url is not None:
         # Extract path from URL
         url_str = str(url)
-        if '://' in url_str:
+        if "://" in url_str:
             # Remove scheme and host
-            parts = url_str.split('://', 1)
-            if len(parts) > 1 and '/' in parts[1]:
-                return '/' + parts[1].split('/', 1)[1]
+            parts = url_str.split("://", 1)
+            if len(parts) > 1 and "/" in parts[1]:
+                return "/" + parts[1].split("/", 1)[1]
             elif len(parts) > 1:
-                return '/' + parts[1]
+                return "/" + parts[1]
         return url_str
 
-    full_path = getattr(request, 'full_path', None)
+    full_path = getattr(request, "full_path", None)
     if full_path is not None:
         return full_path
 
-    return '/unknown'
+    return "/unknown"
 
 
 def method_key(request: Any) -> str:
@@ -190,15 +207,15 @@ def method_key(request: Any) -> str:
     Returns:
         HTTP method as string for use as rate limiting key
     """
-    method = getattr(request, 'method', None)
+    method = getattr(request, "method", None)
     if method is not None:
         return method.upper()
 
-    request_method = getattr(request, 'request_method', None)
+    request_method = getattr(request, "request_method", None)
     if request_method is not None:
         return request_method.upper()
 
-    return 'UNKNOWN'
+    return "UNKNOWN"
 
 
 def header_key(header_name: str) -> KeyFunc:
@@ -215,15 +232,15 @@ def header_key(header_name: str) -> KeyFunc:
         version_key = header_key('X-API-Version')
         rate_limit(key_func=version_key)
     """
-    def extract_header(request: Any) -> str:
-        if hasattr(request, 'headers'):
-            value = (
-                request.headers.get(header_name) or
-                request.headers.get(header_name.lower())
-            )
-            return value or f'no_{header_name}'
 
-        return f'no_{header_name}'
+    def extract_header(request: Any) -> str:
+        if hasattr(request, "headers"):
+            value = request.headers.get(header_name) or request.headers.get(
+                header_name.lower()
+            )
+            return value or f"no_{header_name}"
+
+        return f"no_{header_name}"
 
     return extract_header
 
@@ -233,7 +250,7 @@ def rate_limit_key(
     user: bool = False,
     path: bool = False,
     method: bool = False,
-    custom_funcs: list[KeyFunc] | None = None
+    custom_funcs: list[KeyFunc] | None = None,
 ) -> KeyFunc:
     """Create a flexible rate limiting key function.
 
@@ -278,7 +295,8 @@ def rate_limit_key(
         key_funcs.extend(custom_funcs)
 
     # If no functions specified but ip is True (default), use only ip
-    # If user explicitly sets ip=False and specifies other functions, don't add ip
+    # If user explicitly sets ip=False and specifies other functions, don't add
+    # ip
     if not key_funcs:
         key_funcs.append(ip_key)
 

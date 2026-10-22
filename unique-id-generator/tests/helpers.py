@@ -1,9 +1,9 @@
 """Shared test helpers."""
 
-from unique_id.clock import Clock
+import unique_id.clock
 
 
-class FakeClock(Clock):
+class FakeClock(unique_id.clock.Clock):
     """A controllable clock for deterministic testing.
 
     Allows setting and advancing the time manually.

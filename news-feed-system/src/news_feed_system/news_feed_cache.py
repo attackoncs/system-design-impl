@@ -2,14 +2,14 @@
 
 Provides a bounded in-memory cache of FeedEntry items per user. Entries are
 stored in chronological order (oldest first) and retrieved in reverse
-chronological order. When the configured maximum is exceeded, the oldest
-entry is evicted.
+chronological order. When the configured maximum is exceeded, the oldest entry
+is evicted.
 """
 
-from collections import defaultdict
-from typing import Dict, List, Optional
+import collections
+from typing import Dict, List
 
-from news_feed_system.models import FeedEntry
+import news_feed_system.models
 
 
 class NewsFeedCache:
@@ -28,14 +28,18 @@ class NewsFeedCache:
             raise ValueError(f"max_entries must be positive, got {max_entries}")
         self._max_entries = max_entries
         # user_id -> list of FeedEntry in chronological order (oldest first)
-        self._feeds: Dict[str, List[FeedEntry]] = defaultdict(list)
+        self._feeds: Dict[str, List[news_feed_system.models.FeedEntry]] = (
+            collections.defaultdict(list)
+        )
 
     @property
     def max_entries(self) -> int:
         """The configured maximum entries per user."""
         return self._max_entries
 
-    def append(self, user_id: str, entry: FeedEntry) -> None:
+    def append(
+        self, user_id: str, entry: news_feed_system.models.FeedEntry
+    ) -> None:
         """Append a feed entry for a user, evicting the oldest if at capacity.
 
         Args:
@@ -50,8 +54,9 @@ class NewsFeedCache:
 
     def get_entries(
         self, user_id: str, page: int = 1, page_size: int = 20
-    ) -> List[FeedEntry]:
-        """Retrieve feed entries in reverse chronological order with pagination.
+    ) -> List[news_feed_system.models.FeedEntry]:
+        """Retrieve feed entries in reverse chronological order with
+        pagination.
 
         Args:
             user_id: The user whose feed to retrieve.

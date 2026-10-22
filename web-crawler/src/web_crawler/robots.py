@@ -3,23 +3,24 @@
 from __future__ import annotations
 
 import time
+import urllib.parse
+import urllib.robotparser
 from typing import Optional
-from urllib.parse import urlparse
-from urllib.robotparser import RobotFileParser
 
-from web_crawler.fetcher import Fetcher
+import web_crawler.fetcher
+from web_crawler import exceptions
 
 
 class RobotsChecker:
     """Checks robots.txt compliance with per-host caching.
 
-    Fetches and parses robots.txt for each host on first access,
-    caches the result for the configured TTL period.
+    Fetches and parses robots.txt for each host on first access, caches the
+    result for the configured TTL period.
     """
 
     def __init__(
         self,
-        fetcher: Fetcher,
+        fetcher: web_crawler.fetcher.Fetcher,
         user_agent: str = "WebCrawler/1.0",
         cache_ttl: float = 3600.0,
     ) -> None:
@@ -27,7 +28,9 @@ class RobotsChecker:
         self._user_agent = user_agent
         self._cache_ttl = cache_ttl
         # host -> (RobotFileParser or None, timestamp)
-        self._cache: dict[str, tuple[Optional[RobotFileParser], float]] = {}
+        self._cache: dict[
+            str, tuple[Optional[urllib.robotparser.RobotFileParser], float]
+        ] = {}
 
     async def is_allowed(self, url: str) -> bool:
         """Check if a URL is allowed by robots.txt.
@@ -38,7 +41,7 @@ class RobotsChecker:
         Returns:
             True if allowed, False if disallowed.
         """
-        parsed = urlparse(url)
+        parsed = urllib.parse.urlparse(url)
         host = parsed.netloc.lower()
         robots_url = f"{parsed.scheme}://{host}/robots.txt"
 
@@ -49,7 +52,7 @@ class RobotsChecker:
 
     async def _get_parser(
         self, host: str, robots_url: str
-    ) -> Optional[RobotFileParser]:
+    ) -> Optional[urllib.robotparser.RobotFileParser]:
         """Get or fetch the robots.txt parser for a host.
 
         Checks the cache first. If the cached entry is still within TTL,
@@ -62,7 +65,8 @@ class RobotsChecker:
 
         Returns:
             A RobotFileParser if robots.txt was successfully fetched and parsed,
-            or None if it could not be fetched (in which case all paths are allowed).
+            or None if it could not be fetched (in which case all paths are
+            allowed).
         """
         now = time.monotonic()
 
@@ -75,11 +79,19 @@ class RobotsChecker:
         # Fetch robots.txt
         try:
             response = await self._fetcher.fetch(robots_url, timeout=10.0)
-            parser = RobotFileParser()
-            parser.parse(response.body.decode("utf-8", errors="replace").splitlines())
+            parser = urllib.robotparser.RobotFileParser()
+            parser.parse(
+                response.body.decode("utf-8", errors="replace").splitlines()
+            )
+            # RobotFileParser strips the request's product version. Normalize
+            # versioned directives too so their restrictions are not bypassed.
+            for entry in parser.entries:
+                entry.useragents = [
+                    agent.split("/", 1)[0] for agent in entry.useragents
+                ]
             self._cache[host] = (parser, now)
             return parser
-        except Exception:
+        except (exceptions.FetchError, OSError):
             # If robots.txt cannot be fetched, allow all paths
             self._cache[host] = (None, now)
             return None

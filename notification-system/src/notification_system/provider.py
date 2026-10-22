@@ -1,29 +1,31 @@
 """Provider interface and simulated implementation for notification delivery.
 
 Defines the abstract Provider interface that all notification delivery
-providers must implement, and a SimulatedProvider for testing with
-configurable latency and failure rate.
+providers must implement, and a SimulatedProvider for testing with configurable
+latency and failure rate.
 """
 
 from __future__ import annotations
 
+import abc
 import asyncio
 import random
 import uuid
-from abc import ABC, abstractmethod
 
-from notification_system.models import Channel, DeliveryResult, NotificationTask
+import notification_system.models
 
 
-class Provider(ABC):
+class Provider(abc.ABC):
     """Abstract interface for notification delivery providers.
 
-    Each provider handles delivery for a specific channel type.
-    Implementations must be async-compatible.
+    Each provider handles delivery for a specific channel type. Implementations
+    must be async-compatible.
     """
 
-    @abstractmethod
-    async def deliver(self, task: NotificationTask) -> DeliveryResult:
+    @abc.abstractmethod
+    async def deliver(
+        self, task: notification_system.models.NotificationTask
+    ) -> notification_system.models.DeliveryResult:
         """Deliver a notification through this provider.
 
         Args:
@@ -32,25 +34,23 @@ class Provider(ABC):
         Returns:
             DeliveryResult with success status and provider message ID.
         """
-        ...
 
     @property
-    @abstractmethod
-    def channel(self) -> Channel:
+    @abc.abstractmethod
+    def channel(self) -> notification_system.models.Channel:
         """The channel this provider handles."""
-        ...
 
 
 class SimulatedProvider(Provider):
     """Simulated provider for testing with configurable behavior.
 
-    Simulates delivery with configurable latency and failure rate.
-    Useful for testing the full pipeline without real third-party services.
+    Simulates delivery with configurable latency and failure rate. Useful for
+    testing the full pipeline without real third-party services.
     """
 
     def __init__(
         self,
-        channel: Channel,
+        channel: notification_system.models.Channel,
         latency_ms: float = 50.0,
         failure_rate: float = 0.0,
     ) -> None:
@@ -66,11 +66,13 @@ class SimulatedProvider(Provider):
         self._failure_rate = failure_rate
 
     @property
-    def channel(self) -> Channel:
+    def channel(self) -> notification_system.models.Channel:
         """The channel this provider handles."""
         return self._channel
 
-    async def deliver(self, task: NotificationTask) -> DeliveryResult:
+    async def deliver(
+        self, task: notification_system.models.NotificationTask
+    ) -> notification_system.models.DeliveryResult:
         """Simulate delivery with configurable latency and failure.
 
         Args:
@@ -84,13 +86,13 @@ class SimulatedProvider(Provider):
 
         # Simulate random failures
         if random.random() < self._failure_rate:
-            return DeliveryResult(
+            return notification_system.models.DeliveryResult(
                 success=False,
                 error="Simulated delivery failure",
                 retryable=True,
             )
 
-        return DeliveryResult(
+        return notification_system.models.DeliveryResult(
             success=True,
             provider_message_id=f"sim_{uuid.uuid4().hex[:12]}",
         )

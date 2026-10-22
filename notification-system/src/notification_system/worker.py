@@ -11,12 +11,12 @@ import asyncio
 import logging
 from typing import Optional
 
-from notification_system.exceptions import DeliveryError
-from notification_system.models import Channel, NotificationStatus, NotificationTask
-from notification_system.provider import Provider
-from notification_system.queue import MessageQueue
-from notification_system.retry import RetryHandler
-from notification_system.tracker import EventTracker
+import notification_system.exceptions
+import notification_system.models
+import notification_system.provider
+import notification_system.queue
+import notification_system.retry
+import notification_system.tracker
 
 logger = logging.getLogger(__name__)
 
@@ -24,18 +24,18 @@ logger = logging.getLogger(__name__)
 class Worker:
     """A single async worker that consumes tasks from a channel queue.
 
-    Pulls tasks, invokes the provider, records events, and handles
-    failures by delegating to the RetryHandler.
+    Pulls tasks, invokes the provider, records events, and handles failures by
+    delegating to the RetryHandler.
     """
 
     def __init__(
         self,
         worker_id: str,
-        channel: Channel,
-        queue: MessageQueue,
-        provider: Provider,
-        tracker: EventTracker,
-        retry_handler: RetryHandler,
+        channel: notification_system.models.Channel,
+        queue: notification_system.queue.MessageQueue,
+        provider: notification_system.provider.Provider,
+        tracker: notification_system.tracker.EventTracker,
+        retry_handler: notification_system.retry.RetryHandler,
     ) -> None:
         self._worker_id = worker_id
         self._channel = channel
@@ -44,6 +44,7 @@ class Worker:
         self._tracker = tracker
         self._retry_handler = retry_handler
         self._running = False
+        self._started = asyncio.Event()
         self._task: Optional[asyncio.Task] = None
 
     @property
@@ -52,7 +53,7 @@ class Worker:
         return self._worker_id
 
     @property
-    def channel(self) -> Channel:
+    def channel(self) -> notification_system.models.Channel:
         """The channel this worker processes."""
         return self._channel
 
@@ -64,12 +65,13 @@ class Worker:
     async def start(self) -> None:
         """Start the worker loop.
 
-        Continuously dequeues tasks from the channel queue and processes
-        them until stop() is called. Uses a 1-second timeout on dequeue
-        to allow periodic checking of the running flag.
+        Continuously dequeues tasks from the channel queue and processes them
+        until stop() is called. Uses a 1-second timeout on dequeue to allow
+        periodic checking of the running flag.
         """
         self._running = True
         self._task = asyncio.current_task()
+        self._started.set()
         while self._running:
             try:
                 notification_task = await asyncio.wait_for(
@@ -80,11 +82,19 @@ class Worker:
 
             await self._process_task(notification_task)
 
+    async def wait_started(self) -> None:
+        """Wait until the worker can receive a stop request without losing
+        it.
+        """
+        await self._started.wait()
+
     async def stop(self) -> None:
         """Signal the worker to stop after current task completes."""
         self._running = False
 
-    async def _process_task(self, task: NotificationTask) -> None:
+    async def _process_task(
+        self, task: notification_system.models.NotificationTask
+    ) -> None:
         """Process a single notification task through the provider.
 
         Records a SENDING event, invokes the provider, then records
@@ -95,7 +105,9 @@ class Worker:
         """
         # Record SENDING event
         self._tracker.record(
-            task.notification_id, task.channel, NotificationStatus.SENDING
+            task.notification_id,
+            task.channel,
+            notification_system.models.NotificationStatus.SENDING,
         )
 
         # Invoke the provider
@@ -104,11 +116,13 @@ class Worker:
         if result.success:
             # Record SENT event on successful delivery
             self._tracker.record(
-                task.notification_id, task.channel, NotificationStatus.SENT
+                task.notification_id,
+                task.channel,
+                notification_system.models.NotificationStatus.SENT,
             )
         else:
             # Delegate failure to retry handler
-            error = DeliveryError(
+            error = notification_system.exceptions.DeliveryError(
                 notification_id=task.notification_id,
                 channel=task.channel.value,
                 reason=result.error or "Unknown error",
@@ -126,10 +140,13 @@ class WorkerPool:
 
     def __init__(
         self,
-        queue: MessageQueue,
-        providers: dict[Channel, Provider],
-        tracker: EventTracker,
-        retry_handler: RetryHandler,
+        queue: notification_system.queue.MessageQueue,
+        providers: dict[
+            notification_system.models.Channel,
+            notification_system.provider.Provider,
+        ],
+        tracker: notification_system.tracker.EventTracker,
+        retry_handler: notification_system.retry.RetryHandler,
         workers_per_channel: int = 3,
     ) -> None:
         self._queue = queue
@@ -137,11 +154,13 @@ class WorkerPool:
         self._tracker = tracker
         self._retry_handler = retry_handler
         self._workers_per_channel = workers_per_channel
-        self._workers: dict[Channel, list[Worker]] = {}
+        self._workers: dict[
+            notification_system.models.Channel, list[Worker]
+        ] = {}
         self._tasks: list[asyncio.Task] = []
 
     @property
-    def workers(self) -> dict[Channel, list[Worker]]:
+    def workers(self) -> dict[notification_system.models.Channel, list[Worker]]:
         """Access the current workers by channel."""
         return dict(self._workers)
 
@@ -153,10 +172,10 @@ class WorkerPool:
     async def start(self) -> None:
         """Start all worker tasks for all channels.
 
-        Spawns workers_per_channel asyncio tasks for each channel that
-        has a registered provider. Channels without providers are skipped.
+        Spawns workers_per_channel asyncio tasks for each channel that has a
+        registered provider. Channels without providers are skipped.
         """
-        for channel in Channel:
+        for channel in notification_system.models.Channel:
             provider = self._providers.get(channel)
             if provider is None:
                 continue
@@ -173,6 +192,8 @@ class WorkerPool:
                 self._workers[channel].append(worker)
                 task = asyncio.create_task(worker.start())
                 self._tasks.append(task)
+                # Do not let an immediate stop race with start's running flag.
+                await worker.wait_started()
 
     async def stop(self, graceful: bool = True) -> None:
         """Stop all workers.

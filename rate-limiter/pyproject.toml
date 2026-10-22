@@ -34,7 +34,7 @@ dev = [
     "fastapi",
     "uvicorn",
     "httpx",
-    "fakeredis",
+    "fakeredis[lua]",
 ]
 
 [tool.hatch.build.targets.wheel]

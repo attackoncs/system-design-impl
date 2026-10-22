@@ -1,21 +1,21 @@
 """Distribution statistics and redistribution analysis utilities.
 
-Provides tools for analyzing key distribution across servers on a
-consistent hash ring, including per-server counts, standard deviation,
-and redistribution tracking when topology changes.
+Provides tools for analyzing key distribution across servers on a consistent
+hash ring, including per-server counts, standard deviation, and redistribution
+tracking when topology changes.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import math
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from consistent_hashing.ring import ConsistentHashRing
 
 
-@dataclass
+@dataclasses.dataclass
 class DistributionStats:
     """Statistics about key distribution across servers.
 
@@ -54,7 +54,8 @@ def compute_redistribution(
 
     Returns:
         Dictionary with:
-            "moved": {key: {"from": old_server, "to": new_server}} for each moved key.
+            "moved": {key: {"from": old_server, "to": new_server}} for each
+            moved key.
             "total_moved": int count of keys that changed server.
     """
     moved: dict[str, dict[str, str]] = {}
@@ -63,13 +64,19 @@ def compute_redistribution(
         old_server = assignment_before.get(key)
         new_server = assignment_after.get(key)
 
-        if old_server is not None and new_server is not None and old_server != new_server:
+        if (
+            old_server is not None
+            and new_server is not None
+            and old_server != new_server
+        ):
             moved[key] = {"from": old_server, "to": new_server}
 
     return {"moved": moved, "total_moved": len(moved)}
 
 
-def compute_distribution(ring: "ConsistentHashRing", keys: list[str]) -> DistributionStats:
+def compute_distribution(
+    ring: "ConsistentHashRing", keys: list[str]
+) -> DistributionStats:
     """Compute distribution statistics for a set of keys on the ring.
 
     Args:

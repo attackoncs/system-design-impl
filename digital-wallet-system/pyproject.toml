@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "digital-wallet-reference"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = []
+description = "Event-sourced sharded synthetic wallet with TCC recovery and fixed-leader quorum journal"
+
+[project.scripts]
+digital-wallet = "digital_wallet.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

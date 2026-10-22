@@ -19,13 +19,13 @@ Covers: FR-9.1, NFR-2.1, NFR-2.2, NFR-2.3
 """
 
 import asyncio
+import dataclasses
+import enum
 import logging
 import os
+import pathlib
 import struct
 import zlib
-from dataclasses import dataclass
-from enum import Enum
-from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -53,8 +53,9 @@ _CHECKSUM_FORMAT = "<I"  # uint32 for CRC32 checksum
 _CHECKSUM_SIZE = struct.calcsize(_CHECKSUM_FORMAT)
 
 
-class WALEntryType(Enum):
+class WALEntryType(enum.Enum):
     """Type of WAL entry."""
+
     PUT = "PUT"
     DELETE = "DELETE"
 
@@ -68,9 +69,10 @@ _ENTRY_TYPE_TO_BYTE = {
 _BYTE_TO_ENTRY_TYPE = {v: k for k, v in _ENTRY_TYPE_TO_BYTE.items()}
 
 
-@dataclass
+@dataclasses.dataclass
 class WALEntry:
     """A single entry in the write-ahead log."""
+
     sequence_number: int
     entry_type: WALEntryType
     key: str
@@ -94,7 +96,7 @@ class WriteAheadLog:
         Args:
             wal_dir: Directory to store WAL segment files.
         """
-        self._wal_dir = Path(wal_dir)
+        self._wal_dir = pathlib.Path(wal_dir)
         self._wal_path = self._wal_dir / _WAL_FILENAME
         self._sequence_number = 0
         self._lock = asyncio.Lock()
@@ -120,16 +122,18 @@ class WriteAheadLog:
         Raises:
             IOError: If the write or fsync fails.
         """
+
         async with self._lock:
             self._sequence_number += 1
             entry.sequence_number = self._sequence_number
 
             data = self._serialize_entry(entry)
 
-            # Use asyncio.to_thread for file I/O to avoid blocking the event loop.
-            # The lock ensures serialization so concurrent appends don't interleave.
+            # Use asyncio.to_thread for file I/O to avoid blocking the event
+            # loop.
+            # The lock ensures serialization so concurrent appends don't
+            # interleave.
             await asyncio.to_thread(self._write_and_sync, data)
-
 
     async def replay(self) -> list[WALEntry]:
         """Replay all entries from the current WAL segment.
@@ -156,6 +160,7 @@ class WriteAheadLog:
 
         Creates a new empty segment file, effectively discarding all entries.
         """
+
         async with self._lock:
             await asyncio.to_thread(self._truncate_file)
 
@@ -166,7 +171,7 @@ class WriteAheadLog:
             [length][sequence_number][entry_type][key_length][key]
             [value_length][value][timestamp][checksum]
 
-        The checksum covers everything from sequence_number to timestamp (inclusive).
+        The checksum covers sequence_number through timestamp, inclusive.
         The length field stores the total size of everything after it.
         """
         key_bytes = entry.key.encode("utf-8")
@@ -174,9 +179,13 @@ class WriteAheadLog:
 
         entry_type_byte = _ENTRY_TYPE_TO_BYTE[entry.entry_type]
 
-        # Build the payload (everything between length and checksum, inclusive of checksum)
-        # First build the checksummed portion (sequence_number through timestamp)
-        checksummed_data = struct.pack(_HEADER_FORMAT, entry.sequence_number, entry_type_byte)
+        # Build the payload (everything between length and checksum, inclusive
+        # of checksum)
+        # First build the checksummed portion (sequence_number through
+        # timestamp)
+        checksummed_data = struct.pack(
+            _HEADER_FORMAT, entry.sequence_number, entry_type_byte
+        )
         checksummed_data += struct.pack(_KEY_LENGTH_FORMAT, len(key_bytes))
         checksummed_data += key_bytes
         checksummed_data += struct.pack(_VALUE_LENGTH_FORMAT, len(value_bytes))
@@ -198,10 +207,10 @@ class WriteAheadLog:
     def _write_and_sync(self, data: bytes) -> None:
         """Write data to the WAL file and fsync for durability.
 
-        This runs in a thread to avoid blocking the event loop.
-        Uses a persistent file descriptor for consistent writes.
-        Since appends are serialized by the asyncio lock, we open in
-        write mode and seek to end before each write.
+        This runs in a thread to avoid blocking the event loop. Uses a
+        persistent file descriptor for consistent writes. Since appends are
+        serialized by the asyncio lock, we open in write mode and seek to end
+        before each write.
         """
         if self._fd is None:
             flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
@@ -239,13 +248,14 @@ class WriteAheadLog:
             # Read the length field
             if offset + _LENGTH_SIZE > total_size:
                 logger.warning(
-                    "WAL: incomplete length field at offset %d, stopping replay",
+                    "WAL: incomplete length field at offset %d, stopping"
+                    " replay",
                     offset,
                 )
                 break
 
             (entry_length,) = struct.unpack(
-                _LENGTH_FORMAT, data[offset: offset + _LENGTH_SIZE]
+                _LENGTH_FORMAT, data[offset : offset + _LENGTH_SIZE]
             )
             offset += _LENGTH_SIZE
 
@@ -260,7 +270,7 @@ class WriteAheadLog:
                 )
                 break
 
-            entry_data = data[offset: offset + entry_length]
+            entry_data = data[offset : offset + entry_length]
             offset += entry_length
 
             # Parse the entry
@@ -276,12 +286,14 @@ class WriteAheadLog:
         Returns None if the checksum is invalid.
 
         Args:
-            entry_data: The raw bytes of the entry (excluding the length prefix).
+            entry_data: The raw bytes of the entry (excluding the length
+                prefix).
 
         Returns:
             A WALEntry if valid, None if corrupted.
         """
-        # The checksummed portion is everything except the last 4 bytes (checksum)
+        # The checksummed portion is everything except the last 4 bytes
+        # (checksum)
         if len(entry_data) < _CHECKSUM_SIZE:
             logger.warning("WAL: entry too short to contain checksum")
             return None
@@ -291,7 +303,9 @@ class WriteAheadLog:
 
         # Verify checksum
         computed_checksum = zlib.crc32(checksummed_data) & 0xFFFFFFFF
-        (stored_checksum,) = struct.unpack(_CHECKSUM_FORMAT, stored_checksum_bytes)
+        (stored_checksum,) = struct.unpack(
+            _CHECKSUM_FORMAT, stored_checksum_bytes
+        )
 
         if computed_checksum != stored_checksum:
             logger.warning(
@@ -311,7 +325,7 @@ class WriteAheadLog:
             return None
 
         sequence_number, entry_type_byte = struct.unpack(
-            _HEADER_FORMAT, checksummed_data[pos: pos + _HEADER_SIZE]
+            _HEADER_FORMAT, checksummed_data[pos : pos + _HEADER_SIZE]
         )
         pos += _HEADER_SIZE
 
@@ -328,7 +342,7 @@ class WriteAheadLog:
             return None
 
         (key_length,) = struct.unpack(
-            _KEY_LENGTH_FORMAT, checksummed_data[pos: pos + _KEY_LENGTH_SIZE]
+            _KEY_LENGTH_FORMAT, checksummed_data[pos : pos + _KEY_LENGTH_SIZE]
         )
         pos += _KEY_LENGTH_SIZE
 
@@ -337,7 +351,7 @@ class WriteAheadLog:
             logger.warning("WAL: entry too short for key data")
             return None
 
-        key = checksummed_data[pos: pos + key_length].decode("utf-8")
+        key = checksummed_data[pos : pos + key_length].decode("utf-8")
         pos += key_length
 
         # value_length
@@ -346,7 +360,8 @@ class WriteAheadLog:
             return None
 
         (value_length,) = struct.unpack(
-            _VALUE_LENGTH_FORMAT, checksummed_data[pos: pos + _VALUE_LENGTH_SIZE]
+            _VALUE_LENGTH_FORMAT,
+            checksummed_data[pos : pos + _VALUE_LENGTH_SIZE],
         )
         pos += _VALUE_LENGTH_SIZE
 
@@ -357,7 +372,7 @@ class WriteAheadLog:
 
         value: Optional[bytes] = None
         if value_length > 0:
-            value = checksummed_data[pos: pos + value_length]
+            value = checksummed_data[pos : pos + value_length]
         pos += value_length
 
         # timestamp
@@ -366,7 +381,7 @@ class WriteAheadLog:
             return None
 
         (timestamp,) = struct.unpack(
-            _TIMESTAMP_FORMAT, checksummed_data[pos: pos + _TIMESTAMP_SIZE]
+            _TIMESTAMP_FORMAT, checksummed_data[pos : pos + _TIMESTAMP_SIZE]
         )
         pos += _TIMESTAMP_SIZE
 
@@ -381,8 +396,8 @@ class WriteAheadLog:
     def _truncate_file(self) -> None:
         """Truncate the WAL file to zero length.
 
-        This effectively creates a new empty segment.
-        Closes the existing file descriptor and opens a fresh one.
+        This effectively creates a new empty segment. Closes the existing file
+        descriptor and opens a fresh one.
         """
         # Close existing fd if open
         if self._fd is not None:

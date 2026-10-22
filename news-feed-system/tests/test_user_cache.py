@@ -1,12 +1,14 @@
 """Unit tests for the UserCache."""
 
-from news_feed_system.models import UserProfile
-from news_feed_system.user_cache import UserCache
+import news_feed_system.models
+import news_feed_system.user_cache
 
 
-def _make_profile(user_id: str, username: str = "", follower_count: int = 0) -> UserProfile:
+def _make_profile(
+    user_id: str, username: str = "", follower_count: int = 0
+) -> news_feed_system.models.UserProfile:
     """Helper to create a UserProfile."""
-    return UserProfile(
+    return news_feed_system.models.UserProfile(
         user_id=user_id,
         username=username or f"user_{user_id}",
         profile_picture_url=f"https://example.com/{user_id}.png",
@@ -18,17 +20,17 @@ class TestUserCachePutAndGet:
     """Tests for put and get operations."""
 
     def test_put_and_get_single_profile(self):
-        cache = UserCache(capacity=10, ttl_seconds=60.0)
+        cache = news_feed_system.user_cache.UserCache(capacity=10, ttl_seconds=60.0)
         profile = _make_profile("u1")
         cache.put(profile)
         assert cache.get("u1") == profile
 
     def test_get_nonexistent_returns_none(self):
-        cache = UserCache(capacity=10, ttl_seconds=60.0)
+        cache = news_feed_system.user_cache.UserCache(capacity=10, ttl_seconds=60.0)
         assert cache.get("nonexistent") is None
 
     def test_put_updates_existing_entry(self):
-        cache = UserCache(capacity=10, ttl_seconds=60.0)
+        cache = news_feed_system.user_cache.UserCache(capacity=10, ttl_seconds=60.0)
         profile_v1 = _make_profile("u1", username="old_name")
         profile_v2 = _make_profile("u1", username="new_name")
         cache.put(profile_v1)
@@ -38,7 +40,7 @@ class TestUserCachePutAndGet:
         assert result.username == "new_name"
 
     def test_len_reflects_entries(self):
-        cache = UserCache(capacity=10, ttl_seconds=60.0)
+        cache = news_feed_system.user_cache.UserCache(capacity=10, ttl_seconds=60.0)
         assert len(cache) == 0
         cache.put(_make_profile("u1"))
         assert len(cache) == 1
@@ -46,7 +48,7 @@ class TestUserCachePutAndGet:
         assert len(cache) == 2
 
     def test_put_same_user_does_not_increase_len(self):
-        cache = UserCache(capacity=10, ttl_seconds=60.0)
+        cache = news_feed_system.user_cache.UserCache(capacity=10, ttl_seconds=60.0)
         cache.put(_make_profile("u1", username="v1"))
         cache.put(_make_profile("u1", username="v2"))
         assert len(cache) == 1
@@ -56,7 +58,7 @@ class TestUserCacheLRUEviction:
     """Tests for LRU eviction when capacity is exceeded."""
 
     def test_evicts_lru_when_at_capacity(self):
-        cache = UserCache(capacity=3, ttl_seconds=60.0)
+        cache = news_feed_system.user_cache.UserCache(capacity=3, ttl_seconds=60.0)
         cache.put(_make_profile("u1"))
         cache.put(_make_profile("u2"))
         cache.put(_make_profile("u3"))
@@ -69,7 +71,7 @@ class TestUserCacheLRUEviction:
         assert cache.get("u4") is not None
 
     def test_access_prevents_eviction(self):
-        cache = UserCache(capacity=3, ttl_seconds=60.0)
+        cache = news_feed_system.user_cache.UserCache(capacity=3, ttl_seconds=60.0)
         cache.put(_make_profile("u1"))
         cache.put(_make_profile("u2"))
         cache.put(_make_profile("u3"))
@@ -84,7 +86,7 @@ class TestUserCacheLRUEviction:
         assert cache.get("u4") is not None
 
     def test_update_prevents_eviction(self):
-        cache = UserCache(capacity=3, ttl_seconds=60.0)
+        cache = news_feed_system.user_cache.UserCache(capacity=3, ttl_seconds=60.0)
         cache.put(_make_profile("u1"))
         cache.put(_make_profile("u2"))
         cache.put(_make_profile("u3"))
@@ -97,7 +99,7 @@ class TestUserCacheLRUEviction:
         assert cache.get("u2") is None
 
     def test_capacity_property(self):
-        cache = UserCache(capacity=42, ttl_seconds=60.0)
+        cache = news_feed_system.user_cache.UserCache(capacity=42, ttl_seconds=60.0)
         assert cache.capacity == 42
 
 
@@ -110,7 +112,7 @@ class TestUserCacheTTLExpiration:
         def clock() -> float:
             return current_time
 
-        cache = UserCache(capacity=10, ttl_seconds=60.0, clock=clock)
+        cache = news_feed_system.user_cache.UserCache(capacity=10, ttl_seconds=60.0, clock=clock)
         cache.put(_make_profile("u1"))
 
         # Advance time past TTL
@@ -123,7 +125,7 @@ class TestUserCacheTTLExpiration:
         def clock() -> float:
             return current_time
 
-        cache = UserCache(capacity=10, ttl_seconds=60.0, clock=clock)
+        cache = news_feed_system.user_cache.UserCache(capacity=10, ttl_seconds=60.0, clock=clock)
         cache.put(_make_profile("u1"))
 
         # Advance time but stay within TTL
@@ -136,7 +138,7 @@ class TestUserCacheTTLExpiration:
         def clock() -> float:
             return current_time
 
-        cache = UserCache(capacity=10, ttl_seconds=60.0, clock=clock)
+        cache = news_feed_system.user_cache.UserCache(capacity=10, ttl_seconds=60.0, clock=clock)
         cache.put(_make_profile("u1"))
         assert len(cache) == 1
 
@@ -151,7 +153,7 @@ class TestUserCacheTTLExpiration:
         def clock() -> float:
             return current_time
 
-        cache = UserCache(capacity=10, ttl_seconds=60.0, clock=clock)
+        cache = news_feed_system.user_cache.UserCache(capacity=10, ttl_seconds=60.0, clock=clock)
         cache.put(_make_profile("u1"))
 
         # Advance time close to expiry
@@ -168,7 +170,7 @@ class TestUserCacheBatchRetrieval:
     """Tests for get_batch operation."""
 
     def test_get_batch_returns_found_entries(self):
-        cache = UserCache(capacity=10, ttl_seconds=60.0)
+        cache = news_feed_system.user_cache.UserCache(capacity=10, ttl_seconds=60.0)
         cache.put(_make_profile("u1"))
         cache.put(_make_profile("u2"))
         cache.put(_make_profile("u3"))
@@ -180,7 +182,7 @@ class TestUserCacheBatchRetrieval:
         assert "u3" in result
 
     def test_get_batch_skips_missing_entries(self):
-        cache = UserCache(capacity=10, ttl_seconds=60.0)
+        cache = news_feed_system.user_cache.UserCache(capacity=10, ttl_seconds=60.0)
         cache.put(_make_profile("u1"))
         cache.put(_make_profile("u3"))
 
@@ -196,7 +198,7 @@ class TestUserCacheBatchRetrieval:
         def clock() -> float:
             return current_time
 
-        cache = UserCache(capacity=10, ttl_seconds=60.0, clock=clock)
+        cache = news_feed_system.user_cache.UserCache(capacity=10, ttl_seconds=60.0, clock=clock)
         cache.put(_make_profile("u1"))
 
         current_time = 150.0
@@ -210,12 +212,12 @@ class TestUserCacheBatchRetrieval:
         assert "u2" in result
 
     def test_get_batch_empty_list(self):
-        cache = UserCache(capacity=10, ttl_seconds=60.0)
+        cache = news_feed_system.user_cache.UserCache(capacity=10, ttl_seconds=60.0)
         cache.put(_make_profile("u1"))
         result = cache.get_batch([])
         assert result == {}
 
     def test_get_batch_all_missing(self):
-        cache = UserCache(capacity=10, ttl_seconds=60.0)
+        cache = news_feed_system.user_cache.UserCache(capacity=10, ttl_seconds=60.0)
         result = cache.get_batch(["u1", "u2"])
         assert result == {}

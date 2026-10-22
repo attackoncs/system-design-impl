@@ -4,24 +4,25 @@ Provides base-62 encoding/decoding utilities, the abstract HashStrategy
 interface, and the IDGenerator protocol for pluggable ID generation.
 """
 
-import struct
+import abc
 import zlib
-from abc import ABC, abstractmethod
 from typing import Protocol
 
-from url_shortener.storage import StorageBackend
-from url_shortener.exceptions import CollisionLimitExceededError
+import url_shortener.exceptions
+import url_shortener.storage
 
 # Base-62 character set: 0-9, a-z, A-Z
 BASE62_CHARS = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 SHORT_CODE_LENGTH = 7
 
 
-class HashStrategy(ABC):
+class HashStrategy(abc.ABC):
     """Abstract interface for short code generation strategies."""
 
-    @abstractmethod
-    def generate(self, long_url: str, storage: StorageBackend) -> str:
+    @abc.abstractmethod
+    def generate(
+        self, long_url: str, storage: url_shortener.storage.StorageBackend
+    ) -> str:
         """Generate a short code for the given long URL.
 
         Args:
@@ -31,7 +32,6 @@ class HashStrategy(ABC):
         Returns:
             A 7-character short code from the base-62 alphabet.
         """
-        ...
 
 
 class IDGenerator(Protocol):
@@ -39,7 +39,6 @@ class IDGenerator(Protocol):
 
     def next_id(self) -> int:
         """Return the next unique numeric ID."""
-        ...
 
 
 def encode_base62(number: int) -> str:
@@ -90,9 +89,8 @@ def hash_crc32(text: str) -> int:
 class HashCollisionStrategy(HashStrategy):
     """Hash-based strategy with collision resolution.
 
-    Applies CRC32 to the long URL, encodes the result in base-62,
-    takes the first 7 characters. On collision, appends a predefined
-    string and rehashes.
+    Applies CRC32 to the long URL, encodes the result in base-62, takes the
+    first 7 characters. On collision, appends a predefined string and rehashes.
     """
 
     DEFAULT_MAX_RETRIES = 10
@@ -101,7 +99,9 @@ class HashCollisionStrategy(HashStrategy):
     def __init__(self, max_retries: int = DEFAULT_MAX_RETRIES) -> None:
         self._max_retries = max_retries
 
-    def generate(self, long_url: str, storage: StorageBackend) -> str:
+    def generate(
+        self, long_url: str, storage: url_shortener.storage.StorageBackend
+    ) -> str:
         """Generate short code with collision resolution.
 
         Args:
@@ -116,7 +116,7 @@ class HashCollisionStrategy(HashStrategy):
         """
         url_to_hash = long_url
 
-        for attempt in range(self._max_retries + 1):
+        for _ in range(self._max_retries + 1):
             candidate = self._compute_code(url_to_hash)
 
             # Check if this code is free or already maps to our URL
@@ -127,7 +127,7 @@ class HashCollisionStrategy(HashStrategy):
             # Collision: append suffix and retry
             url_to_hash = url_to_hash + self.COLLISION_SUFFIX
 
-        raise CollisionLimitExceededError(
+        raise url_shortener.exceptions.CollisionLimitExceededError(
             f"Failed to generate unique short code for '{long_url}' "
             f"after {self._max_retries} retries"
         )
@@ -164,14 +164,16 @@ class AutoIncrementIDGenerator:
 class Base62Strategy(HashStrategy):
     """Base-62 conversion strategy using unique numeric IDs.
 
-    Converts a unique ID to base-62, producing a guaranteed-unique
-    short code without collision handling.
+    Converts a unique ID to base-62, producing a guaranteed-unique short code
+    without collision handling.
     """
 
     def __init__(self, id_generator: IDGenerator | None = None) -> None:
         self._id_generator = id_generator or AutoIncrementIDGenerator()
 
-    def generate(self, long_url: str, storage: StorageBackend) -> str:
+    def generate(
+        self, long_url: str, storage: url_shortener.storage.StorageBackend
+    ) -> str:
         """Generate short code from a unique numeric ID.
 
         Args:

@@ -1,16 +1,15 @@
 """Cluster membership management.
 
 Wraps the gossip protocol and consistent hash ring to provide a unified
-interface for cluster membership operations. Handles node join/leave events
-and keeps the hash ring synchronized with the current membership state.
+interface for cluster membership operations. Handles node join/leave events and
+keeps the hash ring synchronized with the current membership state.
 """
 
 from __future__ import annotations
 
 from typing import Optional, Protocol, runtime_checkable
 
-
-from kv_store.cluster.gossip import GossipProtocol, MemberInfo, NodeStatus
+from kv_store.cluster import gossip as cluster_gossip
 
 
 @runtime_checkable
@@ -21,18 +20,17 @@ class HashRingProtocol(Protocol):
     that provides add_node, remove_node, and nodes properties.
     """
 
-    def add_node(self, node: str, num_virtual_nodes: Optional[int] = None) -> list[int]:
+    def add_node(
+        self, node: str, num_virtual_nodes: Optional[int] = None
+    ) -> list[int]:
         """Add a node to the hash ring."""
-        ...
 
     def remove_node(self, node: str) -> list[int]:
         """Remove a node from the hash ring."""
-        ...
 
     @property
     def nodes(self) -> list[str]:
         """List of all physical nodes on the ring."""
-        ...
 
 
 class ClusterMembership:
@@ -54,7 +52,7 @@ class ClusterMembership:
         self,
         node_id: str,
         address: str,
-        gossip: GossipProtocol,
+        gossip: cluster_gossip.GossipProtocol,
         hash_ring: HashRingProtocol,
         virtual_nodes: int = 150,
     ):
@@ -75,7 +73,9 @@ class ClusterMembership:
         """Whether this node has joined the cluster."""
         return self._joined
 
-    async def join_cluster(self, seed_nodes: Optional[list[tuple[str, str]]] = None) -> None:
+    async def join_cluster(
+        self, seed_nodes: Optional[list[tuple[str, str]]] = None
+    ) -> None:
         """Join the cluster.
 
         Adds this node to the hash ring, contacts seed nodes via gossip,
@@ -127,7 +127,7 @@ class ClusterMembership:
             True if the node is known and has ALIVE status.
         """
         status = self._gossip.get_node_status(node_id)
-        return status == NodeStatus.ALIVE
+        return status == cluster_gossip.NodeStatus.ALIVE
 
     def get_node_address(self, node_id: str) -> Optional[str]:
         """Get the address of a node.
@@ -144,7 +144,7 @@ class ClusterMembership:
             return None
         return info.address
 
-    def get_alive_members(self) -> list[MemberInfo]:
+    def get_alive_members(self) -> list[cluster_gossip.MemberInfo]:
         """Get all alive cluster members.
 
         Returns:

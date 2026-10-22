@@ -1,28 +1,33 @@
 """Counter cache for tracking engagement metrics.
 
-Stores atomic counters for likes, replies, followers, and following
-keyed by (entity_id, counter_type). Counters are initialized to zero
-on first access and cannot go below zero.
+Stores atomic counters for likes, replies, followers, and following keyed by
+(entity_id, counter_type). Counters are initialized to zero on first access and
+cannot go below zero.
 """
 
 from __future__ import annotations
 
-from news_feed_system.models import CounterType
+import news_feed_system.models
 
 
 class CounterCache:
-    """Cache for atomic counters (like count, reply count, follower/following count).
+    """Cache for atomic counters (like count, reply count, follower/following
+    count).
 
-    Counters are stored by (entity_id, counter_type) key and initialized
-    to zero on first access. Increment and decrement operations are atomic
-    within a single-threaded asyncio context. Decrement operations are
-    clamped to prevent counters from going below zero.
+    Counters are stored by (entity_id, counter_type) key and initialized to
+    zero on first access. Increment and decrement operations are atomic within
+    a single-threaded asyncio context. Decrement operations are clamped to
+    prevent counters from going below zero.
     """
 
     def __init__(self) -> None:
-        self._counters: dict[tuple[str, CounterType], int] = {}
+        self._counters: dict[
+            tuple[str, news_feed_system.models.CounterType], int
+        ] = {}
 
-    def increment(self, entity_id: str, counter_type: CounterType) -> int:
+    def increment(
+        self, entity_id: str, counter_type: news_feed_system.models.CounterType
+    ) -> int:
         """Atomically increment a counter by 1.
 
         Args:
@@ -38,7 +43,9 @@ class CounterCache:
         self._counters[key] = new_value
         return new_value
 
-    def decrement(self, entity_id: str, counter_type: CounterType) -> int:
+    def decrement(
+        self, entity_id: str, counter_type: news_feed_system.models.CounterType
+    ) -> int:
         """Atomically decrement a counter by 1, clamped at zero.
 
         Prevents the counter from going below zero. If the counter is
@@ -57,7 +64,9 @@ class CounterCache:
         self._counters[key] = new_value
         return new_value
 
-    def get(self, entity_id: str, counter_type: CounterType) -> int:
+    def get(
+        self, entity_id: str, counter_type: news_feed_system.models.CounterType
+    ) -> int:
         """Get the current value of a counter.
 
         Returns 0 if the counter has never been accessed (initialized
@@ -74,8 +83,8 @@ class CounterCache:
         return self._counters.get(key, 0)
 
     def get_batch(
-        self, keys: list[tuple[str, CounterType]]
-    ) -> dict[tuple[str, CounterType], int]:
+        self, keys: list[tuple[str, news_feed_system.models.CounterType]]
+    ) -> dict[tuple[str, news_feed_system.models.CounterType], int]:
         """Retrieve multiple counters in a single operation.
 
         Args:

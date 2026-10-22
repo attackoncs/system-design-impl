@@ -1,18 +1,18 @@
 """Alternative ID generation strategies.
 
-Provides UUID v4 and timestamp-random generators as alternatives to the
-core Snowflake algorithm, implementing a common IDGenerator interface.
+Provides UUID v4 and timestamp-random generators as alternatives to the core
+Snowflake algorithm, implementing a common IDGenerator interface.
 """
 
 from __future__ import annotations
 
+import abc
 import random
 import time
 import uuid
-from abc import ABC, abstractmethod
 
 
-class IDGenerator(ABC):
+class IDGenerator(abc.ABC):
     """Abstract base for ID generation strategies.
 
     Provides a common interface for different ID generation approaches.
@@ -20,16 +20,15 @@ class IDGenerator(ABC):
     Covers: FR-8.3
     """
 
-    @abstractmethod
+    @abc.abstractmethod
     def generate(self) -> int | str:
         """Generate a single unique ID.
 
         Returns:
             A unique identifier (int for numeric strategies, str for UUID).
         """
-        ...
 
-    @abstractmethod
+    @abc.abstractmethod
     def generate_batch(self, count: int) -> list[int | str]:
         """Generate multiple unique IDs.
 
@@ -39,7 +38,6 @@ class IDGenerator(ABC):
         Returns:
             List of unique identifiers.
         """
-        ...
 
 
 class UUIDGenerator(IDGenerator):

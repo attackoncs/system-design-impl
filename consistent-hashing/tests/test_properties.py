@@ -1,14 +1,12 @@
 """Property-based tests for consistent hashing ring using Hypothesis.
 
-These tests verify correctness invariants across random inputs,
-complementing the unit tests with broader coverage.
+These tests verify correctness invariants across random inputs, complementing
+the unit tests with broader coverage.
 """
 
-from hypothesis import given, settings, HealthCheck
+import consistent_hashing.ring
+import hypothesis
 from hypothesis import strategies as st
-
-from consistent_hashing.ring import ConsistentHashRing
-
 
 # --- Strategies ---
 
@@ -28,7 +26,8 @@ server_names_strategy = st.lists(
 key_strategy = st.text(min_size=0, max_size=100)
 
 # Strategy for generating a set of servers for redistribution tests
-# We need at least 2 servers (N existing + 1 new) to test redistribution meaningfully
+# We need at least 2 servers (N existing + 1 new) to test redistribution
+# meaningfully
 redistribution_servers_strategy = st.lists(
     st.text(
         alphabet=st.characters(whitelist_categories=("L", "N")),
@@ -59,15 +58,17 @@ large_key_set_strategy = st.lists(
 class TestDeterminism:
     """**Validates: Requirements NFR-2.1**
 
-    For a stable ring (no topology changes), the same key shall always
-    map to the same server (deterministic).
+    For a stable ring (no topology changes), the same key shall always map to
+    the same server (deterministic).
     """
 
-    @given(servers=server_names_strategy, key=key_strategy)
-    @settings(max_examples=200)
+    @hypothesis.given(servers=server_names_strategy, key=key_strategy)
+    @hypothesis.settings(max_examples=200)
     def test_get_node_deterministic(self, servers: list[str], key: str) -> None:
-        """For any stable ring and any key, get_node(key) always returns the same server."""
-        ring = ConsistentHashRing(nodes=servers, num_virtual_nodes=10)
+        """For any stable ring and any key, get_node(key) always returns the
+        same server.
+        """
+        ring = consistent_hashing.ring.ConsistentHashRing(nodes=servers, num_virtual_nodes=10)
 
         # Call get_node multiple times with the same key
         result1 = ring.get_node(key)
@@ -75,18 +76,25 @@ class TestDeterminism:
         result3 = ring.get_node(key)
 
         # All calls must return the same server
-        assert result1 == result2, (
-            f"get_node('{key}') returned '{result1}' first, then '{result2}'"
-        )
-        assert result2 == result3, (
-            f"get_node('{key}') returned '{result2}' second, then '{result3}'"
-        )
+        assert (
+            result1 == result2
+        ), f"get_node('{key}') returned '{result1}' first, then '{result2}'"
+        assert (
+            result2 == result3
+        ), f"get_node('{key}') returned '{result2}' second, then '{result3}'"
 
-    @given(servers=server_names_strategy, keys=st.lists(key_strategy, min_size=1, max_size=50))
-    @settings(max_examples=100)
-    def test_get_node_deterministic_across_keys(self, servers: list[str], keys: list[str]) -> None:
-        """For any stable ring, calling get_node on the same set of keys always yields the same mapping."""
-        ring = ConsistentHashRing(nodes=servers, num_virtual_nodes=10)
+    @hypothesis.given(
+        servers=server_names_strategy,
+        keys=st.lists(key_strategy, min_size=1, max_size=50),
+    )
+    @hypothesis.settings(max_examples=100)
+    def test_get_node_deterministic_across_keys(
+        self, servers: list[str], keys: list[str]
+    ) -> None:
+        """For any stable ring, calling get_node on the same set of keys always
+        yields the same mapping.
+        """
+        ring = consistent_hashing.ring.ConsistentHashRing(nodes=servers, num_virtual_nodes=10)
 
         # Build mapping once
         mapping_first = {k: ring.get_node(k) for k in keys}
@@ -94,21 +102,24 @@ class TestDeterminism:
         # Build mapping again
         mapping_second = {k: ring.get_node(k) for k in keys}
 
-        assert mapping_first == mapping_second, (
-            "Key-to-server mapping changed between two passes over the same keys"
-        )
+        assert (
+            mapping_first == mapping_second
+        ), "Key-to-server mapping changed between two passes over the same keys"
 
 
 class TestMinimalRedistribution:
     """**Validates: Requirements NFR-2.2**
 
-    Adding or removing a server shall redistribute at most K/N of total
-    keys on average, where K is the number of keys and N is the number
-    of servers.
+    Adding or removing a server shall redistribute at most K/N of total keys on
+    average, where K is the number of keys and N is the number of servers.
     """
 
-    @given(servers=redistribution_servers_strategy, keys=large_key_set_strategy)
-    @settings(max_examples=50, deadline=None, suppress_health_check=[HealthCheck.data_too_large])
+    @hypothesis.given(servers=redistribution_servers_strategy, keys=large_key_set_strategy)
+    @hypothesis.settings(
+        max_examples=50,
+        deadline=None,
+        suppress_health_check=[hypothesis.HealthCheck.data_too_large],
+    )
     def test_add_server_redistributes_bounded_keys(
         self, servers: list[str], keys: list[str]
     ) -> None:
@@ -129,7 +140,7 @@ class TestMinimalRedistribution:
         n_initial = len(initial_servers)
 
         # Create ring with initial servers using moderate virtual nodes
-        ring = ConsistentHashRing(nodes=initial_servers, num_virtual_nodes=150)
+        ring = consistent_hashing.ring.ConsistentHashRing(nodes=initial_servers, num_virtual_nodes=150)
 
         # Record key assignments before adding the new server
         assignment_before = {key: ring.get_node(key) for key in keys}
@@ -142,12 +153,11 @@ class TestMinimalRedistribution:
 
         # Count how many keys moved to a different server
         moved_keys = sum(
-            1
-            for key in keys
-            if assignment_before[key] != assignment_after[key]
+            1 for key in keys if assignment_before[key] != assignment_after[key]
         )
 
-        # Theoretical bound: total_keys / (N+1) where N+1 is the new total servers
+        # Theoretical bound: total_keys / (N+1) where N+1 is the new total
+        # servers
         # We use a generous 3x tolerance to account for statistical variance
         total_keys = len(keys)
         n_after = n_initial + 1
@@ -155,13 +165,13 @@ class TestMinimalRedistribution:
         max_allowed_moves = total_keys * tolerance_factor / n_after
 
         assert moved_keys <= max_allowed_moves, (
-            f"Too many keys redistributed when adding server. "
-            f"Moved {moved_keys} keys out of {total_keys} total "
-            f"(ratio: {moved_keys / total_keys:.3f}). "
-            f"Expected at most {max_allowed_moves:.0f} "
-            f"(theoretical 1/{n_after} = {1/n_after:.3f}, "
-            f"with {tolerance_factor}x tolerance = {tolerance_factor/n_after:.3f}). "
-            f"Initial servers: {n_initial}, new total: {n_after}."
+            "Too many keys redistributed when adding server. Moved"
+            f" {moved_keys} keys out of {total_keys} total (ratio:"
+            f" {moved_keys / total_keys:.3f}). Expected at most"
+            f" {max_allowed_moves:.0f} (theoretical 1/{n_after} ="
+            f" {1/n_after:.3f}, with {tolerance_factor}x tolerance ="
+            f" {tolerance_factor/n_after:.3f}). Initial servers: {n_initial},"
+            f" new total: {n_after}."
         )
 
 
@@ -169,25 +179,26 @@ class TestCompleteCoverage:
     """**Validates: Requirements FR-4.1**
 
     Every key maps to exactly one server (get_node always returns a valid
-    server from the ring), and all servers with virtual nodes receive at
-    least some keys from a large random key set (no server is starved).
+    server from the ring), and all servers with virtual nodes receive at least
+    some keys from a large random key set (no server is starved).
     """
 
-    @given(servers=server_names_strategy, key=key_strategy)
-    @settings(max_examples=200)
+    @hypothesis.given(servers=server_names_strategy, key=key_strategy)
+    @hypothesis.settings(max_examples=200)
     def test_every_key_maps_to_exactly_one_valid_server(
         self, servers: list[str], key: str
     ) -> None:
         """For any non-empty ring and any key, get_node returns exactly one
-        server that is a member of the ring."""
-        ring = ConsistentHashRing(nodes=servers, num_virtual_nodes=10)
+        server that is a member of the ring.
+        """
+        ring = consistent_hashing.ring.ConsistentHashRing(nodes=servers, num_virtual_nodes=10)
 
         result = ring.get_node(key)
 
         # Result must be a single string (not None, not a list)
-        assert isinstance(result, str), (
-            f"get_node('{key}') returned {type(result).__name__}, expected str"
-        )
+        assert isinstance(
+            result, str
+        ), f"get_node('{key}') returned {type(result).__name__}, expected str"
 
         # Result must be one of the servers in the ring
         assert result in servers, (
@@ -195,7 +206,7 @@ class TestCompleteCoverage:
             f"Ring servers: {servers}"
         )
 
-    @given(
+    @hypothesis.given(
         servers=st.lists(
             st.text(
                 alphabet=st.characters(whitelist_categories=("L", "N", "P")),
@@ -208,17 +219,22 @@ class TestCompleteCoverage:
         ),
         seed=st.integers(min_value=0, max_value=2**32 - 1),
     )
-    @settings(
+    @hypothesis.settings(
         max_examples=50,
         deadline=None,
-        suppress_health_check=[HealthCheck.data_too_large, HealthCheck.too_slow],
+        suppress_health_check=[
+            hypothesis.HealthCheck.data_too_large,
+            hypothesis.HealthCheck.too_slow,
+        ],
     )
     def test_all_servers_receive_keys_from_large_key_set(
         self, servers: list[str], seed: int
     ) -> None:
         """With 2-8 servers (100+ virtual nodes each) and 1000+ unique keys,
-        every server on the ring receives at least one key - no server is starved."""
-        ring = ConsistentHashRing(nodes=servers, num_virtual_nodes=150)
+        every server on the ring receives at least one key - no server is
+        starved.
+        """
+        ring = consistent_hashing.ring.ConsistentHashRing(nodes=servers, num_virtual_nodes=150)
 
         # Generate 1000+ unique keys deterministically from the seed
         keys = [f"key-{seed}-{i}" for i in range(1200)]
@@ -228,9 +244,9 @@ class TestCompleteCoverage:
         for key in keys:
             server = ring.get_node(key)
             # Each key must map to a valid server
-            assert server in servers, (
-                f"get_node('{key}') returned '{server}' not in ring servers"
-            )
+            assert (
+                server in servers
+            ), f"get_node('{key}') returned '{server}' not in ring servers"
             servers_with_keys.add(server)
 
         # All servers must have received at least one key
@@ -246,12 +262,12 @@ class TestCompleteCoverage:
 class TestBalancedDistribution:
     """**Validates: Requirements NFR-2.3**
 
-    With sufficient virtual nodes (>=100 per server), key distribution
-    standard deviation shall be within acceptable bounds. No server holds
-    more than 2x the mean number of keys.
+    With sufficient virtual nodes (>=100 per server), key distribution standard
+    deviation shall be within acceptable bounds. No server holds more than 2x
+    the mean number of keys.
     """
 
-    @given(
+    @hypothesis.given(
         servers=st.lists(
             st.text(
                 alphabet=st.characters(whitelist_categories=("L", "N")),
@@ -264,17 +280,21 @@ class TestBalancedDistribution:
         ),
         seed=st.integers(min_value=0, max_value=2**32 - 1),
     )
-    @settings(
+    @hypothesis.settings(
         max_examples=50,
         deadline=None,
-        suppress_health_check=[HealthCheck.data_too_large, HealthCheck.too_slow],
+        suppress_health_check=[
+            hypothesis.HealthCheck.data_too_large,
+            hypothesis.HealthCheck.too_slow,
+        ],
     )
     def test_no_server_holds_more_than_2x_mean(
         self, servers: list[str], seed: int
     ) -> None:
-        """With >=100 virtual nodes per server and >=1000 keys, no server
-        holds more than 2x the mean number of keys."""
-        ring = ConsistentHashRing(nodes=servers, num_virtual_nodes=150)
+        """With >=100 virtual nodes per server and >=1000 keys, no server holds
+        more than 2x the mean number of keys.
+        """
+        ring = consistent_hashing.ring.ConsistentHashRing(nodes=servers, num_virtual_nodes=150)
 
         # Generate 1500 unique keys
         keys = [f"balance-{seed}-{i}" for i in range(1500)]

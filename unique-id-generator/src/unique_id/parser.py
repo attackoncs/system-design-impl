@@ -1,13 +1,13 @@
 """ID parsing and decomposition."""
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
+import dataclasses
+import datetime
 from typing import Optional
 
-from unique_id.config import SnowflakeConfig
+import unique_id.config
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class ParsedID:
     """A decomposed Snowflake ID with all extracted components."""
 
@@ -16,7 +16,7 @@ class ParsedID:
     datacenter_id: int
     machine_id: int
     sequence: int
-    datetime_utc: datetime  # Converted to UTC datetime
+    datetime_utc: datetime.datetime  # Converted to UTC datetime
 
     def __repr__(self) -> str:
         return (
@@ -32,17 +32,19 @@ class ParsedID:
 class IDParser:
     """Parses Snowflake IDs back into their constituent components.
 
-    Uses the same configuration (bit layout, epoch) as the generator
-    that created the ID to correctly extract fields.
+    Uses the same configuration (bit layout, epoch) as the generator that
+    created the ID to correctly extract fields.
     """
 
-    def __init__(self, config: Optional[SnowflakeConfig] = None):
+    def __init__(
+        self, config: Optional[unique_id.config.SnowflakeConfig] = None
+    ):
         """Initialize the parser with a configuration.
 
         Args:
             config: Configuration matching the generator. Uses defaults if None.
         """
-        self._config = config or SnowflakeConfig()
+        self._config = config or unique_id.config.SnowflakeConfig()
 
     def parse(self, id_value: int) -> ParsedID:
         """Parse a Snowflake ID into its components.
@@ -86,8 +88,8 @@ class IDParser:
         timestamp_ms = ts_offset + config.epoch_ms
 
         # Convert to datetime
-        datetime_utc = datetime.fromtimestamp(
-            timestamp_ms / 1000.0, tz=timezone.utc
+        datetime_utc = datetime.datetime.fromtimestamp(
+            timestamp_ms / 1000.0, tz=datetime.timezone.utc
         )
 
         return ParsedID(

@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import asyncio
 
-from news_feed_system.models import FanoutTask
+import news_feed_system.models
 
 
 class MessageQueue:
     """Async message queue wrapping asyncio.Queue for fanout task buffering.
 
-    Provides FIFO ordering with configurable max size. Used to decouple
-    post publishing from fanout distribution to followers.
+    Provides FIFO ordering with configurable max size. Used to decouple post
+    publishing from fanout distribution to followers.
     """
 
     def __init__(self, max_size: int = 0) -> None:
@@ -21,10 +21,12 @@ class MessageQueue:
             max_size: Maximum number of items the queue can hold.
                       0 means unlimited.
         """
-        self._queue: asyncio.Queue[FanoutTask] = asyncio.Queue(maxsize=max_size)
+        self._queue: asyncio.Queue[news_feed_system.models.FanoutTask] = (
+            asyncio.Queue(maxsize=max_size)
+        )
         self._max_size = max_size
 
-    async def enqueue(self, task: FanoutTask) -> None:
+    async def enqueue(self, task: news_feed_system.models.FanoutTask) -> None:
         """Add a fanout task to the queue.
 
         Blocks if the queue is full until space becomes available.
@@ -34,7 +36,7 @@ class MessageQueue:
         """
         await self._queue.put(task)
 
-    async def dequeue(self) -> FanoutTask:
+    async def dequeue(self) -> news_feed_system.models.FanoutTask:
         """Remove and return the next fanout task from the queue.
 
         Blocks if the queue is empty until an item becomes available.

@@ -5,9 +5,9 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from ..config import RateLimitRule
-from ..storage.base import BaseStorage
-from .base import BaseAlgorithm, RateLimitResult
+from rate_limiter import config as rate_limiter_config
+from rate_limiter.algorithms import base as algorithms_base
+from rate_limiter.storage import base as storage_base
 
 # Redis Lua script for atomic token bucket operations.
 # KEYS[1] = tokens_key, KEYS[2] = last_refill_key
@@ -86,7 +86,8 @@ def _memory_token_bucket_script(
         storage: The MemoryStorage instance (use _get_raw/_set_raw).
 
     Returns:
-        A list: [allowed (1 or 0), remaining (int), limit (int), reset_after (float), retry_after (float)]
+        A list: [allowed (1 or 0), remaining (int), limit (int), reset_after
+        (float), retry_after (float)]
     """
     tokens_key = keys[0]
     last_refill_key = keys[1]
@@ -96,8 +97,8 @@ def _memory_token_bucket_script(
     now = float(args[2])
 
     # Get current state from storage
-    raw_tokens = storage._get_raw(tokens_key)
-    raw_last_refill = storage._get_raw(last_refill_key)
+    raw_tokens = storage.get_unlocked(tokens_key)
+    raw_last_refill = storage.get_unlocked(last_refill_key)
 
     # Initialize if first request
     if raw_tokens is None:
@@ -122,28 +123,32 @@ def _memory_token_bucket_script(
     if tokens >= 1:
         tokens -= 1
         # Update storage
-        storage._set_raw(tokens_key, str(tokens), ttl)
-        storage._set_raw(last_refill_key, str(now), ttl)
+        storage.set_unlocked(tokens_key, str(tokens), ttl)
+        storage.set_unlocked(last_refill_key, str(now), ttl)
 
         remaining = int(tokens)
         # Time until bucket is fully refilled
-        reset_after = (capacity - tokens) / refill_rate if refill_rate > 0 else 0.0
+        reset_after = (
+            (capacity - tokens) / refill_rate if refill_rate > 0 else 0.0
+        )
 
         return [1, remaining, int(capacity), reset_after, 0.0]
     else:
         # Denied — calculate how long until one token is available
-        storage._set_raw(tokens_key, str(tokens), ttl)
-        storage._set_raw(last_refill_key, str(now), ttl)
+        storage.set_unlocked(tokens_key, str(tokens), ttl)
+        storage.set_unlocked(last_refill_key, str(now), ttl)
 
         # Time until at least 1 token is refilled
         deficit = 1.0 - tokens
         retry_after = deficit / refill_rate if refill_rate > 0 else 0.0
-        reset_after = (capacity - tokens) / refill_rate if refill_rate > 0 else 0.0
+        reset_after = (
+            (capacity - tokens) / refill_rate if refill_rate > 0 else 0.0
+        )
 
         return [0, 0, int(capacity), reset_after, retry_after]
 
 
-class TokenBucketAlgorithm(BaseAlgorithm):
+class TokenBucketAlgorithm(algorithms_base.BaseAlgorithm):
     """Token Bucket rate limiting algorithm.
 
     The token bucket algorithm works by maintaining a bucket of tokens
@@ -156,9 +161,13 @@ class TokenBucketAlgorithm(BaseAlgorithm):
     """
 
     def check(
-        self, key: str, rule: RateLimitRule, storage: BaseStorage
-    ) -> RateLimitResult:
-        """Check if a request should be allowed under the token bucket algorithm.
+        self,
+        key: str,
+        rule: rate_limiter_config.RateLimitRule,
+        storage: storage_base.BaseStorage,
+    ) -> algorithms_base.RateLimitResult:
+        """Check if a request should be allowed under the token bucket
+        algorithm.
 
         Args:
             key: Unique identifier for the rate limit subject.
@@ -195,7 +204,7 @@ class TokenBucketAlgorithm(BaseAlgorithm):
         reset_after = float(result[3])
         retry_after = float(result[4]) if not allowed else None
 
-        return RateLimitResult(
+        return algorithms_base.RateLimitResult(
             allowed=allowed,
             remaining=remaining,
             limit=limit,

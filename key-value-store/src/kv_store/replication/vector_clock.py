@@ -14,11 +14,12 @@ from typing import Optional
 class VectorClock:
     """Vector clock for tracking causal ordering of events.
 
-    All mutation operations (increment, merge) return new VectorClock instances,
-    preserving immutability of the original clock.
+    All mutation operations (increment, merge) return new VectorClock
+    instances, preserving immutability of the original clock.
 
-    The clock maintains a bounded number of entries (max_entries). When exceeded
-    after an increment, the entry with the lowest counter value is pruned.
+    The clock maintains a bounded number of entries (max_entries). When
+    exceeded after an increment, the entry with the lowest counter value is
+    pruned.
     """
 
     def __init__(
@@ -71,16 +72,18 @@ class VectorClock:
             A new VectorClock representing the merged state.
         """
         merged: dict[str, int] = dict(self._entries)
-        for node_id, counter in other._entries.items():
+        for node_id, counter in other.to_dict().items():
             merged[node_id] = max(merged.get(node_id, 0), counter)
         return VectorClock(entries=merged, max_entries=self._max_entries)
 
     def dominates(self, other: "VectorClock") -> bool:
-        """Check if this clock causally dominates (is strictly newer than) another.
+        """Check if this clock causally dominates (is strictly newer than)
+        another.
 
         Clock A dominates Clock B if:
         - For every node in B, A has a counter >= B's counter
-        - For at least one node (in A or B), A has a counter strictly > B's counter
+        - For at least one node (in A or B), A has a counter strictly > B's
+        counter
 
         An empty clock does not dominate another empty clock.
 
@@ -91,13 +94,13 @@ class VectorClock:
             True if this clock dominates the other.
         """
         # If both are empty, neither dominates
-        if not self._entries and not other._entries:
+        if not self._entries and not other.to_dict():
             return False
 
         has_strictly_greater = False
 
         # Check all nodes in other: self must have >= for each
-        for node_id, other_counter in other._entries.items():
+        for node_id, other_counter in other.to_dict().items():
             self_counter = self._entries.get(node_id, 0)
             if self_counter < other_counter:
                 return False
@@ -106,7 +109,7 @@ class VectorClock:
 
         # Check nodes in self that are not in other (they contribute > 0 vs 0)
         for node_id in self._entries:
-            if node_id not in other._entries:
+            if node_id not in other.to_dict():
                 has_strictly_greater = True
                 break
 
@@ -136,7 +139,9 @@ class VectorClock:
         return dict(self._entries)
 
     @classmethod
-    def from_dict(cls, data: dict[str, int], max_entries: int = 10) -> "VectorClock":
+    def from_dict(
+        cls, data: dict[str, int], max_entries: int = 10
+    ) -> "VectorClock":
         """Deserialize from a dictionary.
 
         Args:
@@ -152,7 +157,7 @@ class VectorClock:
         """Check equality by comparing entries dictionaries."""
         if not isinstance(other, VectorClock):
             return NotImplemented
-        return self._entries == other._entries
+        return self._entries == other.to_dict()
 
     def __repr__(self) -> str:
         """Human-readable representation."""

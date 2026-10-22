@@ -16,18 +16,13 @@ Covers: FR-1, FR-2, FR-3, FR-4, FR-5, FR-7, FR-12.2
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import logging
 import time
-from dataclasses import dataclass, field
 from typing import Optional, Protocol, runtime_checkable
 
-from kv_store.replication.vector_clock import VectorClock
-from kv_store.replication.quorum import (
-    ConsistencyLevel,
-    QuorumConfig,
-    QuorumManager,
-    QuorumResult,
-)
-
+from kv_store.replication import quorum as replication_quorum
+from kv_store.replication import vector_clock as replication_vector_clock
 
 # --- Custom Exceptions ---
 
@@ -59,7 +54,7 @@ class QuorumNotMetError(Exception):
 # --- Result Dataclasses ---
 
 
-@dataclass
+@dataclasses.dataclass
 class PutResult:
     """Result of a put operation.
 
@@ -70,11 +65,11 @@ class PutResult:
     """
 
     success: bool
-    vector_clock: VectorClock
+    vector_clock: replication_vector_clock.VectorClock
     replicas_acknowledged: int
 
 
-@dataclass
+@dataclasses.dataclass
 class GetResult:
     """Result of a get operation.
 
@@ -83,17 +78,20 @@ class GetResult:
         value: The resolved value (if no conflict and found).
         vector_clock: The vector clock of the resolved value.
         has_conflict: Whether concurrent versions were detected.
-        conflicting_values: All conflicting (value, vector_clock) pairs if conflict.
+        conflicting_values: All conflicting (value, vector_clock) pairs if
+            conflict.
     """
 
     found: bool
     value: Optional[bytes] = None
-    vector_clock: Optional[VectorClock] = None
+    vector_clock: Optional[replication_vector_clock.VectorClock] = None
     has_conflict: bool = False
-    conflicting_values: list[tuple[bytes, VectorClock]] = field(default_factory=list)
+    conflicting_values: list[
+        tuple[bytes, replication_vector_clock.VectorClock]
+    ] = dataclasses.field(default_factory=list)
 
 
-@dataclass
+@dataclasses.dataclass
 class DeleteResult:
     """Result of a delete operation.
 
@@ -103,7 +101,7 @@ class DeleteResult:
     """
 
     success: bool
-    vector_clock: VectorClock
+    vector_clock: replication_vector_clock.VectorClock
 
 
 # --- Protocol Interfaces ---
@@ -115,7 +113,6 @@ class HashRingProtocol(Protocol):
 
     def get_nodes(self, key: str, count: int) -> list[str]:
         """Get the N replica nodes for a key."""
-        ...
 
 
 @runtime_checkable
@@ -124,15 +121,12 @@ class StorageEngineProtocol(Protocol):
 
     async def put(self, key: str, value: bytes, timestamp: float) -> None:
         """Write a key-value pair locally."""
-        ...
 
     async def get(self, key: str) -> Optional[object]:
         """Read a key from local storage."""
-        ...
 
     async def delete(self, key: str, timestamp: float) -> None:
         """Delete a key locally (tombstone)."""
-        ...
 
 
 @runtime_checkable
@@ -141,11 +135,9 @@ class MembershipProtocol(Protocol):
 
     def is_node_alive(self, node_id: str) -> bool:
         """Check if a node is alive."""
-        ...
 
     def get_alive_members(self) -> list[str]:
         """Get all alive member node IDs."""
-        ...
 
 
 @runtime_checkable
@@ -153,16 +145,24 @@ class GRPCClientProtocol(Protocol):
     """Protocol for the gRPC client used for inter-node communication."""
 
     async def put(
-        self, target: str, key: str, value: bytes, vector_clock: VectorClock
+        self,
+        target: str,
+        key: str,
+        value: bytes,
+        vector_clock: replication_vector_clock.VectorClock,
     ) -> bool:
-        """Send a put request to a target node. Returns True on success."""
-        ...
+        """Send a put request to a target node.
+
+        Returns True on success.
+        """
 
     async def get(
         self, target: str, key: str
-    ) -> Optional[tuple[bytes, VectorClock]]:
-        """Send a get request to a target node. Returns (value, clock) or None."""
-        ...
+    ) -> Optional[tuple[bytes, replication_vector_clock.VectorClock]]:
+        """Send a get request to a target node.
+
+        Returns (value, clock) or None.
+        """
 
 
 @runtime_checkable
@@ -170,10 +170,13 @@ class HintedHandoffProtocol(Protocol):
     """Protocol for the hinted handoff manager."""
 
     def store_hint(
-        self, target_node_id: str, key: str, value: bytes, vector_clock: VectorClock
+        self,
+        target_node_id: str,
+        key: str,
+        value: bytes,
+        vector_clock: replication_vector_clock.VectorClock,
     ) -> None:
         """Store a hint for a failed node."""
-        ...
 
 
 # --- Request Coordinator ---
@@ -196,7 +199,7 @@ class RequestCoordinator:
         self,
         node_id: str,
         hash_ring: HashRingProtocol,
-        quorum_manager: QuorumManager,
+        quorum_manager: replication_quorum.QuorumManager,
         grpc_client: GRPCClientProtocol,
         storage_engine: StorageEngineProtocol,
         membership: MembershipProtocol,
@@ -225,8 +228,8 @@ class RequestCoordinator:
         self,
         key: str,
         value: bytes,
-        client_clock: Optional[VectorClock] = None,
-        consistency: Optional[ConsistencyLevel] = None,
+        client_clock: Optional[replication_vector_clock.VectorClock] = None,
+        consistency: Optional[replication_quorum.ConsistencyLevel] = None,
     ) -> PutResult:
         """Coordinate a put operation across replicas.
 
@@ -260,7 +263,11 @@ class RequestCoordinator:
         replica_nodes = self._get_replica_nodes(key)
 
         # Increment vector clock
-        clock = client_clock if client_clock is not None else VectorClock()
+        clock = (
+            client_clock
+            if client_clock is not None
+            else replication_vector_clock.VectorClock()
+        )
         new_clock = clock.increment(self._node_id)
 
         # Write to replicas concurrently
@@ -275,7 +282,11 @@ class RequestCoordinator:
                 try:
                     await self._storage_engine.put(key, value, timestamp)
                     return True
-                except Exception:
+                # Isolate this operation; record failures before continuing.
+                except Exception:  # pylint: disable=broad-exception-caught
+                    logging.getLogger(__name__).exception(
+                        "Failure isolated in %s", "write_to_node"
+                    )
                     return False
             else:
                 # Forward via gRPC
@@ -284,7 +295,11 @@ class RequestCoordinator:
                         target_node_id, key, value, new_clock
                     )
                     return result
-                except Exception:
+                # Isolate this operation; record failures before continuing.
+                except Exception:  # pylint: disable=broad-exception-caught
+                    logging.getLogger(__name__).exception(
+                        "Failure isolated in %s", "write_to_node"
+                    )
                     return False
 
         # Execute writes concurrently
@@ -316,7 +331,7 @@ class RequestCoordinator:
     async def get(
         self,
         key: str,
-        consistency: Optional[ConsistencyLevel] = None,
+        consistency: Optional[replication_quorum.ConsistencyLevel] = None,
     ) -> GetResult:
         """Coordinate a get operation across replicas.
 
@@ -343,7 +358,7 @@ class RequestCoordinator:
         replica_nodes = self._get_replica_nodes(key)
 
         # Sentinel to distinguish "not found" from "error"
-        _READ_ERROR = object()
+        read_error = object()
 
         # Read from replicas concurrently
         async def read_from_node(
@@ -354,7 +369,7 @@ class RequestCoordinator:
             Returns:
                 (bytes, VectorClock) if found,
                 None if key not found (valid response),
-                _READ_ERROR sentinel if the read failed.
+                read_error sentinel if the read failed.
             """
             if target_node_id == self._node_id:
                 # Read locally
@@ -372,15 +387,26 @@ class RequestCoordinator:
                         return None
                     # Local storage doesn't track vector clocks directly,
                     # return with an empty clock (coordinator manages clocks)
-                    return (value, VectorClock())
-                except Exception:
-                    return _READ_ERROR
+                    return (
+                        value,
+                        replication_vector_clock.VectorClock(),
+                    )
+                # Isolate this operation; record failures before continuing.
+                except Exception:  # pylint: disable=broad-exception-caught
+                    logging.getLogger(__name__).exception(
+                        "Failure isolated in %s", "read_from_node"
+                    )
+                    return read_error
             else:
                 # Query via gRPC
                 try:
                     return await self._grpc_client.get(target_node_id, key)
-                except Exception:
-                    return _READ_ERROR
+                # Isolate this operation; record failures before continuing.
+                except Exception:  # pylint: disable=broad-exception-caught
+                    logging.getLogger(__name__).exception(
+                        "Failure isolated in %s", "read_from_node"
+                    )
+                    return read_error
 
         tasks = [read_from_node(node_id) for node_id in replica_nodes]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -388,10 +414,10 @@ class RequestCoordinator:
         # Collect successful responses
         response_count = 0
         failed_nodes: list[str] = []
-        values: list[tuple[bytes, VectorClock]] = []
+        values: list[tuple[bytes, replication_vector_clock.VectorClock]] = []
 
         for node_id, result in zip(replica_nodes, results):
-            if isinstance(result, Exception) or result is _READ_ERROR:
+            if isinstance(result, Exception) or result is read_error:
                 failed_nodes.append(node_id)
             elif result is not None:
                 response_count += 1
@@ -418,8 +444,8 @@ class RequestCoordinator:
     async def delete(
         self,
         key: str,
-        client_clock: Optional[VectorClock] = None,
-        consistency: Optional[ConsistencyLevel] = None,
+        client_clock: Optional[replication_vector_clock.VectorClock] = None,
+        consistency: Optional[replication_quorum.ConsistencyLevel] = None,
     ) -> DeleteResult:
         """Coordinate a delete operation (tombstone write).
 
@@ -444,7 +470,11 @@ class RequestCoordinator:
         replica_nodes = self._get_replica_nodes(key)
 
         # Increment vector clock
-        clock = client_clock if client_clock is not None else VectorClock()
+        clock = (
+            client_clock
+            if client_clock is not None
+            else replication_vector_clock.VectorClock()
+        )
         new_clock = clock.increment(self._node_id)
 
         # Write tombstone to replicas concurrently
@@ -459,7 +489,11 @@ class RequestCoordinator:
                 try:
                     await self._storage_engine.delete(key, timestamp)
                     return True
-                except Exception:
+                # Isolate this operation; record failures before continuing.
+                except Exception:  # pylint: disable=broad-exception-caught
+                    logging.getLogger(__name__).exception(
+                        "Failure isolated in %s", "delete_on_node"
+                    )
                     return False
             else:
                 # Forward tombstone via gRPC (put with empty value)
@@ -468,7 +502,11 @@ class RequestCoordinator:
                         target_node_id, key, b"", new_clock
                     )
                     return result
-                except Exception:
+                # Isolate this operation; record failures before continuing.
+                except Exception:  # pylint: disable=broad-exception-caught
+                    logging.getLogger(__name__).exception(
+                        "Failure isolated in %s", "delete_on_node"
+                    )
                     return False
 
         tasks = [delete_on_node(node_id) for node_id in replica_nodes]
@@ -527,7 +565,8 @@ class RequestCoordinator:
                     result_nodes.append(substitute)
                 else:
                     # No substitute available, still include the original
-                    # (the write will fail for this node and trigger hinted handoff)
+                    # (the write will fail for this node and trigger hinted
+                    # handoff)
                     result_nodes.append(node_id)
 
         return result_nodes
@@ -548,6 +587,7 @@ class RequestCoordinator:
             A substitute node ID, or None if no substitute is available.
         """
         # Try to get more nodes from the ring
+        del key  # Fallback chooses any healthy nonexcluded member.
         alive_members = self._membership.get_alive_members()
         for member in alive_members:
             if member not in excluded_nodes:
@@ -555,7 +595,8 @@ class RequestCoordinator:
         return None
 
     def _resolve_read_conflicts(
-        self, values: list[tuple[bytes, VectorClock]]
+        self,
+        values: list[tuple[bytes, replication_vector_clock.VectorClock]],
     ) -> GetResult:
         """Resolve conflicts among collected read values using vector clocks.
 
@@ -579,11 +620,13 @@ class RequestCoordinator:
 
         # Find the dominating version(s)
         # A version dominates if it dominates all other versions
-        non_dominated: list[tuple[bytes, VectorClock]] = []
+        non_dominated: list[
+            tuple[bytes, replication_vector_clock.VectorClock]
+        ] = []
 
         for i, (val_i, clock_i) in enumerate(values):
             is_dominated = False
-            for j, (val_j, clock_j) in enumerate(values):
+            for j, (_, clock_j) in enumerate(values):
                 if i != j and clock_j.dominates(clock_i):
                     is_dominated = True
                     break
@@ -591,8 +634,8 @@ class RequestCoordinator:
                 non_dominated.append((val_i, clock_i))
 
         # Deduplicate: remove entries with identical clocks and values
-        unique: list[tuple[bytes, VectorClock]] = []
-        seen_clocks: list[VectorClock] = []
+        unique: list[tuple[bytes, replication_vector_clock.VectorClock]] = []
+        seen_clocks: list[replication_vector_clock.VectorClock] = []
         for val, clock in non_dominated:
             is_dup = False
             for seen_clock in seen_clocks:

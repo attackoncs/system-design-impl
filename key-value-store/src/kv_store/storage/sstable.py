@@ -9,7 +9,8 @@ File format layout:
 
 - Data block: sequential entries, each entry is
     [key_len(4)][key][value_len(4)][value][timestamp(8)][is_tombstone(1)]
-- Index block: sparse index with every Nth entry (every 16th), each index entry is
+- Index block: sparse index with every Nth entry (every 16th), each index entry
+is
     [key_len(4)][key][offset(8)]
 - Bloom filter block: serialized bloom filter bytes
 - Footer:
@@ -21,13 +22,13 @@ Covers: FR-9.4, FR-10.3
 """
 
 import asyncio
+import dataclasses
+import pathlib
 import struct
 import time
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Iterator, List, Optional, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterator, List, Optional, Tuple
 
-from kv_store.storage.bloom_filter import BloomFilter
+from kv_store.storage import bloom_filter as storage_bloom_filter
 
 if TYPE_CHECKING:
     from kv_store.storage.memtable import MemTable
@@ -40,7 +41,7 @@ _MAGIC_NUMBER = 0x53535442  # "SSTB" in hex
 _INDEX_INTERVAL = 16
 
 
-@dataclass
+@dataclasses.dataclass
 class SSTableMetadata:
     """Metadata for an SSTable file."""
 
@@ -53,7 +54,7 @@ class SSTableMetadata:
     created_at: float
 
 
-@dataclass
+@dataclasses.dataclass
 class SSTableEntry:
     """A single entry in an SSTable."""
 
@@ -63,10 +64,11 @@ class SSTableEntry:
     is_tombstone: bool
 
 
-
-@dataclass
+@dataclasses.dataclass
 class _IndexEntry:
-    """Internal sparse index entry mapping a key to its offset in the data block."""
+    """Internal sparse index entry mapping a key to its offset in the data
+    block.
+    """
 
     key: str
     offset: int
@@ -99,7 +101,7 @@ class SSTable:
             ValueError: If the file is not a valid SSTable (bad magic number).
         """
         self._file_path = file_path
-        path = Path(file_path)
+        path = pathlib.Path(file_path)
         if not path.exists():
             raise FileNotFoundError(f"SSTable file not found: {file_path}")
 
@@ -112,7 +114,7 @@ class SSTable:
         self._raw_data = data
         self._metadata_obj: SSTableMetadata
         self._index: List[_IndexEntry] = []
-        self._bloom_filter: BloomFilter
+        self._bloom_filter: storage_bloom_filter.BloomFilter
         self._data_block_size: int = 0
 
         self._load_from_bytes(data)
@@ -120,14 +122,16 @@ class SSTable:
     def _load_from_bytes(self, data: bytes) -> None:
         """Parse the SSTable file format from raw bytes.
 
-        Reads the footer first to determine block sizes, then loads
-        the sparse index and bloom filter into memory.
+        Reads the footer first to determine block sizes, then loads the sparse
+        index and bloom filter into memory.
         """
         # The footer has a variable size due to min_key and max_key.
-        # We need to read from the end to find the magic number and parse backwards.
+        # We need to read from the end to find the magic number and parse
+        # backwards.
         # Fixed footer suffix: created_at(8) + magic_number(4) = 12 bytes
         # Before that: max_key_len(4) + max_key + min_key_len(4) + min_key
-        # Before that: data_block_size(8) + index_block_size(8) + bloom_filter_size(8) + entry_count(4) + level(4)
+        # Before that: data_block_size(8) + index_block_size(8) +
+        # bloom_filter_size(8) + entry_count(4) + level(4)
 
         if len(data) < 4:
             raise ValueError("File too small to be a valid SSTable")
@@ -136,7 +140,7 @@ class SSTable:
         magic = struct.unpack_from("<I", data, len(data) - 4)[0]
         if magic != _MAGIC_NUMBER:
             raise ValueError(
-                f"Invalid SSTable file: bad magic number "
+                "Invalid SSTable file: bad magic number "
                 f"(expected 0x{_MAGIC_NUMBER:08X}, got 0x{magic:08X})"
             )
 
@@ -145,7 +149,8 @@ class SSTable:
         # Strategy: read the fixed-size prefix of the footer to get block sizes,
         # then use those to locate everything.
 
-        # First, let's determine footer start by reading the first 32 bytes of footer.
+        # First, let's determine footer start by reading the first 32 bytes of
+        # footer.
         # The footer format is:
         #   data_block_size(8) + index_block_size(8) + bloom_filter_size(8) +
         #   entry_count(4) + level(4) +
@@ -153,7 +158,8 @@ class SSTable:
         #   created_at(8) + magic_number(4)
 
         # We can determine footer start because:
-        # total_size = data_block_size + index_block_size + bloom_filter_size + footer_size
+        # total_size = data_block_size + index_block_size + bloom_filter_size +
+        # footer_size
         # And footer_size = 8+8+8+4+4 + 4+min_key_len + 4+max_key_len + 8+4
         #                 = 32 + 4 + min_key_len + 4 + max_key_len + 12
         #                 = 52 + min_key_len + max_key_len
@@ -164,8 +170,10 @@ class SSTable:
         # Before created_at is max_key (variable), preceded by max_key_len(4)
         # We need to scan backwards.
 
-        # Alternative approach: read data_block_size from the start of the footer.
-        # The footer starts at offset = data_block_size + index_block_size + bloom_filter_size.
+        # Alternative approach: read data_block_size from the start of the
+        # footer.
+        # The footer starts at offset = data_block_size + index_block_size +
+        # bloom_filter_size.
         # But we don't know those yet...
 
         # Best approach: parse from end backwards.
@@ -176,31 +184,41 @@ class SSTable:
 
         # created_at (8 bytes)
         pos -= 8
-        created_at = struct.unpack_from("<d", data, pos)[0]
+        struct.unpack_from("<d", data, pos)  # Validate the timestamp field.
 
         # max_key: [max_key_len(4)][max_key_bytes]
         # We need to find max_key_len. It's before max_key bytes.
-        # But we don't know max_key length yet. We need to read max_key_len first.
+        # But we don't know max_key length yet. We need to read max_key_len
+        # first.
         # The layout before created_at is: ...max_key_len(4) + max_key_bytes...
-        # Actually the layout is: min_key_len(4) + min_key + max_key_len(4) + max_key + created_at(8) + magic(4)
-        # So before created_at we have max_key bytes, and before that max_key_len.
+        # Actually the layout is: min_key_len(4) + min_key + max_key_len(4) +
+        # max_key + created_at(8) + magic(4)
+        # So before created_at we have max_key bytes, and before that
+        # max_key_len.
 
-        # Let's use a different strategy: find the footer start by trying to parse
-        # from the beginning. We know the first 8 bytes of the file are the start
-        # of the data block (the first entry). But we can also just read the footer
+        # Let's use a different strategy: find the footer start by trying to
+        # parse
+        # from the beginning. We know the first 8 bytes of the file are the
+        # start
+        # of the data block (the first entry). But we can also just read the
+        # footer
         # by scanning from the end.
 
         # Actually, let's use a cleaner approach:
-        # Read the fixed header of the footer (first 32 bytes after the three blocks).
+        # Read the fixed header of the footer (first 32 bytes after the three
+        # blocks).
         # We need to find where the footer starts.
 
         # The simplest reliable approach: parse backwards from end of file.
         # End of file layout (from end):
-        #   magic(4) | created_at(8) | max_key | max_key_len(4) | min_key | min_key_len(4) |
-        #   level(4) | entry_count(4) | bloom_filter_size(8) | index_block_size(8) | data_block_size(8)
+        # magic(4) | created_at(8) | max_key | max_key_len(4) | min_key |
+        # min_key_len(4) |
+        # level(4) | entry_count(4) | bloom_filter_size(8) | index_block_size(8)
+        # | data_block_size(8)
 
         # Wait - the footer is written sequentially, so let me re-read the spec:
-        # Footer: [data_block_size(8)][index_block_size(8)][bloom_filter_size(8)]
+        # Footer:
+        # [data_block_size(8)][index_block_size(8)][bloom_filter_size(8)]
         #         [entry_count(4)][level(4)][min_key_len(4)][min_key]
         #         [max_key_len(4)][max_key][created_at(8)][magic_number(4)]
 
@@ -209,7 +227,8 @@ class SSTable:
         # -12: created_at
         # Then before that: max_key (variable) preceded by max_key_len
         # Then before that: min_key (variable) preceded by min_key_len
-        # Then: level(4), entry_count(4), bloom_filter_size(8), index_block_size(8), data_block_size(8)
+        # Then: level(4), entry_count(4), bloom_filter_size(8),
+        # index_block_size(8), data_block_size(8)
 
         # Parse from end, we already have created_at and verified magic.
         # Now we need to find max_key. The issue is we don't know its length
@@ -220,55 +239,73 @@ class SSTable:
         # 1. Tentatively read data_block_size from multiple candidate positions
         # 2. Validate by checking if the math adds up
 
-        # Actually the cleanest approach: since we have the whole file in memory,
-        # let's try all possible footer starts. The footer fixed prefix is 32 bytes
+        # Actually the cleanest approach: since we have the whole file in
+        # memory,
+        # let's try all possible footer starts. The footer fixed prefix is 32
+        # bytes
         # (8+8+8+4+4), then variable keys, then 12 bytes (8+4).
 
-        # Let's just try: read data_block_size from every possible offset and check
-        # if data_block_size + index_block_size + bloom_filter_size + footer_size == file_size
+        # Let's just try: read data_block_size from every possible offset and
+        # check
+        # if data_block_size + index_block_size + bloom_filter_size +
+        # footer_size == file_size
 
         # Even simpler: iterate from the end to find the structure.
         # Since we wrote the file, we know the exact format. Let's just
-        # try reading data_block_size from offset 0 of what we think is the footer.
+        # try reading data_block_size from offset 0 of what we think is the
+        # footer.
 
         # The most robust approach for reading: try each possible footer_start
-        # where footer_start = file_size - footer_size, and footer_size >= 52 (minimum).
+        # where footer_start = file_size - footer_size, and footer_size >= 52
+        # (minimum).
 
         # Let me use a simpler strategy that works reliably:
         # Read the first 8 bytes at various candidate offsets and validate.
 
-        # Actually, the SIMPLEST approach: since data_block_size is the first field
+        # Actually, the SIMPLEST approach: since data_block_size is the first
+        # field
         # in the footer, and the footer comes after the three blocks, we have:
         # footer_start = data_block_size + index_block_size + bloom_filter_size
         # And data_block_size is stored at footer_start.
         # This is circular, but we can solve it:
-        # file_size = data_block_size + index_block_size + bloom_filter_size + footer_size
-        # footer_size = 32 + 4 + len(min_key_encoded) + 4 + len(max_key_encoded) + 12
+        # file_size = data_block_size + index_block_size + bloom_filter_size +
+        # footer_size
+        # footer_size = 32 + 4 + len(min_key_encoded) + 4 + len(max_key_encoded)
+        # + 12
         #             = 52 + len(min_key_encoded) + len(max_key_encoded)
 
         # Strategy: scan backwards to find the variable-length keys.
         # From the end: magic(4), created_at(8) = 12 bytes fixed suffix
         # Before that: max_key bytes (unknown length), max_key_len(4)
         # Before that: min_key bytes (unknown length), min_key_len(4)
-        # Before that: level(4), entry_count(4), bloom_filter_size(8), index_block_size(8), data_block_size(8) = 32 bytes
+        # Before that: level(4), entry_count(4), bloom_filter_size(8),
+        # index_block_size(8), data_block_size(8) = 32 bytes
 
         # So the structure before created_at (going backwards) is:
-        # [max_key][max_key_len(4)][min_key][min_key_len(4)][level(4)][entry_count(4)][bloom(8)][index(8)][data(8)]
+        # [max_key][max_key_len(4)][min_key][min_key_len(4)]
+        # [level(4)][entry_count(4)][bloom(8)][index(8)][data(8)]
 
-        # We can find max_key_len by noting that it's a 4-byte int right before max_key,
-        # and max_key ends right before created_at. But we don't know where max_key starts.
+        # We can find max_key_len by noting that it's a 4-byte int right before
+        # max_key,
+        # and max_key ends right before created_at. But we don't know where
+        # max_key starts.
 
-        # The correct approach: since the footer is written sequentially and we know
+        # The correct approach: since the footer is written sequentially and we
+        # know
         # the fixed-size fields at the start of the footer (32 bytes), we can:
         # 1. Try candidate footer_start positions
-        # 2. Read data_block_size, index_block_size, bloom_filter_size from there
-        # 3. Check if data_block_size + index_block_size + bloom_filter_size == candidate footer_start
+        # 2. Read data_block_size, index_block_size, bloom_filter_size from
+        # there
+        # 3. Check if data_block_size + index_block_size + bloom_filter_size ==
+        # candidate footer_start
 
         # This gives us a unique solution. Let's iterate:
-        # For any valid file, footer_start = data_block_size + index_block_size + bloom_filter_size
+        # For any valid file, footer_start = data_block_size + index_block_size
+        # + bloom_filter_size
         # And at offset footer_start, we find data_block_size stored as 8 bytes.
 
-        # So: read 8 bytes at every possible offset, interpret as data_block_size,
+        # So: read 8 bytes at every possible offset, interpret as
+        # data_block_size,
         # then read next 8 as index_block_size, next 8 as bloom_filter_size,
         # check if they sum to the current offset.
 
@@ -278,21 +315,26 @@ class SSTable:
         # Maximum footer is bounded by file size.
 
         # Most efficient: binary search or just compute.
-        # footer_start is stored implicitly. Let's just scan from a reasonable position.
+        # footer_start is stored implicitly. Let's just scan from a reasonable
+        # position.
 
         # FINAL CLEAN APPROACH: We'll parse the footer by reading from the end
         # in a structured way. We know the last 12 bytes are created_at + magic.
-        # Before that, we have max_key_len + max_key (but in forward order in the file).
+        # Before that, we have max_key_len + max_key (but in forward order in
+        # the file).
         # The trick is that in the file, the order is:
         #   ... [max_key_len(4)][max_key_bytes][created_at(8)][magic(4)]
         # So max_key_len is at offset (file_end - 12 - len(max_key) - 4).
         # But we don't know len(max_key).
 
-        # OK let me just use a forward-parsing approach with a candidate footer_start.
-        # We'll try all offsets from (file_size - max_reasonable_footer) to file_size.
+        # OK let me just use a forward-parsing approach with a candidate
+        # footer_start.
+        # We'll try all offsets from (file_size - max_reasonable_footer) to
+        # file_size.
         # But actually, the simplest correct approach:
 
-        # Read the file from the end to get the fixed suffix, then scan backwards
+        # Read the file from the end to get the fixed suffix, then scan
+        # backwards
         # to find the key lengths.
 
         # Let me implement a clean forward parse once we find footer_start:
@@ -301,7 +343,8 @@ class SSTable:
     def _parse_footer_from_end(self, data: bytes) -> None:
         """Parse the footer by finding its start position.
 
-        Uses the property that footer_start = data_block_size + index_block_size + bloom_filter_size,
+        Uses the property that footer_start = data_block_size +
+        index_block_size + bloom_filter_size,
         and data_block_size is the first 8 bytes of the footer.
         """
         file_size = len(data)
@@ -314,7 +357,9 @@ class SSTable:
         max_footer_size = min(file_size, 52 + 65536)  # keys up to ~32KB each
 
         found = False
-        for footer_size_candidate in range(min_footer_size, max_footer_size + 1):
+        for footer_size_candidate in range(
+            min_footer_size, max_footer_size + 1
+        ):
             footer_start = file_size - footer_size_candidate
             if footer_start < 0:
                 break
@@ -323,15 +368,24 @@ class SSTable:
             if footer_start + 24 > file_size:
                 continue
 
-            data_block_size, index_block_size, bloom_filter_size = struct.unpack_from(
-                "<QQQ", data, footer_start
+            data_block_size, index_block_size, bloom_filter_size = (
+                struct.unpack_from("<QQQ", data, footer_start)
             )
 
             # Check if the three block sizes sum to footer_start
-            if data_block_size + index_block_size + bloom_filter_size == footer_start:
+            if (
+                data_block_size + index_block_size + bloom_filter_size
+                == footer_start
+            ):
                 # Validate further: parse the rest of the footer
                 try:
-                    self._parse_footer_at(data, footer_start, data_block_size, index_block_size, bloom_filter_size)
+                    self._parse_footer_at(
+                        data,
+                        footer_start,
+                        data_block_size,
+                        index_block_size,
+                        bloom_filter_size,
+                    )
                     found = True
                     break
                 except (struct.error, UnicodeDecodeError, ValueError):
@@ -348,7 +402,9 @@ class SSTable:
         index_block_size: int,
         bloom_filter_size: int,
     ) -> None:
-        """Parse the footer at the given offset and load index + bloom filter."""
+        """Parse the footer at the given offset and load index + bloom
+        filter.
+        """
         pos = footer_start + 24  # skip the three 8-byte size fields
 
         # entry_count (4 bytes)
@@ -362,13 +418,13 @@ class SSTable:
         # min_key_len (4 bytes) + min_key
         min_key_len = struct.unpack_from("<I", data, pos)[0]
         pos += 4
-        min_key = data[pos: pos + min_key_len].decode("utf-8")
+        min_key = data[pos : pos + min_key_len].decode("utf-8")
         pos += min_key_len
 
         # max_key_len (4 bytes) + max_key
         max_key_len = struct.unpack_from("<I", data, pos)[0]
         pos += 4
-        max_key = data[pos: pos + max_key_len].decode("utf-8")
+        max_key = data[pos : pos + max_key_len].decode("utf-8")
         pos += max_key_len
 
         # created_at (8 bytes, double)
@@ -409,7 +465,9 @@ class SSTable:
         # Load bloom filter from bloom filter block
         bloom_start = index_end
         bloom_end = bloom_start + bloom_filter_size
-        self._bloom_filter = BloomFilter.deserialize(data[bloom_start:bloom_end])
+        self._bloom_filter = storage_bloom_filter.BloomFilter.deserialize(
+            data[bloom_start:bloom_end]
+        )
 
     def _parse_index_block(self, index_data: bytes) -> List[_IndexEntry]:
         """Parse the sparse index block into a list of index entries."""
@@ -425,7 +483,7 @@ class SSTable:
             # key bytes
             if pos + key_len > len(index_data):
                 break
-            key = index_data[pos: pos + key_len].decode("utf-8")
+            key = index_data[pos : pos + key_len].decode("utf-8")
             pos += key_len
 
             # offset (8 bytes)
@@ -444,7 +502,8 @@ class SSTable:
     ) -> "SSTable":
         """Flush a MemTable to a new SSTable file on disk.
 
-        Writes entries in sorted key order with a sparse index (every 16th entry)
+        Writes entries in sorted key order with a sparse index (every 16th
+        entry)
         and a Bloom filter for fast negative lookups.
 
         Args:
@@ -458,12 +517,14 @@ class SSTable:
         # Collect sorted entries
         entries: List[Tuple[str, Optional[bytes], float, bool]] = []
         for mem_entry in memtable.entries_sorted():
-            entries.append((
-                mem_entry.key,
-                mem_entry.value,
-                mem_entry.timestamp,
-                mem_entry.is_tombstone,
-            ))
+            entries.append(
+                (
+                    mem_entry.key,
+                    mem_entry.value,
+                    mem_entry.timestamp,
+                    mem_entry.is_tombstone,
+                )
+            )
 
         if not entries:
             raise ValueError("Cannot create SSTable from empty MemTable")
@@ -471,7 +532,9 @@ class SSTable:
         # Build the data block, sparse index, and bloom filter
         data_block = bytearray()
         index_entries: List[Tuple[str, int]] = []
-        bloom = BloomFilter(expected_items=max(len(entries), 1))
+        bloom = storage_bloom_filter.BloomFilter(
+            expected_items=max(len(entries), 1)
+        )
         created_at = time.time()
 
         for i, (key, value, timestamp, is_tombstone) in enumerate(entries):
@@ -483,7 +546,8 @@ class SSTable:
             bloom.add(key)
 
             # Write entry to data block:
-            # [key_len(4)][key][value_len(4)][value][timestamp(8)][is_tombstone(1)]
+            # [key_len(4)][key][value_len(4)]
+            # [value][timestamp(8)][is_tombstone(1)]
             key_bytes = key.encode("utf-8")
             value_bytes = value if value is not None else b""
 
@@ -512,24 +576,29 @@ class SSTable:
         max_key_bytes = max_key.encode("utf-8")
 
         footer = bytearray()
-        footer.extend(struct.pack("<Q", len(data_block)))       # data_block_size
-        footer.extend(struct.pack("<Q", len(index_block)))      # index_block_size
-        footer.extend(struct.pack("<Q", len(bloom_data)))       # bloom_filter_size
-        footer.extend(struct.pack("<I", len(entries)))           # entry_count
-        footer.extend(struct.pack("<I", level))                  # level
-        footer.extend(struct.pack("<I", len(min_key_bytes)))    # min_key_len
-        footer.extend(min_key_bytes)                             # min_key
-        footer.extend(struct.pack("<I", len(max_key_bytes)))    # max_key_len
-        footer.extend(max_key_bytes)                             # max_key
-        footer.extend(struct.pack("<d", created_at))            # created_at
-        footer.extend(struct.pack("<I", _MAGIC_NUMBER))         # magic_number
+        footer.extend(struct.pack("<Q", len(data_block)))  # data_block_size
+        footer.extend(struct.pack("<Q", len(index_block)))  # index_block_size
+        footer.extend(struct.pack("<Q", len(bloom_data)))  # bloom_filter_size
+        footer.extend(struct.pack("<I", len(entries)))  # entry_count
+        footer.extend(struct.pack("<I", level))  # level
+        footer.extend(struct.pack("<I", len(min_key_bytes)))  # min_key_len
+        footer.extend(min_key_bytes)  # min_key
+        footer.extend(struct.pack("<I", len(max_key_bytes)))  # max_key_len
+        footer.extend(max_key_bytes)  # max_key
+        footer.extend(struct.pack("<d", created_at))  # created_at
+        footer.extend(struct.pack("<I", _MAGIC_NUMBER))  # magic_number
 
         # Combine all blocks
-        file_data = bytes(data_block) + bytes(index_block) + bytes(bloom_data) + bytes(footer)
+        file_data = (
+            bytes(data_block)
+            + bytes(index_block)
+            + bytes(bloom_data)
+            + bytes(footer)
+        )
 
         # Write to disk using asyncio.to_thread
         def _write_file() -> None:
-            path = Path(file_path)
+            path = pathlib.Path(file_path)
             path.parent.mkdir(parents=True, exist_ok=True)
             with open(file_path, "wb") as f:
                 f.write(file_data)
@@ -541,7 +610,8 @@ class SSTable:
         return cls(file_path)
 
     async def get(self, key: str) -> Optional[SSTableEntry]:
-        """Look up a key using the Bloom filter and sparse index with binary search.
+        """Look up a key using the Bloom filter and sparse index with binary
+        search.
 
         1. Check bloom filter - if negative, key definitely not present
         2. Use sparse index to find the range of data block to scan
@@ -565,11 +635,14 @@ class SSTable:
         start_offset, end_offset = self._find_scan_range(key)
 
         # Scan the data block range for the key
-        result = await asyncio.to_thread(self._scan_data_block, key, start_offset, end_offset)
+        result = await asyncio.to_thread(
+            self._scan_data_block, key, start_offset, end_offset
+        )
         return result
 
     def _find_scan_range(self, key: str) -> Tuple[int, int]:
-        """Use binary search on the sparse index to find the data block range to scan.
+        """Use binary search on the sparse index to find the data block range
+        to scan.
 
         Returns:
             Tuple of (start_offset, end_offset) in the data block.
@@ -599,7 +672,9 @@ class SSTable:
 
         return start_offset, end_offset
 
-    def _scan_data_block(self, key: str, start_offset: int, end_offset: int) -> Optional[SSTableEntry]:
+    def _scan_data_block(
+        self, key: str, start_offset: int, end_offset: int
+    ) -> Optional[SSTableEntry]:
         """Scan a range of the data block for a specific key.
 
         Since entries are sorted, we can stop early if we pass the target key.
@@ -622,7 +697,9 @@ class SSTable:
 
         return None
 
-    def _read_entry_at(self, data: bytes, pos: int) -> Tuple[Optional[SSTableEntry], int]:
+    def _read_entry_at(
+        self, data: bytes, pos: int
+    ) -> Tuple[Optional[SSTableEntry], int]:
         """Read a single entry from the data block at the given position.
 
         Returns:
@@ -638,7 +715,7 @@ class SSTable:
             # key bytes
             if pos + key_len > self._data_block_size:
                 return None, pos
-            key = data[pos: pos + key_len].decode("utf-8")
+            key = data[pos : pos + key_len].decode("utf-8")
             pos += key_len
 
             # value_len (4 bytes)
@@ -650,7 +727,7 @@ class SSTable:
             # value bytes
             if pos + value_len > self._data_block_size:
                 return None, pos
-            value_bytes = data[pos: pos + value_len]
+            value_bytes = data[pos : pos + value_len]
             pos += value_len
 
             # timestamp (8 bytes, double)
@@ -667,12 +744,15 @@ class SSTable:
 
             value = value_bytes if not is_tombstone else None
 
-            return SSTableEntry(
-                key=key,
-                value=value,
-                timestamp=timestamp,
-                is_tombstone=is_tombstone,
-            ), pos
+            return (
+                SSTableEntry(
+                    key=key,
+                    value=value,
+                    timestamp=timestamp,
+                    is_tombstone=is_tombstone,
+                ),
+                pos,
+            )
 
         except (struct.error, UnicodeDecodeError):
             return None, pos

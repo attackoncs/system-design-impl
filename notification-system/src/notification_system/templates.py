@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from notification_system.exceptions import TemplateRenderError
+import notification_system.exceptions
 
 
 class NotificationTemplate:
@@ -59,7 +59,9 @@ class NotificationTemplate:
         required = self.get_required_keys()
         missing = required - set(params.keys())
         if missing:
-            raise TemplateRenderError(self._template_id, sorted(missing))
+            raise notification_system.exceptions.TemplateRenderError(
+                self._template_id, sorted(missing)
+            )
 
         rendered_title = self.PLACEHOLDER_PATTERN.sub(
             lambda m: params[m.group(1)], self._title
@@ -81,7 +83,10 @@ class TemplateRegistry:
         self._templates[template.template_id] = template
 
     def get(self, template_id: str) -> Optional[NotificationTemplate]:
-        """Retrieve a template by ID. Returns None if not found."""
+        """Retrieve a template by ID.
+
+        Returns None if not found.
+        """
         return self._templates.get(template_id)
 
     def list_ids(self) -> list[str]:

@@ -8,16 +8,19 @@ for Flask/FastAPI with proper HTTP 429 responses and rate limit headers.
 __version__ = "0.1.0"
 
 # Core classes
-from .core import RateLimiter  # noqa: F401
-
 # Configuration
-from .config import Algorithm, RateLimitRule, RateLimiterConfig  # noqa: F401
+from rate_limiter.config import (  # noqa: F401
+    Algorithm,
+    RateLimiterConfig,
+    RateLimitRule,
+)
+from rate_limiter.core import RateLimiter  # noqa: F401
 
 # Decorators
-from .decorators import rate_limit  # noqa: F401
+from rate_limiter.decorators import rate_limit  # noqa: F401
 
 # Key resolvers
-from .keys import ip_key, user_id_key, composite_key  # noqa: F401
+from rate_limiter.keys import composite_key, ip_key, user_id_key  # noqa: F401
 
 __all__ = [
     "__version__",

@@ -1,15 +1,15 @@
 """Configuration dataclasses for the distributed key-value store.
 
-Provides typed, default-valued configuration for all node subsystems:
-storage engine, replication, cluster membership, and networking.
+Provides typed, default-valued configuration for all node subsystems: storage
+engine, replication, cluster membership, and networking.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import dataclasses
 
 
-@dataclass
+@dataclasses.dataclass
 class StorageConfig:
     """LSM-tree storage engine configuration."""
 
@@ -21,7 +21,7 @@ class StorageConfig:
     compaction_threshold: int = 4  # merge after N SSTables
 
 
-@dataclass
+@dataclasses.dataclass
 class ReplicationConfig:
     """Quorum and replication configuration."""
 
@@ -31,7 +31,7 @@ class ReplicationConfig:
     vector_clock_max_entries: int = 10  # prune oldest entries beyond this
 
 
-@dataclass
+@dataclasses.dataclass
 class ClusterConfig:
     """Cluster membership and protocol configuration."""
 
@@ -41,25 +41,27 @@ class ClusterConfig:
     hinted_handoff_interval_seconds: float = 10.0
     anti_entropy_interval_seconds: float = 60.0
     merkle_tree_buckets: int = 1024
-    seed_nodes: list[str] = field(default_factory=list)
+    seed_nodes: list[str] = dataclasses.field(default_factory=list)
 
 
-@dataclass
+@dataclasses.dataclass
 class NetworkConfig:
-    """gRPC network configuration."""
+    """GRPC network configuration."""
 
     host: str = "0.0.0.0"
     port: int = 50051
     max_message_size_bytes: int = 16 * 1024 * 1024  # 16 MB
 
 
-@dataclass
+@dataclasses.dataclass
 class NodeConfig:
     """Top-level node configuration combining all sub-configs."""
 
     node_id: str = "node-1"
-    storage: StorageConfig = field(default_factory=StorageConfig)
-    replication: ReplicationConfig = field(default_factory=ReplicationConfig)
-    cluster: ClusterConfig = field(default_factory=ClusterConfig)
-    network: NetworkConfig = field(default_factory=NetworkConfig)
+    storage: StorageConfig = dataclasses.field(default_factory=StorageConfig)
+    replication: ReplicationConfig = dataclasses.field(
+        default_factory=ReplicationConfig
+    )
+    cluster: ClusterConfig = dataclasses.field(default_factory=ClusterConfig)
+    network: NetworkConfig = dataclasses.field(default_factory=NetworkConfig)
     virtual_nodes: int = 150  # virtual nodes per physical node on hash ring

@@ -1,0 +1,43 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "processes": 4,
+  "payments": 20,
+  "clients": 4,
+  "elapsed_seconds": 4.210390000000189,
+  "completed_payins_per_second": 4.7501537862286165,
+  "create_checkout_settlement_p50_ms": 801.9946000003983,
+  "create_checkout_settlement_p95_ms": 970.5873000002612,
+  "wallet": {
+    "available": 2000,
+    "currency": "USD",
+    "held": 0,
+    "merchant": "seller"
+  },
+  "provider": {
+    "pending_webhooks": 0,
+    "simulated": true,
+    "succeeded": 20,
+    "unique_operations": 20
+  },
+  "consumer": {
+    "delivery_attempts": 20,
+    "unique_events": 20
+  },
+  "reconciliation": {
+    "result": {
+      "audit": {
+        "cash": 2000,
+        "errors": [],
+        "matches": true,
+        "merchant_liability": 2000
+      },
+      "differences": [],
+      "matches": true,
+      "provider_snapshot": "9066349b69e1902be822dc5fe6f371ac3dab6e887c8f024f2d90d1876541c839"
+    },
+    "run": "b3f00e9d1b554c06a36665980d4ec8d8",
+    "status": "done"
+  },
+  "scope": "Loopback mock provider, SQLite single authority, includes automated checkout; excludes process startup and final outbox/reconciliation drain."
+}

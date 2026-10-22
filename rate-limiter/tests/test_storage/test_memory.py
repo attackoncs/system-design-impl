@@ -4,8 +4,7 @@ import threading
 import time
 
 import pytest
-
-from rate_limiter.storage.memory import MemoryStorage
+import rate_limiter.storage.memory
 
 
 class TestMemoryStorageGet:
@@ -13,12 +12,12 @@ class TestMemoryStorageGet:
 
     def test_get_nonexistent_key(self):
         """Getting a key that was never set returns None."""
-        storage = MemoryStorage()
+        storage = rate_limiter.storage.memory.MemoryStorage()
         assert storage.get("nonexistent") is None
 
     def test_set_and_get(self):
         """Basic set followed by get returns the stored value."""
-        storage = MemoryStorage()
+        storage = rate_limiter.storage.memory.MemoryStorage()
         storage.set("key1", "value1")
         assert storage.get("key1") == "value1"
 
@@ -28,13 +27,13 @@ class TestMemoryStorageTTL:
 
     def test_set_with_ttl_not_expired(self):
         """Value is accessible before TTL expires."""
-        storage = MemoryStorage()
+        storage = rate_limiter.storage.memory.MemoryStorage()
         storage.set("key1", "value1", ttl=10)
         assert storage.get("key1") == "value1"
 
     def test_set_with_ttl_expired(self):
         """Value returns None after TTL has elapsed."""
-        storage = MemoryStorage()
+        storage = rate_limiter.storage.memory.MemoryStorage()
         storage.set("key1", "value1", ttl=1)
         time.sleep(1.1)
         assert storage.get("key1") is None
@@ -45,13 +44,13 @@ class TestMemoryStorageIncrement:
 
     def test_increment_new_key(self):
         """Incrementing a non-existent key starts from 0 and returns 1."""
-        storage = MemoryStorage()
+        storage = rate_limiter.storage.memory.MemoryStorage()
         result = storage.increment("counter")
         assert result == 1
 
     def test_increment_existing_key(self):
         """Incrementing an existing key increases the value correctly."""
-        storage = MemoryStorage()
+        storage = rate_limiter.storage.memory.MemoryStorage()
         storage.increment("counter")
         storage.increment("counter")
         result = storage.increment("counter")
@@ -59,7 +58,7 @@ class TestMemoryStorageIncrement:
 
     def test_increment_with_ttl(self):
         """Increment sets TTL on the key, which expires after the duration."""
-        storage = MemoryStorage()
+        storage = rate_limiter.storage.memory.MemoryStorage()
         storage.increment("counter", ttl=1)
         assert storage.get("counter") == "1"
         time.sleep(1.1)
@@ -71,7 +70,7 @@ class TestMemoryStorageThreadSafety:
 
     def test_thread_safety(self):
         """Multiple threads incrementing the same key produce correct total."""
-        storage = MemoryStorage()
+        storage = rate_limiter.storage.memory.MemoryStorage()
         num_threads = 10
         increments_per_thread = 100
 
@@ -94,12 +93,12 @@ class TestMemoryStorageExecuteAtomic:
 
     def test_execute_atomic(self):
         """A callable passed to execute_atomic runs under the lock."""
-        storage = MemoryStorage()
+        storage = rate_limiter.storage.memory.MemoryStorage()
         storage.set("key1", "10")
 
         def atomic_op(keys, args, store):
-            val = int(store._get_raw(keys[0]) or "0")
-            store._set_raw(keys[0], str(val + int(args[0])))
+            val = int(store.get_unlocked(keys[0]) or "0")
+            store.set_unlocked(keys[0], str(val + int(args[0])))
             return val + int(args[0])
 
         result = storage.execute_atomic(atomic_op, ["key1"], ["5"])
@@ -108,6 +107,6 @@ class TestMemoryStorageExecuteAtomic:
 
     def test_execute_atomic_non_callable(self):
         """Passing a non-callable to execute_atomic raises TypeError."""
-        storage = MemoryStorage()
+        storage = rate_limiter.storage.memory.MemoryStorage()
         with pytest.raises(TypeError):
             storage.execute_atomic("not_a_callable", ["key1"], ["arg1"])

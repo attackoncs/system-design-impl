@@ -1,12 +1,11 @@
 """Tests for the Sliding Window Log rate limiting algorithm."""
 
-import time
 import unittest
-from unittest.mock import Mock, patch
+import unittest.mock
 
-from src.rate_limiter.algorithms.sliding_window_log import SlidingWindowLogAlgorithm
-from src.rate_limiter.config import Algorithm, RateLimitRule
-from src.rate_limiter.storage.memory import MemoryStorage
+import src.rate_limiter.algorithms.sliding_window_log
+import src.rate_limiter.config
+import src.rate_limiter.storage.memory
 
 
 class TestSlidingWindowLogAlgorithm(unittest.TestCase):
@@ -14,9 +13,11 @@ class TestSlidingWindowLogAlgorithm(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.algorithm = SlidingWindowLogAlgorithm()
-        self.storage = MemoryStorage()
-        self.rule = RateLimitRule(limit=5, window=60, algorithm=Algorithm.SLIDING_WINDOW_LOG)
+        self.algorithm = src.rate_limiter.algorithms.sliding_window_log.SlidingWindowLogAlgorithm()
+        self.storage = src.rate_limiter.storage.memory.MemoryStorage()
+        self.rule = src.rate_limiter.config.RateLimitRule(
+            limit=5, window=60, algorithm=src.rate_limiter.config.Algorithm.SLIDING_WINDOW_LOG
+        )
         self.key = "test_key"
 
     def test_allows_requests_within_limit(self):
@@ -48,18 +49,18 @@ class TestSlidingWindowLogAlgorithm(unittest.TestCase):
         base_time = 1000000.0
 
         # Fill the window at time 0
-        with patch('time.time', return_value=base_time):
+        with unittest.mock.patch("time.time", return_value=base_time):
             for i in range(5):
                 result = self.algorithm.check(self.key, self.rule, self.storage)
                 self.assertTrue(result.allowed)
 
         # Try another request at the same time - should be denied
-        with patch('time.time', return_value=base_time):
+        with unittest.mock.patch("time.time", return_value=base_time):
             result = self.algorithm.check(self.key, self.rule, self.storage)
             self.assertFalse(result.allowed)
 
         # After window expires, should allow requests again
-        with patch('time.time', return_value=base_time + 61):
+        with unittest.mock.patch("time.time", return_value=base_time + 61):
             result = self.algorithm.check(self.key, self.rule, self.storage)
             self.assertTrue(result.allowed)
             self.assertEqual(result.remaining, 4)
@@ -70,41 +71,47 @@ class TestSlidingWindowLogAlgorithm(unittest.TestCase):
 
         # Make requests spread over time
         for i in range(5):
-            with patch('time.time', return_value=base_time + i * 10):
+            with unittest.mock.patch("time.time", return_value=base_time + i * 10):
                 result = self.algorithm.check(self.key, self.rule, self.storage)
                 self.assertTrue(result.allowed)
 
         # All 5 requests should be in the window
-        with patch('time.time', return_value=base_time + 30):
+        with unittest.mock.patch("time.time", return_value=base_time + 30):
             result = self.algorithm.check(self.key, self.rule, self.storage)
             self.assertFalse(result.allowed)
 
         # After first request expires (at time 60), should allow one more
-        with patch('time.time', return_value=base_time + 61):
+        with unittest.mock.patch("time.time", return_value=base_time + 61):
             result = self.algorithm.check(self.key, self.rule, self.storage)
             self.assertTrue(result.allowed)
             self.assertEqual(result.remaining, 0)  # Still at limit, but sliding
 
     def test_reset_after_calculation(self):
-        """Test that reset_after shows correct time until oldest entry expires."""
+        """Test that reset_after shows correct time until oldest entry
+        expires.
+        """
         base_time = 1000000.0
 
-        with patch('time.time', return_value=base_time):
+        with unittest.mock.patch("time.time", return_value=base_time):
             result = self.algorithm.check(self.key, self.rule, self.storage)
             self.assertTrue(result.allowed)
 
             # Should reset after window duration
             expected_reset = 60.0
-            self.assertAlmostEqual(result.reset_after, expected_reset, delta=0.1)
+            self.assertAlmostEqual(
+                result.reset_after, expected_reset, delta=0.1
+            )
 
         # Make another request 30 seconds later
-        with patch('time.time', return_value=base_time + 30):
+        with unittest.mock.patch("time.time", return_value=base_time + 30):
             result = self.algorithm.check(self.key, self.rule, self.storage)
             self.assertTrue(result.allowed)
 
             # Should reset after 30 seconds (when first request expires)
             expected_reset = 30.0
-            self.assertAlmostEqual(result.reset_after, expected_reset, delta=0.1)
+            self.assertAlmostEqual(
+                result.reset_after, expected_reset, delta=0.1
+            )
 
     def test_retry_after_for_denied_requests(self):
         """Test that retry_after is set correctly for denied requests."""
@@ -112,18 +119,21 @@ class TestSlidingWindowLogAlgorithm(unittest.TestCase):
 
         # Fill the window
         for i in range(5):
-            with patch('time.time', return_value=base_time + i):
+            with unittest.mock.patch("time.time", return_value=base_time + i):
                 result = self.algorithm.check(self.key, self.rule, self.storage)
                 self.assertTrue(result.allowed)
 
         # Try one more request
-        with patch('time.time', return_value=base_time + 30):
+        with unittest.mock.patch("time.time", return_value=base_time + 30):
             result = self.algorithm.check(self.key, self.rule, self.storage)
             self.assertFalse(result.allowed)
 
-            # Should retry after approximately 30 seconds (when first request expires)
+            # Should retry after approximately 30 seconds (when first request
+            # expires)
             expected_retry = 30.0
-            self.assertAlmostEqual(result.retry_after, expected_retry, delta=0.1)
+            self.assertAlmostEqual(
+                result.retry_after, expected_retry, delta=0.1
+            )
 
     def test_different_keys_are_isolated(self):
         """Test that different keys have independent logs."""
@@ -142,8 +152,12 @@ class TestSlidingWindowLogAlgorithm(unittest.TestCase):
 
     def test_different_rules_are_isolated(self):
         """Test that different rules affect the same key independently."""
-        rule1 = RateLimitRule(limit=3, window=60, algorithm=Algorithm.SLIDING_WINDOW_LOG)
-        rule2 = RateLimitRule(limit=5, window=60, algorithm=Algorithm.SLIDING_WINDOW_LOG)
+        rule1 = src.rate_limiter.config.RateLimitRule(
+            limit=3, window=60, algorithm=src.rate_limiter.config.Algorithm.SLIDING_WINDOW_LOG
+        )
+        rule2 = src.rate_limiter.config.RateLimitRule(
+            limit=5, window=60, algorithm=src.rate_limiter.config.Algorithm.SLIDING_WINDOW_LOG
+        )
 
         # Use up rule1
         for i in range(3):
@@ -165,22 +179,24 @@ class TestSlidingWindowLogAlgorithm(unittest.TestCase):
 
         # Make requests at regular intervals
         for i in range(5):
-            with patch('time.time', return_value=base_time + i * 12):  # Every 12 seconds
+            with unittest.mock.patch(
+                "time.time", return_value=base_time + i * 12
+            ):  # Every 12 seconds
                 result = self.algorithm.check(self.key, self.rule, self.storage)
                 self.assertTrue(result.allowed)
 
         # Should be denied now
-        with patch('time.time', return_value=base_time + 50):
+        with unittest.mock.patch("time.time", return_value=base_time + 50):
             result = self.algorithm.check(self.key, self.rule, self.storage)
             self.assertFalse(result.allowed)
 
         # After first request expires (at 60 seconds), should allow one more
-        with patch('time.time', return_value=base_time + 61):
+        with unittest.mock.patch("time.time", return_value=base_time + 61):
             result = self.algorithm.check(self.key, self.rule, self.storage)
             self.assertTrue(result.allowed)
 
         # But should be denied again immediately
-        with patch('time.time', return_value=base_time + 61.1):
+        with unittest.mock.patch("time.time", return_value=base_time + 61.1):
             result = self.algorithm.check(self.key, self.rule, self.storage)
             self.assertFalse(result.allowed)
 
@@ -196,7 +212,7 @@ class TestSlidingWindowLogAlgorithm(unittest.TestCase):
         log_key = f"{self.key}{rule_suffix}:log"
 
         # Key should exist
-        self.assertIsNotNone(self.storage._get_raw(log_key))
+        self.assertIsNotNone(self.storage.get_unlocked(log_key))
 
     def test_atomic_operations(self):
         """Test that operations are atomic under concurrent access."""
@@ -241,7 +257,7 @@ class TestSlidingWindowLogAlgorithm(unittest.TestCase):
         base_time = 1000000.0
 
         # First request should always be allowed
-        with patch('time.time', return_value=base_time):
+        with unittest.mock.patch("time.time", return_value=base_time):
             result = self.algorithm.check(self.key, self.rule, self.storage)
             self.assertTrue(result.allowed)
             self.assertEqual(result.remaining, 4)
@@ -252,12 +268,12 @@ class TestSlidingWindowLogAlgorithm(unittest.TestCase):
         base_time = 1000000.0
 
         # Make a request at exact window boundary
-        with patch('time.time', return_value=base_time):
+        with unittest.mock.patch("time.time", return_value=base_time):
             result = self.algorithm.check(self.key, self.rule, self.storage)
             self.assertTrue(result.allowed)
 
         # Make another request exactly at window + 1
-        with patch('time.time', return_value=base_time + 60):
+        with unittest.mock.patch("time.time", return_value=base_time + 60):
             result = self.algorithm.check(self.key, self.rule, self.storage)
             self.assertTrue(result.allowed)
             # First request should still be in the window (not expired yet)
@@ -265,5 +281,5 @@ class TestSlidingWindowLogAlgorithm(unittest.TestCase):
             self.assertEqual(result.remaining, 4)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

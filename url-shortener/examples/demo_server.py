@@ -13,8 +13,8 @@ Usage:
 
 Example requests (using curl):
     # Shorten a URL
-    curl -X POST http://localhost:8000/shorten \\
-         -H "Content-Type: application/json" \\
+    curl -X POST http://localhost:8000/shorten \
+         -H "Content-Type: application/json" \
          -d '{"url": "https://example.com/very/long/path", "redirect_type": 302}'
 
     # Follow a short URL redirect
@@ -25,22 +25,22 @@ Example requests (using curl):
 """
 
 import argparse
+import http
+import http.server
 import json
-from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from url_shortener import RedirectType, ShortCodeNotFoundError, URLShortener
+import url_shortener
 
 
-class URLShortenerHandler(BaseHTTPRequestHandler):
+class URLShortenerHandler(http.server.BaseHTTPRequestHandler):
     """HTTP request handler for the URL shortener demo."""
 
-    shortener: URLShortener  # Class-level shared instance
+    shortener: url_shortener.URLShortener  # Class-level shared instance
 
     def do_POST(self) -> None:
         """Handle POST /shorten requests."""
         if self.path != "/shorten":
-            self._send_error(HTTPStatus.NOT_FOUND, "Not found")
+            self._send_error(http.HTTPStatus.NOT_FOUND, "Not found")
             return
 
         content_length = int(self.headers.get("Content-Length", 0))
@@ -49,55 +49,59 @@ class URLShortenerHandler(BaseHTTPRequestHandler):
         try:
             data = json.loads(body)
         except json.JSONDecodeError:
-            self._send_error(HTTPStatus.BAD_REQUEST, "Invalid JSON")
+            self._send_error(http.HTTPStatus.BAD_REQUEST, "Invalid JSON")
             return
 
         long_url = data.get("url", "")
         redirect_type_code = data.get("redirect_type", 302)
 
         try:
-            redirect_type = RedirectType(redirect_type_code)
+            redirect_type = url_shortener.RedirectType(redirect_type_code)
         except ValueError:
             self._send_error(
-                HTTPStatus.BAD_REQUEST,
-                f"Invalid redirect_type: {redirect_type_code}. Must be 301 or 302.",
+                http.HTTPStatus.BAD_REQUEST,
+                f"Invalid redirect_type: {redirect_type_code}. Must be 301 or"
+                " 302.",
             )
             return
 
         try:
             short_url = self.shortener.shorten(long_url, redirect_type)
         except Exception as e:
-            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
+            self._send_error(http.HTTPStatus.BAD_REQUEST, str(e))
             return
 
-        self._send_json(HTTPStatus.CREATED, {"short_url": short_url})
+        self._send_json(http.HTTPStatus.CREATED, {"short_url": short_url})
 
     def do_GET(self) -> None:
         """Handle GET /<short_code> and GET /stats/<code> requests."""
         path = self.path.lstrip("/")
 
         if path.startswith("stats/"):
-            short_code = path[len("stats/"):]
+            short_code = path[len("stats/") :]
             count = self.shortener.get_click_count(short_code)
-            self._send_json(HTTPStatus.OK, {
-                "short_code": short_code,
-                "click_count": count,
-            })
+            self._send_json(
+                http.HTTPStatus.OK,
+                {
+                    "short_code": short_code,
+                    "click_count": count,
+                },
+            )
             return
 
         # Treat as short code redirect
         short_code = path
         try:
             long_url, redirect_type = self.shortener.resolve(short_code)
-        except ShortCodeNotFoundError:
-            self._send_error(HTTPStatus.NOT_FOUND, "Short code not found")
+        except url_shortener.ShortCodeNotFoundError:
+            self._send_error(http.HTTPStatus.NOT_FOUND, "Short code not found")
             return
 
         self.send_response(redirect_type.value)
         self.send_header("Location", long_url)
         self.end_headers()
 
-    def _send_json(self, status: HTTPStatus, data: dict) -> None:
+    def _send_json(self, status: http.HTTPStatus, data: dict) -> None:
         """Send a JSON response."""
         body = json.dumps(data).encode("utf-8")
         self.send_response(status.value)
@@ -106,7 +110,7 @@ class URLShortenerHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_error(self, status: HTTPStatus, message: str) -> None:
+    def _send_error(self, status: http.HTTPStatus, message: str) -> None:
         """Send an error JSON response."""
         self._send_json(status, {"error": message})
 
@@ -118,15 +122,15 @@ def run_server(port: int = 8000, domain: str = "http://localhost:8000") -> None:
         port: Port number to listen on. Defaults to 8000.
         domain: Base domain for constructing short URLs. Defaults to http://localhost:8000.
     """
-    shortener = URLShortener(domain=domain)
+    shortener = url_shortener.URLShortener(domain=domain)
     URLShortenerHandler.shortener = shortener
 
-    server = HTTPServer(("", port), URLShortenerHandler)
+    server = http.server.HTTPServer(("", port), URLShortenerHandler)
     print(f"URL Shortener demo running on http://localhost:{port}")
     print("Endpoints:")
-    print(f"  POST /shorten     - Shorten a URL")
-    print(f"  GET /<code>       - Redirect to original URL")
-    print(f"  GET /stats/<code> - View click stats")
+    print("  POST /shorten     - Shorten a URL")
+    print("  GET /<code>       - Redirect to original URL")
+    print("  GET /stats/<code> - View click stats")
     print("\nPress Ctrl+C to stop.")
     try:
         server.serve_forever()

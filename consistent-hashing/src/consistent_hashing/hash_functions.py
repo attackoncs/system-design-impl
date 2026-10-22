@@ -1,8 +1,8 @@
 """Hash function implementations for the consistent hash ring.
 
-Provides a protocol defining the hash function interface and several
-concrete implementations (SHA-1, MD5, SHA-256) that map string keys
-to integer positions on the hash ring.
+Provides a protocol defining the hash function interface and several concrete
+implementations (SHA-1, MD5, SHA-256) that map string keys to integer positions
+on the hash ring.
 """
 
 import hashlib
@@ -12,13 +12,12 @@ from typing import Protocol
 class HashFunction(Protocol):
     """Protocol for hash functions used by the ring.
 
-    Any callable that accepts a string key and returns an integer
-    hash value satisfies this protocol.
+    Any callable that accepts a string key and returns an integer hash value
+    satisfies this protocol.
     """
 
     def __call__(self, key: str) -> int:
         """Hash a string key to an integer position on the ring."""
-        ...
 
 
 def sha1_hash(key: str) -> int:

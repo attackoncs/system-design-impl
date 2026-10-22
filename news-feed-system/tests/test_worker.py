@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import asyncio
 
+import news_feed_system.models
+import news_feed_system.news_feed_cache
+import news_feed_system.queue
+import news_feed_system.worker
 import pytest
-
-from news_feed_system.models import FanoutTask, FeedEntry
-from news_feed_system.news_feed_cache import NewsFeedCache
-from news_feed_system.queue import MessageQueue
-from news_feed_system.worker import FanoutWorker, WorkerPool
-
 
 # ---------------------------------------------------------------------------
 # FanoutWorker tests
@@ -20,12 +18,12 @@ from news_feed_system.worker import FanoutWorker, WorkerPool
 @pytest.mark.asyncio
 async def test_worker_processes_task_and_writes_to_cache() -> None:
     """Worker appends a FeedEntry to each target user's cache."""
-    queue = MessageQueue()
-    cache = NewsFeedCache()
-    worker = FanoutWorker(queue, cache, worker_id=0)
+    queue = news_feed_system.queue.MessageQueue()
+    cache = news_feed_system.news_feed_cache.NewsFeedCache()
+    worker = news_feed_system.worker.FanoutWorker(queue, cache, worker_id=0)
 
     sentinel_queue: asyncio.Queue = asyncio.Queue()
-    task = FanoutTask(
+    task = news_feed_system.models.FanoutTask(
         post_id="p1",
         author_id="author1",
         target_user_ids=["u1", "u2", "u3"],
@@ -46,6 +44,7 @@ async def test_worker_processes_task_and_writes_to_cache() -> None:
 
     # Stop the worker via sentinel.
     from news_feed_system.worker import _STOP_SENTINEL
+
     await sentinel_queue.put(_STOP_SENTINEL)
     await worker_task
 
@@ -55,13 +54,13 @@ async def test_worker_preserves_task_timestamp() -> None:
     """FeedEntry timestamp matches the FanoutTask timestamp."""
     from datetime import datetime, timezone
 
-    queue = MessageQueue()
-    cache = NewsFeedCache()
-    worker = FanoutWorker(queue, cache, worker_id=0)
+    queue = news_feed_system.queue.MessageQueue()
+    cache = news_feed_system.news_feed_cache.NewsFeedCache()
+    worker = news_feed_system.worker.FanoutWorker(queue, cache, worker_id=0)
 
     sentinel_queue: asyncio.Queue = asyncio.Queue()
     ts = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
-    task = FanoutTask(
+    task = news_feed_system.models.FanoutTask(
         post_id="p1",
         author_id="author1",
         target_user_ids=["u1"],
@@ -76,6 +75,7 @@ async def test_worker_preserves_task_timestamp() -> None:
     assert entries[0].timestamp == ts
 
     from news_feed_system.worker import _STOP_SENTINEL
+
     await sentinel_queue.put(_STOP_SENTINEL)
     await worker_task
 
@@ -83,13 +83,13 @@ async def test_worker_preserves_task_timestamp() -> None:
 @pytest.mark.asyncio
 async def test_worker_processes_multiple_tasks_sequentially() -> None:
     """Worker processes multiple tasks in order."""
-    queue = MessageQueue()
-    cache = NewsFeedCache()
-    worker = FanoutWorker(queue, cache, worker_id=0)
+    queue = news_feed_system.queue.MessageQueue()
+    cache = news_feed_system.news_feed_cache.NewsFeedCache()
+    worker = news_feed_system.worker.FanoutWorker(queue, cache, worker_id=0)
 
     sentinel_queue: asyncio.Queue = asyncio.Queue()
     for i in range(5):
-        task = FanoutTask(
+        task = news_feed_system.models.FanoutTask(
             post_id=f"p{i}",
             author_id="author1",
             target_user_ids=["u1"],
@@ -103,6 +103,7 @@ async def test_worker_processes_multiple_tasks_sequentially() -> None:
     assert len(entries) == 5
 
     from news_feed_system.worker import _STOP_SENTINEL
+
     await sentinel_queue.put(_STOP_SENTINEL)
     await worker_task
 
@@ -115,9 +116,9 @@ async def test_worker_processes_multiple_tasks_sequentially() -> None:
 @pytest.mark.asyncio
 async def test_worker_pool_starts_configured_number_of_workers() -> None:
     """WorkerPool creates the configured number of worker tasks."""
-    queue = MessageQueue()
-    cache = NewsFeedCache()
-    pool = WorkerPool(queue, cache, num_workers=3)
+    queue = news_feed_system.queue.MessageQueue()
+    cache = news_feed_system.news_feed_cache.NewsFeedCache()
+    pool = news_feed_system.worker.WorkerPool(queue, cache, num_workers=3)
 
     assert pool.num_workers == 3
     assert not pool.is_running
@@ -132,14 +133,16 @@ async def test_worker_pool_starts_configured_number_of_workers() -> None:
 
 @pytest.mark.asyncio
 async def test_worker_pool_processes_tasks_from_queue() -> None:
-    """WorkerPool workers consume tasks from the MessageQueue and write to cache."""
-    queue = MessageQueue()
-    cache = NewsFeedCache()
-    pool = WorkerPool(queue, cache, num_workers=2)
+    """WorkerPool workers consume tasks from the MessageQueue and write to
+    cache.
+    """
+    queue = news_feed_system.queue.MessageQueue()
+    cache = news_feed_system.news_feed_cache.NewsFeedCache()
+    pool = news_feed_system.worker.WorkerPool(queue, cache, num_workers=2)
 
     await pool.start()
 
-    task = FanoutTask(
+    task = news_feed_system.models.FanoutTask(
         post_id="p1",
         author_id="author1",
         target_user_ids=["u1", "u2"],
@@ -159,17 +162,17 @@ async def test_worker_pool_processes_tasks_from_queue() -> None:
 
 @pytest.mark.asyncio
 async def test_worker_pool_graceful_shutdown_completes_inflight_tasks() -> None:
-    """stop() waits for in-flight tasks to complete before returning."""
-    queue = MessageQueue()
-    cache = NewsFeedCache()
-    pool = WorkerPool(queue, cache, num_workers=2)
+    """Stop() waits for in-flight tasks to complete before returning."""
+    queue = news_feed_system.queue.MessageQueue()
+    cache = news_feed_system.news_feed_cache.NewsFeedCache()
+    pool = news_feed_system.worker.WorkerPool(queue, cache, num_workers=2)
 
     await pool.start()
 
     # Enqueue several tasks before stopping.
     for i in range(10):
         await queue.enqueue(
-            FanoutTask(
+            news_feed_system.models.FanoutTask(
                 post_id=f"p{i}",
                 author_id="author1",
                 target_user_ids=["u1"],
@@ -190,10 +193,10 @@ async def test_worker_pool_graceful_shutdown_completes_inflight_tasks() -> None:
 
 @pytest.mark.asyncio
 async def test_worker_pool_stop_raises_if_not_running() -> None:
-    """stop() raises RuntimeError if the pool is not running."""
-    queue = MessageQueue()
-    cache = NewsFeedCache()
-    pool = WorkerPool(queue, cache, num_workers=2)
+    """Stop() raises RuntimeError if the pool is not running."""
+    queue = news_feed_system.queue.MessageQueue()
+    cache = news_feed_system.news_feed_cache.NewsFeedCache()
+    pool = news_feed_system.worker.WorkerPool(queue, cache, num_workers=2)
 
     with pytest.raises(RuntimeError, match="not running"):
         await pool.stop()
@@ -201,10 +204,10 @@ async def test_worker_pool_stop_raises_if_not_running() -> None:
 
 @pytest.mark.asyncio
 async def test_worker_pool_start_raises_if_already_running() -> None:
-    """start() raises RuntimeError if the pool is already running."""
-    queue = MessageQueue()
-    cache = NewsFeedCache()
-    pool = WorkerPool(queue, cache, num_workers=2)
+    """Start() raises RuntimeError if the pool is already running."""
+    queue = news_feed_system.queue.MessageQueue()
+    cache = news_feed_system.news_feed_cache.NewsFeedCache()
+    pool = news_feed_system.worker.WorkerPool(queue, cache, num_workers=2)
 
     await pool.start()
     try:
@@ -217,22 +220,22 @@ async def test_worker_pool_start_raises_if_already_running() -> None:
 @pytest.mark.asyncio
 async def test_worker_pool_invalid_num_workers() -> None:
     """WorkerPool raises ValueError for non-positive num_workers."""
-    queue = MessageQueue()
-    cache = NewsFeedCache()
+    queue = news_feed_system.queue.MessageQueue()
+    cache = news_feed_system.news_feed_cache.NewsFeedCache()
 
     with pytest.raises(ValueError, match="num_workers"):
-        WorkerPool(queue, cache, num_workers=0)
+        news_feed_system.worker.WorkerPool(queue, cache, num_workers=0)
 
     with pytest.raises(ValueError, match="num_workers"):
-        WorkerPool(queue, cache, num_workers=-1)
+        news_feed_system.worker.WorkerPool(queue, cache, num_workers=-1)
 
 
 @pytest.mark.asyncio
 async def test_worker_pool_concurrent_processing() -> None:
     """Multiple workers process tasks concurrently."""
-    queue = MessageQueue()
-    cache = NewsFeedCache()
-    pool = WorkerPool(queue, cache, num_workers=4)
+    queue = news_feed_system.queue.MessageQueue()
+    cache = news_feed_system.news_feed_cache.NewsFeedCache()
+    pool = news_feed_system.worker.WorkerPool(queue, cache, num_workers=4)
 
     await pool.start()
 
@@ -240,7 +243,7 @@ async def test_worker_pool_concurrent_processing() -> None:
     num_tasks = 20
     for i in range(num_tasks):
         await queue.enqueue(
-            FanoutTask(
+            news_feed_system.models.FanoutTask(
                 post_id=f"p{i}",
                 author_id="author1",
                 target_user_ids=[f"user_{i}"],

@@ -1,23 +1,23 @@
 """SSTable compaction manager using size-tiered compaction strategy.
 
-When the number of SSTables at a given level exceeds the threshold,
-they are merged into a single SSTable at the next level. During merge,
-duplicate keys are resolved by keeping the newest version, and expired
-tombstones are removed.
+When the number of SSTables at a given level exceeds the threshold, they are
+merged into a single SSTable at the next level. During merge, duplicate keys
+are resolved by keeping the newest version, and expired tombstones are removed.
 
 Covers: FR-9.5
 """
 
 import asyncio
+import dataclasses
 import heapq
+import pathlib
 import struct
 import time
 import uuid
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Iterator, List, Optional, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterator, List, Optional, Tuple
 
-from kv_store.storage.bloom_filter import BloomFilter
+from kv_store.storage import bloom_filter as storage_bloom_filter
+from kv_store.storage import sstable as storage_sstable
 
 if TYPE_CHECKING:
     from kv_store.storage.sstable import SSTable, SSTableEntry
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 _DEFAULT_TOMBSTONE_GRACE_SECONDS = 24 * 60 * 60
 
 
-@dataclass
+@dataclasses.dataclass
 class CompactionStats:
     """Statistics from a compaction run."""
 
@@ -60,15 +60,19 @@ class CompactionManager:
 
         Args:
             sstable_dir: Directory containing SSTable files.
-            compaction_threshold: Number of SSTables at a level before compaction triggers.
-            tombstone_grace_seconds: How long to keep tombstones before removal (default 24h).
+            compaction_threshold: Number of SSTables at a level before
+                compaction triggers.
+            tombstone_grace_seconds: How long to keep tombstones before removal
+                (default 24h).
         """
         self._sstable_dir = sstable_dir
         self._compaction_threshold = compaction_threshold
         self._tombstone_grace_seconds = tombstone_grace_seconds
         self._last_stats = CompactionStats()
 
-    async def maybe_compact(self, sstables: List["SSTable"]) -> Optional["SSTable"]:
+    async def maybe_compact(
+        self, sstables: List["SSTable"]
+    ) -> Optional["SSTable"]:
         """Check if compaction is needed and perform it if so.
 
         Groups SSTables by level and checks if any level exceeds the threshold.
@@ -100,7 +104,8 @@ class CompactionManager:
         return None
 
     async def compact(self, sstables: List["SSTable"], level: int) -> "SSTable":
-        """Merge multiple SSTables into one, removing duplicates and tombstones.
+        """Merge multiple SSTables into one, removing duplicates and
+        tombstones.
 
         Uses a k-way merge of sorted iterators. For duplicate keys, keeps
         the entry with the newest timestamp. Tombstones older than the
@@ -108,13 +113,12 @@ class CompactionManager:
 
         Args:
             sstables: SSTables to merge (should be at the same level).
-            level: The current level of the input SSTables. Output goes to level + 1.
+            level: The current level of the input SSTables. Output goes to
+                level + 1.
 
         Returns:
             The newly created merged SSTable at level + 1.
         """
-        from kv_store.storage.sstable import SSTable, SSTableEntry
-
         # Track stats
         bytes_before = sum(sst.metadata.size_bytes for sst in sstables)
         current_time = time.time()
@@ -127,9 +131,10 @@ class CompactionManager:
 
         # Generate unique output file path
         output_filename = f"sstable_L{level + 1}_{uuid.uuid4().hex[:12]}.sst"
-        output_path = str(Path(self._sstable_dir) / output_filename)
+        output_path = str(pathlib.Path(self._sstable_dir) / output_filename)
 
-        # Create the output SSTable using a class method that accepts entries directly
+        # Create the output SSTable using a class method that accepts entries
+        # directly
         output_sst = await self._create_sstable_from_entries(
             merged_entries, output_path, level + 1
         )
@@ -159,11 +164,14 @@ class CompactionManager:
             current_time: Current time for tombstone expiry check.
 
         Returns:
-            List of (key, value, timestamp, is_tombstone) tuples in sorted key order.
+            List of (key, value, timestamp, is_tombstone) tuples in sorted key
+            order.
         """
         # Build a heap of (key, -timestamp, sstable_idx, entry) tuples
         # Using -timestamp ensures newest entries come first for same key
-        heap: List[Tuple[str, float, int, "SSTableEntry", Iterator["SSTableEntry"]]] = []
+        heap: List[
+            Tuple[str, float, int, "SSTableEntry", Iterator["SSTableEntry"]]
+        ] = []
 
         iterators: List[Iterator["SSTableEntry"]] = []
         for idx, sst in enumerate(sstables):
@@ -172,7 +180,9 @@ class CompactionManager:
             entry = next(it, None)
             if entry is not None:
                 # heap item: (key, -timestamp, sstable_idx, entry, iterator)
-                heapq.heappush(heap, (entry.key, -entry.timestamp, idx, entry, it))
+                heapq.heappush(
+                    heap, (entry.key, -entry.timestamp, idx, entry, it)
+                )
 
         # Merge entries, resolving duplicates
         merged: List[Tuple[str, Optional[bytes], float, bool]] = []
@@ -180,14 +190,24 @@ class CompactionManager:
         last_key: Optional[str] = None
 
         while heap:
-            key, neg_ts, idx, entry, it = heapq.heappop(heap)
+            key, _, idx, entry, it = heapq.heappop(heap)
 
             # Advance the iterator for this SSTable
             next_entry = next(it, None)
             if next_entry is not None:
-                heapq.heappush(heap, (next_entry.key, -next_entry.timestamp, idx, next_entry, it))
+                heapq.heappush(
+                    heap,
+                    (
+                        next_entry.key,
+                        -next_entry.timestamp,
+                        idx,
+                        next_entry,
+                        it,
+                    ),
+                )
 
-            # Skip duplicate keys (keep only the first occurrence = newest timestamp)
+            # Skip duplicate keys (keep only the first occurrence = newest
+            # timestamp)
             if key == last_key:
                 continue
 
@@ -200,7 +220,9 @@ class CompactionManager:
                     tombstones_removed += 1
                     continue
 
-            merged.append((entry.key, entry.value, entry.timestamp, entry.is_tombstone))
+            merged.append(
+                (entry.key, entry.value, entry.timestamp, entry.is_tombstone)
+            )
 
         self._last_tombstones_removed = tombstones_removed
         return merged
@@ -218,40 +240,45 @@ class CompactionManager:
         file format.
 
         Args:
-            entries: List of (key, value, timestamp, is_tombstone) tuples in sorted order.
+            entries: List of (key, value, timestamp, is_tombstone) tuples in
+                sorted order.
             file_path: Output file path.
             level: Compaction level for the output SSTable.
 
         Returns:
             The newly created SSTable.
         """
-        from kv_store.storage.sstable import SSTable
 
         if not entries:
             # Create a minimal SSTable with a dummy entry if no entries remain
             # after tombstone removal. This shouldn't normally happen.
-            raise ValueError("Cannot create SSTable from empty entries after compaction")
+            raise ValueError(
+                "Cannot create SSTable from empty entries after compaction"
+            )
 
         # Use the same file format as SSTable.create_from_memtable
         # [data block] [index block] [bloom filter block] [footer]
-        _MAGIC_NUMBER = 0x53535442
-        _INDEX_INTERVAL = 16
+        magic_number = 0x53535442
+        index_interval = 16
 
         data_block = bytearray()
         index_entries: List[Tuple[str, int]] = []
-        bloom = BloomFilter(expected_items=max(len(entries), 1))
+        bloom = storage_bloom_filter.BloomFilter(
+            expected_items=max(len(entries), 1)
+        )
         created_at = time.time()
 
         for i, (key, value, timestamp, is_tombstone) in enumerate(entries):
             # Record offset for sparse index (every Nth entry)
-            if i % _INDEX_INTERVAL == 0:
+            if i % index_interval == 0:
                 index_entries.append((key, len(data_block)))
 
             # Add to bloom filter
             bloom.add(key)
 
             # Write entry to data block:
-            # [key_len(4)][key][value_len(4)][value][timestamp(8)][is_tombstone(1)]
+            # [key_len(4)][key][value_len(4)]
+            # [value][timestamp(8)][is_tombstone(1)]
             key_bytes = key.encode("utf-8")
             value_bytes = value if value is not None else b""
 
@@ -280,24 +307,29 @@ class CompactionManager:
         max_key_bytes = max_key.encode("utf-8")
 
         footer = bytearray()
-        footer.extend(struct.pack("<Q", len(data_block)))       # data_block_size
-        footer.extend(struct.pack("<Q", len(index_block)))      # index_block_size
-        footer.extend(struct.pack("<Q", len(bloom_data)))       # bloom_filter_size
-        footer.extend(struct.pack("<I", len(entries)))           # entry_count
-        footer.extend(struct.pack("<I", level))                  # level
-        footer.extend(struct.pack("<I", len(min_key_bytes)))    # min_key_len
-        footer.extend(min_key_bytes)                             # min_key
-        footer.extend(struct.pack("<I", len(max_key_bytes)))    # max_key_len
-        footer.extend(max_key_bytes)                             # max_key
-        footer.extend(struct.pack("<d", created_at))            # created_at
-        footer.extend(struct.pack("<I", _MAGIC_NUMBER))         # magic_number
+        footer.extend(struct.pack("<Q", len(data_block)))  # data_block_size
+        footer.extend(struct.pack("<Q", len(index_block)))  # index_block_size
+        footer.extend(struct.pack("<Q", len(bloom_data)))  # bloom_filter_size
+        footer.extend(struct.pack("<I", len(entries)))  # entry_count
+        footer.extend(struct.pack("<I", level))  # level
+        footer.extend(struct.pack("<I", len(min_key_bytes)))  # min_key_len
+        footer.extend(min_key_bytes)  # min_key
+        footer.extend(struct.pack("<I", len(max_key_bytes)))  # max_key_len
+        footer.extend(max_key_bytes)  # max_key
+        footer.extend(struct.pack("<d", created_at))  # created_at
+        footer.extend(struct.pack("<I", magic_number))  # magic_number
 
         # Combine all blocks
-        file_data = bytes(data_block) + bytes(index_block) + bytes(bloom_data) + bytes(footer)
+        file_data = (
+            bytes(data_block)
+            + bytes(index_block)
+            + bytes(bloom_data)
+            + bytes(footer)
+        )
 
         # Write to disk
         def _write_file() -> None:
-            path = Path(file_path)
+            path = pathlib.Path(file_path)
             path.parent.mkdir(parents=True, exist_ok=True)
             with open(file_path, "wb") as f:
                 f.write(file_data)
@@ -306,7 +338,7 @@ class CompactionManager:
         await asyncio.to_thread(_write_file)
 
         # Return a new SSTable instance
-        return SSTable(file_path)
+        return storage_sstable.SSTable(file_path)
 
     def get_compaction_stats(self) -> CompactionStats:
         """Get statistics from the last compaction run.

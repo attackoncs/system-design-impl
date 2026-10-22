@@ -11,16 +11,13 @@ Tests cover:
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import grpc
 import grpc.aio
+import kv_store.client
+import kv_store.replication.vector_clock
 import pytest
-
-from kv_store.client import ClientConfig, KVClient, KVResponse
 from kv_store.network import kvstore_pb2, kvstore_pb2_grpc
-from kv_store.replication.vector_clock import VectorClock
-
 
 # ---------------------------------------------------------------------------
 # Helpers: In-process gRPC server with a mock servicer
@@ -93,8 +90,12 @@ class ConflictingServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
             vector_clock=clock1,
             has_conflict=True,
             conflicting_values=[
-                kvstore_pb2.ConflictingValue(value=b"value1", vector_clock=clock1),
-                kvstore_pb2.ConflictingValue(value=b"value2", vector_clock=clock2),
+                kvstore_pb2.ConflictingValue(
+                    value=b"value1", vector_clock=clock1
+                ),
+                kvstore_pb2.ConflictingValue(
+                    value=b"value2", vector_clock=clock2
+                ),
             ],
         )
 
@@ -130,16 +131,18 @@ async def conflict_server():
 
 @pytest.mark.asyncio
 async def test_put_get_delete_roundtrip(grpc_server):
-    """Test basic put, get, and delete operations via an in-process gRPC server."""
+    """Test basic put, get, and delete operations via an in-process gRPC
+    server.
+    """
     server, port, servicer = grpc_server
-    config = ClientConfig(
+    config = kv_store.client.ClientConfig(
         seed_nodes=[f"localhost:{port}"],
         timeout=5.0,
         retry_count=1,
         retry_delay=0.1,
     )
 
-    async with KVClient(config) as client:
+    async with kv_store.client.KVClient(config) as client:
         # Put
         put_resp = await client.put("test-key", b"test-value")
         assert put_resp.success is True
@@ -166,14 +169,14 @@ async def test_put_get_delete_roundtrip(grpc_server):
 async def test_get_nonexistent_key(grpc_server):
     """Test that getting a non-existent key returns None value."""
     server, port, servicer = grpc_server
-    config = ClientConfig(
+    config = kv_store.client.ClientConfig(
         seed_nodes=[f"localhost:{port}"],
         timeout=5.0,
         retry_count=1,
         retry_delay=0.1,
     )
 
-    async with KVClient(config) as client:
+    async with kv_store.client.KVClient(config) as client:
         resp = await client.get("nonexistent")
         assert resp.success is True
         assert resp.value is None
@@ -184,14 +187,14 @@ async def test_get_nonexistent_key(grpc_server):
 async def test_get_with_conflicts(conflict_server):
     """Test that get correctly handles conflicting values."""
     server, port, servicer = conflict_server
-    config = ClientConfig(
+    config = kv_store.client.ClientConfig(
         seed_nodes=[f"localhost:{port}"],
         timeout=5.0,
         retry_count=1,
         retry_delay=0.1,
     )
 
-    async with KVClient(config) as client:
+    async with kv_store.client.KVClient(config) as client:
         resp = await client.get("conflict-key")
         assert resp.success is True
         assert resp.has_conflict is True
@@ -242,14 +245,14 @@ async def retry_server():
 async def test_retry_on_transient_failure(retry_server):
     """Test that the client retries on UNAVAILABLE and eventually succeeds."""
     server, port, servicer = retry_server
-    config = ClientConfig(
+    config = kv_store.client.ClientConfig(
         seed_nodes=[f"localhost:{port}"],
         timeout=5.0,
         retry_count=3,
         retry_delay=0.05,
     )
 
-    async with KVClient(config) as client:
+    async with kv_store.client.KVClient(config) as client:
         resp = await client.put("retry-key", b"retry-value")
         assert resp.success is True
         # Should have taken 3 attempts (2 failures + 1 success)
@@ -261,14 +264,14 @@ async def test_retry_exhausted_raises_connection_error(retry_server):
     """Test that exhausting retries on a single node raises ConnectionError."""
     server, port, servicer = retry_server
     # Only 1 retry allowed, but server fails 2 times
-    config = ClientConfig(
+    config = kv_store.client.ClientConfig(
         seed_nodes=[f"localhost:{port}"],
         timeout=5.0,
         retry_count=1,
         retry_delay=0.05,
     )
 
-    async with KVClient(config) as client:
+    async with kv_store.client.KVClient(config) as client:
         with pytest.raises(ConnectionError, match="All seed nodes exhausted"):
             await client.put("fail-key", b"fail-value")
 
@@ -298,14 +301,18 @@ async def failover_servers():
     # First server - always unavailable
     bad_servicer = AlwaysUnavailableServicer()
     bad_server = grpc.aio.server()
-    kvstore_pb2_grpc.add_KVStoreServiceServicer_to_server(bad_servicer, bad_server)
+    kvstore_pb2_grpc.add_KVStoreServiceServicer_to_server(
+        bad_servicer, bad_server
+    )
     bad_port = bad_server.add_insecure_port("[::]:0")
     await bad_server.start()
 
     # Second server - works normally
     good_servicer = MockKVStoreServicer()
     good_server = grpc.aio.server()
-    kvstore_pb2_grpc.add_KVStoreServiceServicer_to_server(good_servicer, good_server)
+    kvstore_pb2_grpc.add_KVStoreServiceServicer_to_server(
+        good_servicer, good_server
+    )
     good_port = good_server.add_insecure_port("[::]:0")
     await good_server.start()
 
@@ -316,9 +323,11 @@ async def failover_servers():
 
 @pytest.mark.asyncio
 async def test_failover_to_next_seed_node(failover_servers):
-    """Test that client fails over to the next seed node when current is unavailable."""
+    """Test that client fails over to the next seed node when current is
+    unavailable.
+    """
     bad_port, good_port, good_servicer = failover_servers
-    config = ClientConfig(
+    config = kv_store.client.ClientConfig(
         seed_nodes=[f"localhost:{bad_port}", f"localhost:{good_port}"],
         timeout=2.0,
         retry_count=2,
@@ -326,8 +335,9 @@ async def test_failover_to_next_seed_node(failover_servers):
     )
 
     # Connect to the first (bad) node initially
-    client = KVClient(config)
-    # Manually connect to the bad node (skip channel_ready check for failover test)
+    client = kv_store.client.KVClient(config)
+    # Manually connect to the bad node (skip channel_ready check for failover
+    # test)
     channel = grpc.aio.insecure_channel(f"localhost:{bad_port}")
     client._channel = channel
     client._stub = kvstore_pb2_grpc.KVStoreServiceStub(channel)
@@ -350,16 +360,18 @@ async def test_failover_to_next_seed_node(failover_servers):
 
 @pytest.mark.asyncio
 async def test_context_manager_opens_and_closes(grpc_server):
-    """Test that the context manager properly opens and closes the connection."""
+    """Test that the context manager properly opens and closes the
+    connection.
+    """
     server, port, servicer = grpc_server
-    config = ClientConfig(
+    config = kv_store.client.ClientConfig(
         seed_nodes=[f"localhost:{port}"],
         timeout=5.0,
         retry_count=1,
         retry_delay=0.1,
     )
 
-    client = KVClient(config)
+    client = kv_store.client.KVClient(config)
     assert client._connected is False
 
     async with client:
@@ -376,9 +388,9 @@ async def test_context_manager_opens_and_closes(grpc_server):
 @pytest.mark.asyncio
 async def test_context_manager_with_no_seed_nodes():
     """Test that context manager raises when no seed nodes are configured."""
-    config = ClientConfig(seed_nodes=[], timeout=1.0)
+    config = kv_store.client.ClientConfig(seed_nodes=[], timeout=1.0)
     with pytest.raises(ConnectionError, match="No seed nodes configured"):
-        async with KVClient(config):
+        async with kv_store.client.KVClient(config):
             pass
 
 
@@ -411,14 +423,14 @@ async def slow_server():
 async def test_timeout_handling(slow_server):
     """Test that operations time out when the server is too slow."""
     server, port, servicer = slow_server
-    config = ClientConfig(
+    config = kv_store.client.ClientConfig(
         seed_nodes=[f"localhost:{port}"],
         timeout=0.5,
         retry_count=1,
         retry_delay=0.05,
     )
 
-    async with KVClient(config) as client:
+    async with kv_store.client.KVClient(config) as client:
         # The timeout should cause a DEADLINE_EXCEEDED error which is not
         # UNAVAILABLE, so it should raise grpc.RpcError directly
         with pytest.raises(grpc.RpcError):
@@ -434,16 +446,16 @@ async def test_timeout_handling(slow_server):
 async def test_put_with_vector_clock(grpc_server):
     """Test that put correctly sends a vector clock for read-modify-write."""
     server, port, servicer = grpc_server
-    config = ClientConfig(
+    config = kv_store.client.ClientConfig(
         seed_nodes=[f"localhost:{port}"],
         timeout=5.0,
         retry_count=1,
         retry_delay=0.1,
     )
 
-    clock = VectorClock(entries={"node-1": 1})
+    clock = kv_store.replication.vector_clock.VectorClock(entries={"node-1": 1})
 
-    async with KVClient(config) as client:
+    async with kv_store.client.KVClient(config) as client:
         resp = await client.put("key", b"value", vector_clock=clock)
         assert resp.success is True
         assert resp.vector_clock is not None
@@ -456,14 +468,16 @@ async def test_put_with_vector_clock(grpc_server):
 
 @pytest.mark.asyncio
 async def test_operation_without_connect_raises():
-    """Test that calling operations without connecting raises ConnectionError."""
-    config = ClientConfig(
+    """Test that calling operations without connecting raises
+    ConnectionError.
+    """
+    config = kv_store.client.ClientConfig(
         seed_nodes=["localhost:50051"],
         timeout=1.0,
         retry_count=1,
         retry_delay=0.1,
     )
-    client = KVClient(config)
+    client = kv_store.client.KVClient(config)
     with pytest.raises(ConnectionError, match="not connected"):
         await client.put("key", b"value")
 
@@ -477,14 +491,14 @@ async def test_operation_without_connect_raises():
 async def test_delete_with_consistency(grpc_server):
     """Test delete operation with a specified consistency level."""
     server, port, servicer = grpc_server
-    config = ClientConfig(
+    config = kv_store.client.ClientConfig(
         seed_nodes=[f"localhost:{port}"],
         timeout=5.0,
         retry_count=1,
         retry_delay=0.1,
     )
 
-    async with KVClient(config) as client:
+    async with kv_store.client.KVClient(config) as client:
         await client.put("del-key", b"del-value")
         resp = await client.delete("del-key", consistency="quorum")
         assert resp.success is True

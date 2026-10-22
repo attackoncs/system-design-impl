@@ -2,22 +2,23 @@
 
 import asyncio
 
+import notification_system.exceptions
+import notification_system.models
+import notification_system.queue
 import pytest
 
-from notification_system.exceptions import QueueFullError
-from notification_system.models import Channel, NotificationRequest, NotificationTask
-from notification_system.queue import MessageQueue
 
-
-def _make_task(channel: Channel, notification_id: str = "notif-1") -> NotificationTask:
+def _make_task(
+    channel: notification_system.models.Channel, notification_id: str = "notif-1"
+) -> notification_system.models.NotificationTask:
     """Helper to create a NotificationTask for testing."""
-    request = NotificationRequest(
+    request = notification_system.models.NotificationRequest(
         recipient_id="user1",
         channel=channel,
         title="Test",
         body="Test body",
     )
-    return NotificationTask(
+    return notification_system.models.NotificationTask(
         notification_id=notification_id,
         request=request,
         channel=channel,
@@ -29,36 +30,36 @@ class TestEnqueueDequeue:
 
     @pytest.mark.asyncio
     async def test_enqueue_and_dequeue_single_task(self):
-        mq = MessageQueue(max_depth=10)
-        task = _make_task(Channel.EMAIL)
+        mq = notification_system.queue.MessageQueue(max_depth=10)
+        task = _make_task(notification_system.models.Channel.EMAIL)
         await mq.enqueue(task)
-        result = await mq.dequeue(Channel.EMAIL)
+        result = await mq.dequeue(notification_system.models.Channel.EMAIL)
         assert result is task
 
     @pytest.mark.asyncio
     async def test_enqueue_multiple_and_dequeue_all(self):
-        mq = MessageQueue(max_depth=10)
-        tasks = [_make_task(Channel.SMS, f"notif-{i}") for i in range(5)]
+        mq = notification_system.queue.MessageQueue(max_depth=10)
+        tasks = [_make_task(notification_system.models.Channel.SMS, f"notif-{i}") for i in range(5)]
         for t in tasks:
             await mq.enqueue(t)
 
         results = []
         for _ in range(5):
-            results.append(await mq.dequeue(Channel.SMS))
+            results.append(await mq.dequeue(notification_system.models.Channel.SMS))
         assert results == tasks
 
     @pytest.mark.asyncio
     async def test_dequeue_nowait_returns_task_when_available(self):
-        mq = MessageQueue(max_depth=10)
-        task = _make_task(Channel.IOS_PUSH)
+        mq = notification_system.queue.MessageQueue(max_depth=10)
+        task = _make_task(notification_system.models.Channel.IOS_PUSH)
         await mq.enqueue(task)
-        result = mq.dequeue_nowait(Channel.IOS_PUSH)
+        result = mq.dequeue_nowait(notification_system.models.Channel.IOS_PUSH)
         assert result is task
 
     @pytest.mark.asyncio
     async def test_dequeue_nowait_returns_none_when_empty(self):
-        mq = MessageQueue(max_depth=10)
-        result = mq.dequeue_nowait(Channel.EMAIL)
+        mq = notification_system.queue.MessageQueue(max_depth=10)
+        result = mq.dequeue_nowait(notification_system.models.Channel.EMAIL)
         assert result is None
 
 
@@ -67,30 +68,32 @@ class TestFIFOOrdering:
 
     @pytest.mark.asyncio
     async def test_fifo_order_preserved(self):
-        mq = MessageQueue(max_depth=100)
-        tasks = [_make_task(Channel.ANDROID_PUSH, f"notif-{i}") for i in range(10)]
+        mq = notification_system.queue.MessageQueue(max_depth=100)
+        tasks = [
+            _make_task(notification_system.models.Channel.ANDROID_PUSH, f"notif-{i}") for i in range(10)
+        ]
         for t in tasks:
             await mq.enqueue(t)
 
         results = []
         for _ in range(10):
-            results.append(await mq.dequeue(Channel.ANDROID_PUSH))
+            results.append(await mq.dequeue(notification_system.models.Channel.ANDROID_PUSH))
 
         assert results == tasks
 
     @pytest.mark.asyncio
     async def test_fifo_order_with_interleaved_enqueue_dequeue(self):
-        mq = MessageQueue(max_depth=100)
-        task1 = _make_task(Channel.EMAIL, "notif-1")
-        task2 = _make_task(Channel.EMAIL, "notif-2")
-        task3 = _make_task(Channel.EMAIL, "notif-3")
+        mq = notification_system.queue.MessageQueue(max_depth=100)
+        task1 = _make_task(notification_system.models.Channel.EMAIL, "notif-1")
+        task2 = _make_task(notification_system.models.Channel.EMAIL, "notif-2")
+        task3 = _make_task(notification_system.models.Channel.EMAIL, "notif-3")
 
         await mq.enqueue(task1)
         await mq.enqueue(task2)
-        result1 = await mq.dequeue(Channel.EMAIL)
+        result1 = await mq.dequeue(notification_system.models.Channel.EMAIL)
         await mq.enqueue(task3)
-        result2 = await mq.dequeue(Channel.EMAIL)
-        result3 = await mq.dequeue(Channel.EMAIL)
+        result2 = await mq.dequeue(notification_system.models.Channel.EMAIL)
+        result3 = await mq.dequeue(notification_system.models.Channel.EMAIL)
 
         assert result1 is task1
         assert result2 is task2
@@ -102,47 +105,47 @@ class TestMaxDepthEnforcement:
 
     @pytest.mark.asyncio
     async def test_enqueue_up_to_max_depth_succeeds(self):
-        mq = MessageQueue(max_depth=5)
+        mq = notification_system.queue.MessageQueue(max_depth=5)
         for i in range(5):
-            await mq.enqueue(_make_task(Channel.EMAIL, f"notif-{i}"))
-        assert mq.depth(Channel.EMAIL) == 5
+            await mq.enqueue(_make_task(notification_system.models.Channel.EMAIL, f"notif-{i}"))
+        assert mq.depth(notification_system.models.Channel.EMAIL) == 5
 
     @pytest.mark.asyncio
     async def test_enqueue_beyond_max_depth_raises_queue_full_error(self):
-        mq = MessageQueue(max_depth=3)
+        mq = notification_system.queue.MessageQueue(max_depth=3)
         for i in range(3):
-            await mq.enqueue(_make_task(Channel.SMS, f"notif-{i}"))
+            await mq.enqueue(_make_task(notification_system.models.Channel.SMS, f"notif-{i}"))
 
-        with pytest.raises(QueueFullError) as exc_info:
-            await mq.enqueue(_make_task(Channel.SMS, "notif-overflow"))
+        with pytest.raises(notification_system.exceptions.QueueFullError) as exc_info:
+            await mq.enqueue(_make_task(notification_system.models.Channel.SMS, "notif-overflow"))
 
         assert exc_info.value.channel == "sms"
         assert exc_info.value.max_depth == 3
 
     @pytest.mark.asyncio
     async def test_enqueue_succeeds_after_dequeue_frees_space(self):
-        mq = MessageQueue(max_depth=2)
-        await mq.enqueue(_make_task(Channel.EMAIL, "notif-1"))
-        await mq.enqueue(_make_task(Channel.EMAIL, "notif-2"))
+        mq = notification_system.queue.MessageQueue(max_depth=2)
+        await mq.enqueue(_make_task(notification_system.models.Channel.EMAIL, "notif-1"))
+        await mq.enqueue(_make_task(notification_system.models.Channel.EMAIL, "notif-2"))
 
         # Queue is full
-        with pytest.raises(QueueFullError):
-            await mq.enqueue(_make_task(Channel.EMAIL, "notif-3"))
+        with pytest.raises(notification_system.exceptions.QueueFullError):
+            await mq.enqueue(_make_task(notification_system.models.Channel.EMAIL, "notif-3"))
 
         # Dequeue one to free space
-        await mq.dequeue(Channel.EMAIL)
+        await mq.dequeue(notification_system.models.Channel.EMAIL)
 
         # Now enqueue should succeed
-        await mq.enqueue(_make_task(Channel.EMAIL, "notif-3"))
-        assert mq.depth(Channel.EMAIL) == 2
+        await mq.enqueue(_make_task(notification_system.models.Channel.EMAIL, "notif-3"))
+        assert mq.depth(notification_system.models.Channel.EMAIL) == 2
 
     @pytest.mark.asyncio
     async def test_queue_full_error_message_contains_channel_and_depth(self):
-        mq = MessageQueue(max_depth=1)
-        await mq.enqueue(_make_task(Channel.IOS_PUSH, "notif-1"))
+        mq = notification_system.queue.MessageQueue(max_depth=1)
+        await mq.enqueue(_make_task(notification_system.models.Channel.IOS_PUSH, "notif-1"))
 
-        with pytest.raises(QueueFullError) as exc_info:
-            await mq.enqueue(_make_task(Channel.IOS_PUSH, "notif-2"))
+        with pytest.raises(notification_system.exceptions.QueueFullError) as exc_info:
+            await mq.enqueue(_make_task(notification_system.models.Channel.IOS_PUSH, "notif-2"))
 
         error_msg = str(exc_info.value)
         assert "ios_push" in error_msg
@@ -154,66 +157,66 @@ class TestDepthIsFullIsEmpty:
 
     @pytest.mark.asyncio
     async def test_depth_starts_at_zero(self):
-        mq = MessageQueue(max_depth=10)
-        for channel in Channel:
+        mq = notification_system.queue.MessageQueue(max_depth=10)
+        for channel in notification_system.models.Channel:
             assert mq.depth(channel) == 0
 
     @pytest.mark.asyncio
     async def test_depth_increases_on_enqueue(self):
-        mq = MessageQueue(max_depth=10)
-        await mq.enqueue(_make_task(Channel.EMAIL, "notif-1"))
-        assert mq.depth(Channel.EMAIL) == 1
-        await mq.enqueue(_make_task(Channel.EMAIL, "notif-2"))
-        assert mq.depth(Channel.EMAIL) == 2
+        mq = notification_system.queue.MessageQueue(max_depth=10)
+        await mq.enqueue(_make_task(notification_system.models.Channel.EMAIL, "notif-1"))
+        assert mq.depth(notification_system.models.Channel.EMAIL) == 1
+        await mq.enqueue(_make_task(notification_system.models.Channel.EMAIL, "notif-2"))
+        assert mq.depth(notification_system.models.Channel.EMAIL) == 2
 
     @pytest.mark.asyncio
     async def test_depth_decreases_on_dequeue(self):
-        mq = MessageQueue(max_depth=10)
-        await mq.enqueue(_make_task(Channel.EMAIL, "notif-1"))
-        await mq.enqueue(_make_task(Channel.EMAIL, "notif-2"))
-        await mq.dequeue(Channel.EMAIL)
-        assert mq.depth(Channel.EMAIL) == 1
+        mq = notification_system.queue.MessageQueue(max_depth=10)
+        await mq.enqueue(_make_task(notification_system.models.Channel.EMAIL, "notif-1"))
+        await mq.enqueue(_make_task(notification_system.models.Channel.EMAIL, "notif-2"))
+        await mq.dequeue(notification_system.models.Channel.EMAIL)
+        assert mq.depth(notification_system.models.Channel.EMAIL) == 1
 
     @pytest.mark.asyncio
     async def test_is_empty_true_initially(self):
-        mq = MessageQueue(max_depth=10)
-        for channel in Channel:
+        mq = notification_system.queue.MessageQueue(max_depth=10)
+        for channel in notification_system.models.Channel:
             assert mq.is_empty(channel) is True
 
     @pytest.mark.asyncio
     async def test_is_empty_false_after_enqueue(self):
-        mq = MessageQueue(max_depth=10)
-        await mq.enqueue(_make_task(Channel.SMS))
-        assert mq.is_empty(Channel.SMS) is False
+        mq = notification_system.queue.MessageQueue(max_depth=10)
+        await mq.enqueue(_make_task(notification_system.models.Channel.SMS))
+        assert mq.is_empty(notification_system.models.Channel.SMS) is False
 
     @pytest.mark.asyncio
     async def test_is_empty_true_after_all_dequeued(self):
-        mq = MessageQueue(max_depth=10)
-        await mq.enqueue(_make_task(Channel.SMS))
-        await mq.dequeue(Channel.SMS)
-        assert mq.is_empty(Channel.SMS) is True
+        mq = notification_system.queue.MessageQueue(max_depth=10)
+        await mq.enqueue(_make_task(notification_system.models.Channel.SMS))
+        await mq.dequeue(notification_system.models.Channel.SMS)
+        assert mq.is_empty(notification_system.models.Channel.SMS) is True
 
     @pytest.mark.asyncio
     async def test_is_full_false_initially(self):
-        mq = MessageQueue(max_depth=10)
-        for channel in Channel:
+        mq = notification_system.queue.MessageQueue(max_depth=10)
+        for channel in notification_system.models.Channel:
             assert mq.is_full(channel) is False
 
     @pytest.mark.asyncio
     async def test_is_full_true_at_max_depth(self):
-        mq = MessageQueue(max_depth=3)
+        mq = notification_system.queue.MessageQueue(max_depth=3)
         for i in range(3):
-            await mq.enqueue(_make_task(Channel.ANDROID_PUSH, f"notif-{i}"))
-        assert mq.is_full(Channel.ANDROID_PUSH) is True
+            await mq.enqueue(_make_task(notification_system.models.Channel.ANDROID_PUSH, f"notif-{i}"))
+        assert mq.is_full(notification_system.models.Channel.ANDROID_PUSH) is True
 
     @pytest.mark.asyncio
     async def test_is_full_false_after_dequeue(self):
-        mq = MessageQueue(max_depth=2)
-        await mq.enqueue(_make_task(Channel.ANDROID_PUSH, "notif-1"))
-        await mq.enqueue(_make_task(Channel.ANDROID_PUSH, "notif-2"))
-        assert mq.is_full(Channel.ANDROID_PUSH) is True
-        await mq.dequeue(Channel.ANDROID_PUSH)
-        assert mq.is_full(Channel.ANDROID_PUSH) is False
+        mq = notification_system.queue.MessageQueue(max_depth=2)
+        await mq.enqueue(_make_task(notification_system.models.Channel.ANDROID_PUSH, "notif-1"))
+        await mq.enqueue(_make_task(notification_system.models.Channel.ANDROID_PUSH, "notif-2"))
+        assert mq.is_full(notification_system.models.Channel.ANDROID_PUSH) is True
+        await mq.dequeue(notification_system.models.Channel.ANDROID_PUSH)
+        assert mq.is_full(notification_system.models.Channel.ANDROID_PUSH) is False
 
 
 class TestPerChannelIsolation:
@@ -221,49 +224,49 @@ class TestPerChannelIsolation:
 
     @pytest.mark.asyncio
     async def test_separate_queues_per_channel(self):
-        mq = MessageQueue(max_depth=10)
-        email_task = _make_task(Channel.EMAIL, "email-1")
-        sms_task = _make_task(Channel.SMS, "sms-1")
+        mq = notification_system.queue.MessageQueue(max_depth=10)
+        email_task = _make_task(notification_system.models.Channel.EMAIL, "email-1")
+        sms_task = _make_task(notification_system.models.Channel.SMS, "sms-1")
 
         await mq.enqueue(email_task)
         await mq.enqueue(sms_task)
 
-        assert mq.depth(Channel.EMAIL) == 1
-        assert mq.depth(Channel.SMS) == 1
-        assert mq.depth(Channel.IOS_PUSH) == 0
-        assert mq.depth(Channel.ANDROID_PUSH) == 0
+        assert mq.depth(notification_system.models.Channel.EMAIL) == 1
+        assert mq.depth(notification_system.models.Channel.SMS) == 1
+        assert mq.depth(notification_system.models.Channel.IOS_PUSH) == 0
+        assert mq.depth(notification_system.models.Channel.ANDROID_PUSH) == 0
 
     @pytest.mark.asyncio
     async def test_dequeue_from_correct_channel(self):
-        mq = MessageQueue(max_depth=10)
-        email_task = _make_task(Channel.EMAIL, "email-1")
-        sms_task = _make_task(Channel.SMS, "sms-1")
+        mq = notification_system.queue.MessageQueue(max_depth=10)
+        email_task = _make_task(notification_system.models.Channel.EMAIL, "email-1")
+        sms_task = _make_task(notification_system.models.Channel.SMS, "sms-1")
 
         await mq.enqueue(email_task)
         await mq.enqueue(sms_task)
 
-        result = await mq.dequeue(Channel.EMAIL)
+        result = await mq.dequeue(notification_system.models.Channel.EMAIL)
         assert result is email_task
-        result = await mq.dequeue(Channel.SMS)
+        result = await mq.dequeue(notification_system.models.Channel.SMS)
         assert result is sms_task
 
     @pytest.mark.asyncio
     async def test_full_channel_does_not_affect_others(self):
-        mq = MessageQueue(max_depth=2)
+        mq = notification_system.queue.MessageQueue(max_depth=2)
         # Fill the EMAIL queue
-        await mq.enqueue(_make_task(Channel.EMAIL, "email-1"))
-        await mq.enqueue(_make_task(Channel.EMAIL, "email-2"))
-        assert mq.is_full(Channel.EMAIL) is True
+        await mq.enqueue(_make_task(notification_system.models.Channel.EMAIL, "email-1"))
+        await mq.enqueue(_make_task(notification_system.models.Channel.EMAIL, "email-2"))
+        assert mq.is_full(notification_system.models.Channel.EMAIL) is True
 
         # Other channels should still accept tasks
-        await mq.enqueue(_make_task(Channel.SMS, "sms-1"))
-        assert mq.is_full(Channel.SMS) is False
-        assert mq.depth(Channel.SMS) == 1
+        await mq.enqueue(_make_task(notification_system.models.Channel.SMS, "sms-1"))
+        assert mq.is_full(notification_system.models.Channel.SMS) is False
+        assert mq.depth(notification_system.models.Channel.SMS) == 1
 
     @pytest.mark.asyncio
     async def test_all_four_channels_independent(self):
-        mq = MessageQueue(max_depth=10)
-        channels = list(Channel)
+        mq = notification_system.queue.MessageQueue(max_depth=10)
+        channels = list(notification_system.models.Channel)
         tasks = {}
 
         for ch in channels:
@@ -277,16 +280,18 @@ class TestPerChannelIsolation:
 
     @pytest.mark.asyncio
     async def test_dequeue_blocks_on_empty_channel(self):
-        """Verify dequeue blocks when queue is empty and unblocks on enqueue."""
-        mq = MessageQueue(max_depth=10)
-        task = _make_task(Channel.EMAIL, "delayed-task")
+        """Verify dequeue blocks when queue is empty and unblocks on
+        enqueue.
+        """
+        mq = notification_system.queue.MessageQueue(max_depth=10)
+        task = _make_task(notification_system.models.Channel.EMAIL, "delayed-task")
 
         async def delayed_enqueue():
             await asyncio.sleep(0.05)
             await mq.enqueue(task)
 
         # Start dequeue (will block) and delayed enqueue concurrently
-        dequeue_coro = mq.dequeue(Channel.EMAIL)
+        dequeue_coro = mq.dequeue(notification_system.models.Channel.EMAIL)
         enqueue_task = asyncio.create_task(delayed_enqueue())
 
         result = await asyncio.wait_for(dequeue_coro, timeout=1.0)

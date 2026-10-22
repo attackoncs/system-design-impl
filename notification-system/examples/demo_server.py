@@ -10,7 +10,8 @@ Usage:
 
 Endpoints:
     POST /notifications          - Send a notification (201, 400, 429)
-    GET  /notifications/<id>     - Get delivery status and event history (200, 404)
+    GET  /notifications/<id>     - Get delivery status and event history (200,
+    404)
     GET  /analytics              - Aggregate analytics (200)
     GET  /settings/<user_id>     - Get user preferences (200)
     PUT  /settings/<user_id>     - Update user preferences (200)
@@ -21,75 +22,64 @@ Endpoints:
 from __future__ import annotations
 
 import asyncio
+import http.server
 import json
-import sys
 import os
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import sys
+import urllib.parse
 from typing import Any
-from urllib.parse import urlparse
 
 # Add the src directory to the path so we can import the library
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from notification_system import (
-    Channel,
-    ContactInfo,
-    ContactInfoStore,
-    DuplicateNotificationError,
-    NotificationConfig,
-    NotificationRequest,
-    NotificationService,
-    NotificationSettings,
-    NotificationTemplate,
-    QueueFullError,
-    RateLimitExceededError,
-    TemplateRenderError,
-    ValidationError,
-)
-from notification_system.tracker import EventTracker
-from notification_system.templates import TemplateRegistry
-
+import notification_system
+import notification_system.templates
+import notification_system.tracker
 
 # Channel name mapping for user-friendly input
 CHANNEL_MAP = {
-    "ios_push": Channel.IOS_PUSH,
-    "android_push": Channel.ANDROID_PUSH,
-    "sms": Channel.SMS,
-    "email": Channel.EMAIL,
+    "ios_push": notification_system.Channel.IOS_PUSH,
+    "android_push": notification_system.Channel.ANDROID_PUSH,
+    "sms": notification_system.Channel.SMS,
+    "email": notification_system.Channel.EMAIL,
 }
 
 
-def create_service() -> NotificationService:
+def create_service() -> notification_system.NotificationService:
     """Create and configure a NotificationService with demo data."""
-    config = NotificationConfig()
-    contacts = ContactInfoStore()
-    settings = NotificationSettings()
-    tracker = EventTracker()
-    template_registry = TemplateRegistry()
+    config = notification_system.NotificationConfig()
+    contacts = notification_system.ContactInfoStore()
+    settings = notification_system.NotificationSettings()
+    tracker = notification_system.tracker.EventTracker()
+    template_registry = notification_system.templates.TemplateRegistry()
 
     # Seed some demo contact data
-    contacts.set(ContactInfo(
-        user_id="user_1",
-        email="user1@example.com",
-        phone="+1234567890",
-        device_tokens=["ios_token_abc123"],
-    ))
-    contacts.set(ContactInfo(
-        user_id="user_2",
-        email="user2@example.com",
-        phone="+0987654321",
-        device_tokens=["android_token_xyz789"],
-    ))
+    contacts.set(
+        notification_system.ContactInfo(
+            user_id="user_1",
+            email="user1@example.com",
+            phone="+1234567890",
+            device_tokens=["ios_token_abc123"],
+        )
+    )
+    contacts.set(
+        notification_system.ContactInfo(
+            user_id="user_2",
+            email="user2@example.com",
+            phone="+0987654321",
+            device_tokens=["android_token_xyz789"],
+        )
+    )
 
     # Seed a demo template
-    welcome_template = NotificationTemplate(
+    welcome_template = notification_system.NotificationTemplate(
         template_id="welcome",
         title="Welcome, {name}!",
         body="Hello {name}, thanks for joining {app_name}.",
     )
     template_registry.register(welcome_template)
 
-    service = NotificationService(
+    service = notification_system.NotificationService(
         config=config,
         contacts=contacts,
         settings=settings,
@@ -106,21 +96,21 @@ SERVICE = create_service()
 LOOP = asyncio.new_event_loop()
 
 
-class NotificationHandler(BaseHTTPRequestHandler):
+class NotificationHandler(http.server.BaseHTTPRequestHandler):
     """HTTP request handler for the notification system REST API."""
 
     def do_GET(self) -> None:
         """Handle GET requests."""
-        parsed = urlparse(self.path)
+        parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/")
 
         if path.startswith("/notifications/"):
-            notification_id = path[len("/notifications/"):]
+            notification_id = path[len("/notifications/") :]
             self._handle_get_notification(notification_id)
         elif path == "/analytics":
             self._handle_get_analytics()
         elif path.startswith("/settings/"):
-            user_id = path[len("/settings/"):]
+            user_id = path[len("/settings/") :]
             self._handle_get_settings(user_id)
         elif path == "/templates":
             self._handle_list_templates()
@@ -129,7 +119,7 @@ class NotificationHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         """Handle POST requests."""
-        parsed = urlparse(self.path)
+        parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/")
 
         if path == "/notifications":
@@ -141,11 +131,11 @@ class NotificationHandler(BaseHTTPRequestHandler):
 
     def do_PUT(self) -> None:
         """Handle PUT requests."""
-        parsed = urlparse(self.path)
+        parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/")
 
         if path.startswith("/settings/"):
-            user_id = path[len("/settings/"):]
+            user_id = path[len("/settings/") :]
             self._handle_update_settings(user_id)
         else:
             self._send_error(404, "Not found")
@@ -185,7 +175,9 @@ class NotificationHandler(BaseHTTPRequestHandler):
         recipient_id = data.get("recipient_id")
         channel_str = data.get("channel")
         if not recipient_id or not channel_str:
-            self._send_error(400, "Missing required fields: recipient_id, channel")
+            self._send_error(
+                400, "Missing required fields: recipient_id, channel"
+            )
             return
 
         # Parse channel
@@ -199,7 +191,7 @@ class NotificationHandler(BaseHTTPRequestHandler):
             return
 
         # Build the notification request
-        request = NotificationRequest(
+        request = notification_system.NotificationRequest(
             recipient_id=recipient_id,
             channel=channel,
             title=data.get("title", ""),
@@ -212,27 +204,30 @@ class NotificationHandler(BaseHTTPRequestHandler):
         # Send through the service pipeline (async)
         try:
             notification_id = LOOP.run_until_complete(SERVICE.send(request))
-        except ValidationError as e:
+        except notification_system.ValidationError as e:
             self._send_error(400, str(e))
             return
-        except RateLimitExceededError as e:
+        except notification_system.RateLimitExceededError as e:
             self._send_error(429, str(e))
             return
-        except DuplicateNotificationError as e:
+        except notification_system.DuplicateNotificationError as e:
             self._send_error(409, str(e))
             return
-        except QueueFullError as e:
+        except notification_system.QueueFullError as e:
             self._send_error(503, str(e))
             return
-        except TemplateRenderError as e:
+        except notification_system.TemplateRenderError as e:
             self._send_error(400, str(e))
             return
 
-        self._send_json(201, {
-            "notification_id": notification_id,
-            "status": "queued",
-            "message": "Notification enqueued successfully",
-        })
+        self._send_json(
+            201,
+            {
+                "notification_id": notification_id,
+                "status": "queued",
+                "message": "Notification enqueued successfully",
+            },
+        )
 
     def _handle_get_notification(self, notification_id: str) -> None:
         """GET /notifications/<id> - Get delivery status and event history."""
@@ -253,11 +248,14 @@ class NotificationHandler(BaseHTTPRequestHandler):
             for event in history
         ]
 
-        self._send_json(200, {
-            "notification_id": notification_id,
-            "current_status": status.value,
-            "events": events,
-        })
+        self._send_json(
+            200,
+            {
+                "notification_id": notification_id,
+                "current_status": status.value,
+                "events": events,
+            },
+        )
 
     def _handle_get_analytics(self) -> None:
         """GET /analytics - Aggregate analytics."""
@@ -266,24 +264,32 @@ class NotificationHandler(BaseHTTPRequestHandler):
 
         # Per-channel stats
         channel_stats = {}
-        for channel in Channel:
+        for channel in notification_system.Channel:
             stats = tracker.get_channel_stats(channel)
             channel_stats[channel.value] = stats
 
-        self._send_json(200, {
-            "aggregate": counts,
-            "per_channel": channel_stats,
-        })
+        self._send_json(
+            200,
+            {
+                "aggregate": counts,
+                "per_channel": channel_stats,
+            },
+        )
 
     def _handle_get_settings(self, user_id: str) -> None:
         """GET /settings/<user_id> - Get user preferences."""
         settings = SERVICE.settings
         preferences = settings.get_all_preferences(user_id)
-        result = {channel.value: opted_in for channel, opted_in in preferences.items()}
-        self._send_json(200, {
-            "user_id": user_id,
-            "preferences": result,
-        })
+        result = {
+            channel.value: opted_in for channel, opted_in in preferences.items()
+        }
+        self._send_json(
+            200,
+            {
+                "user_id": user_id,
+                "preferences": result,
+            },
+        )
 
     def _handle_update_settings(self, user_id: str) -> None:
         """PUT /settings/<user_id> - Update user preferences."""
@@ -296,7 +302,7 @@ class NotificationHandler(BaseHTTPRequestHandler):
         settings = SERVICE.settings
 
         # Parse and apply preferences
-        updates: dict[Channel, bool] = {}
+        updates: dict[notification_system.Channel, bool] = {}
         for channel_str, opted_in in preferences.items():
             channel = CHANNEL_MAP.get(channel_str)
             if channel is None:
@@ -307,7 +313,9 @@ class NotificationHandler(BaseHTTPRequestHandler):
                 )
                 return
             if not isinstance(opted_in, bool):
-                self._send_error(400, f"Preference for '{channel_str}' must be a boolean")
+                self._send_error(
+                    400, f"Preference for '{channel_str}' must be a boolean"
+                )
                 return
             updates[channel] = opted_in
 
@@ -315,12 +323,17 @@ class NotificationHandler(BaseHTTPRequestHandler):
 
         # Return updated preferences
         all_prefs = settings.get_all_preferences(user_id)
-        result = {channel.value: opted_in for channel, opted_in in all_prefs.items()}
-        self._send_json(200, {
-            "user_id": user_id,
-            "preferences": result,
-            "message": "Preferences updated successfully",
-        })
+        result = {
+            channel.value: opted_in for channel, opted_in in all_prefs.items()
+        }
+        self._send_json(
+            200,
+            {
+                "user_id": user_id,
+                "preferences": result,
+                "message": "Preferences updated successfully",
+            },
+        )
 
     def _handle_create_template(self) -> None:
         """POST /templates - Create a template."""
@@ -337,20 +350,23 @@ class NotificationHandler(BaseHTTPRequestHandler):
             self._send_error(400, "Missing required field: template_id")
             return
 
-        template = NotificationTemplate(
+        template = notification_system.NotificationTemplate(
             template_id=template_id,
             title=title,
             body=body,
         )
         SERVICE.templates.register(template)
 
-        self._send_json(201, {
-            "template_id": template_id,
-            "title": title,
-            "body": body,
-            "required_keys": sorted(template.get_required_keys()),
-            "message": "Template created successfully",
-        })
+        self._send_json(
+            201,
+            {
+                "template_id": template_id,
+                "title": title,
+                "body": body,
+                "required_keys": sorted(template.get_required_keys()),
+                "message": "Template created successfully",
+            },
+        )
 
     def _handle_list_templates(self) -> None:
         """GET /templates - List all templates."""
@@ -360,20 +376,20 @@ class NotificationHandler(BaseHTTPRequestHandler):
         for tid in template_ids:
             tmpl = registry.get(tid)
             if tmpl:
-                templates.append({
-                    "template_id": tmpl.template_id,
-                    "title": tmpl.title_template,
-                    "body": tmpl.body_template,
-                    "required_keys": sorted(tmpl.get_required_keys()),
-                })
+                templates.append(
+                    {
+                        "template_id": tmpl.template_id,
+                        "title": tmpl.title_template,
+                        "body": tmpl.body_template,
+                        "required_keys": sorted(tmpl.get_required_keys()),
+                    }
+                )
 
         self._send_json(200, {"templates": templates})
 
     def log_message(self, format: str, *args: Any) -> None:
         """Override to provide cleaner log output."""
-        sys.stderr.write(
-            f"[{self.log_date_time_string()}] {format % args}\n"
-        )
+        sys.stderr.write(f"[{self.log_date_time_string()}] {format % args}\n")
 
 
 def run_server(host: str = "127.0.0.1", port: int = 8000) -> None:
@@ -383,9 +399,9 @@ def run_server(host: str = "127.0.0.1", port: int = 8000) -> None:
         host: The host address to bind to.
         port: The port number to listen on.
     """
-    server = HTTPServer((host, port), NotificationHandler)
-    print(f"Notification System Demo Server")
-    print(f"================================")
+    server = http.server.HTTPServer((host, port), NotificationHandler)
+    print("Notification System Demo Server")
+    print("================================")
     print(f"Listening on http://{host}:{port}")
     print()
     print("Available endpoints:")

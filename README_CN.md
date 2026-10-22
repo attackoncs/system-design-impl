@@ -6,6 +6,8 @@
 
 | 章节 | 主题 | 状态 | 说明 |
 |------|------|------|------|
+| 02 | [从零扩容](./scale-from-zero/) | ✅ 参考实验完成 | 1/8/10进程HTTP演进、无状态会话、负载均衡、缓存/读副本、分片与持久任务；11项测试 |
+| 03 | [容量估算](./capacity-estimation/) | ✅ 参考实现完成 | 显式单位Decimal QPS/存储/带宽/缓存/节点/可用性预算、场景CLI与敏感性分析；9项测试 |
 | 05 | [Rate Limiter](./rate-limiter/) | ✅ 完成 | 支持 5 种算法、Redis/内存后端、FastAPI/Flask 集成 |
 | 06 | [Consistent Hashing](./consistent-hashing/) | ✅ 完成 | 虚拟节点、O(log N) 查找、分布统计 |
 | 07 | [Key-Value Store](./key-value-store/) | ✅ 完成 | Dynamo 风格、LSM-tree 存储、仲裁一致性、Gossip 协议、gRPC |
@@ -27,12 +29,18 @@
 | 23 | [酒店预订系统](./hotel-reservation-system/) | ✅ 参考实现完成 | 酒店分片、多夜原子库存、超售上限、价格快照、幂等预订及模拟支付/退款恢复；13项测试 |
 | 24 | [分布式邮件服务](./distributed-email-service/) | ✅ 参考实现完成 | 本机HTTP/SMTP收发、独立附件对象、用户分片、异步元数据副本、已读冲突保护与字段搜索；9项测试 |
 | 25 | [类S3对象存储](./object-storage-system/) | ✅ 参考实现完成 | 版本化桶、可恢复多部分上传、小块聚合、分片分页快照、三数据副本与修复回收；10项测试 |
+| 26 | [游戏排行榜](./gaming-leaderboard-system/) | ✅ 参考实现完成 | 可信月赛日志、Redis主备积分分片、同分竞赛名次、精确全局排名/邻居及重放；8项测试 |
+| 27 | [支付系统](./payment-system/) | ✅ 参考实现完成 | 模拟托管收款/出款/退款、不可变复式账本、未知结果恢复、事务outbox与异步对账；13项测试 |
+| 28 | [数字钱包](./digital-wallet-system/) | ✅ 参考实现完成 | 分片合成余额转账、TCC恢复、重放/历史/快照、固定协调者HTTP日志仲裁与在途对账；14项测试 |
+| 29 | [证券交易系统](./stock-exchange-system/) | ✅ 参考实现完成 | 模拟价格时间优先撮合、资金/持仓冻结、主备定序重放、行情增量重同步与报告；13项测试 |
 
 ## 计划实现
 
+第1章社群介绍、第4章面试框架属于阅读章节，不列为独立系统实现。
+
 | 章节 | 主题 | 状态 |
 |------|------|------|
-| 26–29 | 后续章节任务 | 📋 已规划 |
+| 30 | The Learning Continues | 📚 延伸阅读，非独立系统 |
 
 ## 项目结构
 
@@ -40,6 +48,8 @@
 sdi-implement/
 ├── README.md                    # 本文件
 ├── System Design Interview.md   # 原书内容参考
+├── scale-from-zero/             # 第02章：本机HTTP分阶段扩容实验
+├── capacity-estimation/         # 第03章：显式单位容量与可用性估算
 ├── rate-limiter/                # 第05章：限流器
 │   ├── README.md               # 英文使用文档
 │   ├── README_CN.md            # 中文使用文档
@@ -144,6 +154,10 @@ sdi-implement/
 ├── hotel-reservation-system/    # 第23章：原子库存与支付补偿
 ├── distributed-email-service/   # 第24章：本机SMTP、元数据副本与邮箱搜索
 ├── object-storage-system/       # 第25章：版本、分段上传与数据副本修复
+├── gaming-leaderboard-system/   # 第26章：Redis月赛排名与权威日志恢复
+├── payment-system/              # 第27章：模拟支付、复式账本与对账恢复
+├── digital-wallet-system/       # 第28章：分片转账、事件重放与TCC恢复
+├── stock-exchange-system/       # 第29章：限价撮合、主备重放与行情恢复
 └── .gitignore
 ```
 

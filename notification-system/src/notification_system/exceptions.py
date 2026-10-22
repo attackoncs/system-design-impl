@@ -1,7 +1,7 @@
 """Custom exception hierarchy for the notification system.
 
-All exceptions inherit from NotificationError, providing a consistent
-base for error handling across the notification pipeline.
+All exceptions inherit from NotificationError, providing a consistent base for
+error handling across the notification pipeline.
 """
 
 from __future__ import annotations
@@ -35,7 +35,9 @@ class QueueFullError(NotificationError):
 class RateLimitExceededError(NotificationError):
     """Raised when a notification exceeds the rate limit for a recipient."""
 
-    def __init__(self, user_id: str, channel: str, limit: int, window: float) -> None:
+    def __init__(
+        self, user_id: str, channel: str, limit: int, window: float
+    ) -> None:
         self.user_id = user_id
         self.channel = channel
         self.limit = limit
@@ -71,7 +73,11 @@ class DeliveryError(NotificationError):
     """Raised when a provider fails to deliver a notification."""
 
     def __init__(
-        self, notification_id: str, channel: str, reason: str, retryable: bool = True
+        self,
+        notification_id: str,
+        channel: str,
+        reason: str,
+        retryable: bool = True,
     ) -> None:
         self.notification_id = notification_id
         self.channel = channel

@@ -10,19 +10,17 @@ Tests cover:
 - Tombstone entry handling
 """
 
-import asyncio
 import time
 
+import kv_store.storage.memtable
+import kv_store.storage.sstable
 import pytest
-
-from kv_store.storage.memtable import MemTable
-from kv_store.storage.sstable import SSTable, SSTableEntry, SSTableMetadata
 
 
 @pytest.fixture
 def populated_memtable():
     """Create a MemTable with several entries for testing."""
-    mt = MemTable()
+    mt = kv_store.storage.memtable.MemTable()
     ts = time.time()
     mt.put("apple", b"red", ts)
     mt.put("banana", b"yellow", ts + 1)
@@ -38,7 +36,7 @@ def populated_memtable():
 @pytest.fixture
 def memtable_with_tombstone():
     """Create a MemTable with a tombstone entry."""
-    mt = MemTable()
+    mt = kv_store.storage.memtable.MemTable()
     ts = time.time()
     mt.put("alive", b"value1", ts)
     mt.put("deleted", b"value2", ts + 1)
@@ -51,7 +49,7 @@ def memtable_with_tombstone():
 async def sstable_path(tmp_path, populated_memtable):
     """Create an SSTable file and return its path."""
     file_path = str(tmp_path / "test.sst")
-    await SSTable.create_from_memtable(populated_memtable, file_path, level=0)
+    await kv_store.storage.sstable.SSTable.create_from_memtable(populated_memtable, file_path, level=0)
     return file_path
 
 
@@ -61,28 +59,37 @@ class TestSSTableCreation:
     async def test_create_from_memtable(self, tmp_path, populated_memtable):
         """Test that an SSTable can be created from a MemTable."""
         file_path = str(tmp_path / "test.sst")
-        sstable = await SSTable.create_from_memtable(populated_memtable, file_path, level=0)
+        sstable = await kv_store.storage.sstable.SSTable.create_from_memtable(
+            populated_memtable, file_path, level=0
+        )
         assert sstable is not None
         assert sstable.metadata.entry_count == 8
 
-    async def test_create_from_memtable_creates_file(self, tmp_path, populated_memtable):
+    async def test_create_from_memtable_creates_file(
+        self, tmp_path, populated_memtable
+    ):
         """Test that create_from_memtable actually creates a file on disk."""
         file_path = str(tmp_path / "subdir" / "test.sst")
-        await SSTable.create_from_memtable(populated_memtable, file_path, level=0)
+        await kv_store.storage.sstable.SSTable.create_from_memtable(
+            populated_memtable, file_path, level=0
+        )
         from pathlib import Path
+
         assert Path(file_path).exists()
 
     async def test_create_from_empty_memtable_raises(self, tmp_path):
         """Test that creating from an empty MemTable raises ValueError."""
-        mt = MemTable()
+        mt = kv_store.storage.memtable.MemTable()
         file_path = str(tmp_path / "empty.sst")
         with pytest.raises(ValueError, match="empty"):
-            await SSTable.create_from_memtable(mt, file_path, level=0)
+            await kv_store.storage.sstable.SSTable.create_from_memtable(mt, file_path, level=0)
 
     async def test_read_back_all_entries(self, tmp_path, populated_memtable):
         """Test that all entries can be read back from the SSTable."""
         file_path = str(tmp_path / "test.sst")
-        sstable = await SSTable.create_from_memtable(populated_memtable, file_path, level=0)
+        sstable = await kv_store.storage.sstable.SSTable.create_from_memtable(
+            populated_memtable, file_path, level=0
+        )
 
         entries = list(sstable.entries())
         assert len(entries) == 8
@@ -96,7 +103,9 @@ class TestSSTableGet:
     async def test_get_existing_key(self, tmp_path, populated_memtable):
         """Test that get returns the correct value for an existing key."""
         file_path = str(tmp_path / "test.sst")
-        sstable = await SSTable.create_from_memtable(populated_memtable, file_path, level=0)
+        sstable = await kv_store.storage.sstable.SSTable.create_from_memtable(
+            populated_memtable, file_path, level=0
+        )
 
         entry = await sstable.get("banana")
         assert entry is not None
@@ -107,7 +116,9 @@ class TestSSTableGet:
     async def test_get_nonexistent_key(self, tmp_path, populated_memtable):
         """Test that get returns None for a non-existent key."""
         file_path = str(tmp_path / "test.sst")
-        sstable = await SSTable.create_from_memtable(populated_memtable, file_path, level=0)
+        sstable = await kv_store.storage.sstable.SSTable.create_from_memtable(
+            populated_memtable, file_path, level=0
+        )
 
         entry = await sstable.get("zebra")
         assert entry is None
@@ -115,7 +126,9 @@ class TestSSTableGet:
     async def test_get_key_not_in_range(self, tmp_path, populated_memtable):
         """Test that get returns None for a key outside the min/max range."""
         file_path = str(tmp_path / "test.sst")
-        sstable = await SSTable.create_from_memtable(populated_memtable, file_path, level=0)
+        sstable = await kv_store.storage.sstable.SSTable.create_from_memtable(
+            populated_memtable, file_path, level=0
+        )
 
         # Key before min_key
         entry = await sstable.get("aaa")
@@ -128,7 +141,9 @@ class TestSSTableGet:
     async def test_get_first_key(self, tmp_path, populated_memtable):
         """Test getting the first key in the SSTable."""
         file_path = str(tmp_path / "test.sst")
-        sstable = await SSTable.create_from_memtable(populated_memtable, file_path, level=0)
+        sstable = await kv_store.storage.sstable.SSTable.create_from_memtable(
+            populated_memtable, file_path, level=0
+        )
 
         entry = await sstable.get("apple")
         assert entry is not None
@@ -138,7 +153,9 @@ class TestSSTableGet:
     async def test_get_last_key(self, tmp_path, populated_memtable):
         """Test getting the last key in the SSTable."""
         file_path = str(tmp_path / "test.sst")
-        sstable = await SSTable.create_from_memtable(populated_memtable, file_path, level=0)
+        sstable = await kv_store.storage.sstable.SSTable.create_from_memtable(
+            populated_memtable, file_path, level=0
+        )
 
         entry = await sstable.get("honeydew")
         assert entry is not None
@@ -152,17 +169,23 @@ class TestSSTableBloomFilter:
     async def test_may_contain_existing_key(self, tmp_path, populated_memtable):
         """Test that may_contain returns True for existing keys."""
         file_path = str(tmp_path / "test.sst")
-        sstable = await SSTable.create_from_memtable(populated_memtable, file_path, level=0)
+        sstable = await kv_store.storage.sstable.SSTable.create_from_memtable(
+            populated_memtable, file_path, level=0
+        )
 
         # All inserted keys must return True (no false negatives)
         assert sstable.may_contain("apple") is True
         assert sstable.may_contain("banana") is True
         assert sstable.may_contain("cherry") is True
 
-    async def test_may_contain_nonexistent_key(self, tmp_path, populated_memtable):
+    async def test_may_contain_nonexistent_key(
+        self, tmp_path, populated_memtable
+    ):
         """Test that may_contain can return False for non-existent keys."""
         file_path = str(tmp_path / "test.sst")
-        sstable = await SSTable.create_from_memtable(populated_memtable, file_path, level=0)
+        sstable = await kv_store.storage.sstable.SSTable.create_from_memtable(
+            populated_memtable, file_path, level=0
+        )
 
         # With a good bloom filter, most non-existent keys should return False
         # Test a batch and verify at least some return False
@@ -181,7 +204,9 @@ class TestSSTableEntries:
     async def test_entries_sorted_order(self, tmp_path, populated_memtable):
         """Test that entries iterator returns keys in sorted order."""
         file_path = str(tmp_path / "test.sst")
-        sstable = await SSTable.create_from_memtable(populated_memtable, file_path, level=0)
+        sstable = await kv_store.storage.sstable.SSTable.create_from_memtable(
+            populated_memtable, file_path, level=0
+        )
 
         entries = list(sstable.entries())
         keys = [e.key for e in entries]
@@ -190,7 +215,9 @@ class TestSSTableEntries:
     async def test_entries_values_correct(self, tmp_path, populated_memtable):
         """Test that entries have correct values."""
         file_path = str(tmp_path / "test.sst")
-        sstable = await SSTable.create_from_memtable(populated_memtable, file_path, level=0)
+        sstable = await kv_store.storage.sstable.SSTable.create_from_memtable(
+            populated_memtable, file_path, level=0
+        )
 
         entries = list(sstable.entries())
         entry_map = {e.key: e for e in entries}
@@ -206,7 +233,9 @@ class TestSSTableMetadata:
     async def test_metadata_populated(self, tmp_path, populated_memtable):
         """Test that metadata is correctly populated."""
         file_path = str(tmp_path / "test.sst")
-        sstable = await SSTable.create_from_memtable(populated_memtable, file_path, level=0)
+        sstable = await kv_store.storage.sstable.SSTable.create_from_memtable(
+            populated_memtable, file_path, level=0
+        )
 
         meta = sstable.metadata
         assert meta.file_path == file_path
@@ -220,7 +249,9 @@ class TestSSTableMetadata:
     async def test_metadata_level(self, tmp_path, populated_memtable):
         """Test that the level is correctly stored."""
         file_path = str(tmp_path / "test.sst")
-        sstable = await SSTable.create_from_memtable(populated_memtable, file_path, level=3)
+        sstable = await kv_store.storage.sstable.SSTable.create_from_memtable(
+            populated_memtable, file_path, level=3
+        )
 
         assert sstable.metadata.level == 3
 
@@ -231,7 +262,9 @@ class TestSSTableTombstones:
     async def test_tombstone_entry(self, tmp_path, memtable_with_tombstone):
         """Test that tombstone entries are correctly stored and retrieved."""
         file_path = str(tmp_path / "test.sst")
-        sstable = await SSTable.create_from_memtable(memtable_with_tombstone, file_path, level=0)
+        sstable = await kv_store.storage.sstable.SSTable.create_from_memtable(
+            memtable_with_tombstone, file_path, level=0
+        )
 
         entry = await sstable.get("deleted")
         assert entry is not None
@@ -239,10 +272,14 @@ class TestSSTableTombstones:
         assert entry.is_tombstone is True
         assert entry.value is None
 
-    async def test_non_tombstone_entries_alongside(self, tmp_path, memtable_with_tombstone):
+    async def test_non_tombstone_entries_alongside(
+        self, tmp_path, memtable_with_tombstone
+    ):
         """Test that non-tombstone entries work alongside tombstones."""
         file_path = str(tmp_path / "test.sst")
-        sstable = await SSTable.create_from_memtable(memtable_with_tombstone, file_path, level=0)
+        sstable = await kv_store.storage.sstable.SSTable.create_from_memtable(
+            memtable_with_tombstone, file_path, level=0
+        )
 
         entry = await sstable.get("alive")
         assert entry is not None
@@ -261,23 +298,25 @@ class TestSSTableOpenExisting:
     async def test_open_existing_file(self, tmp_path, populated_memtable):
         """Test that an existing SSTable file can be opened."""
         file_path = str(tmp_path / "test.sst")
-        await SSTable.create_from_memtable(populated_memtable, file_path, level=0)
+        await kv_store.storage.sstable.SSTable.create_from_memtable(
+            populated_memtable, file_path, level=0
+        )
 
         # Open the same file again
-        sstable2 = SSTable(file_path)
+        sstable2 = kv_store.storage.sstable.SSTable(file_path)
         assert sstable2.metadata.entry_count == 8
 
     def test_open_nonexistent_file_raises(self, tmp_path):
         """Test that opening a non-existent file raises FileNotFoundError."""
         with pytest.raises(FileNotFoundError):
-            SSTable(str(tmp_path / "nonexistent.sst"))
+            kv_store.storage.sstable.SSTable(str(tmp_path / "nonexistent.sst"))
 
     def test_open_invalid_file_raises(self, tmp_path):
         """Test that opening an invalid file raises ValueError."""
         bad_file = tmp_path / "bad.sst"
         bad_file.write_bytes(b"this is not an sstable")
         with pytest.raises(ValueError):
-            SSTable(str(bad_file))
+            kv_store.storage.sstable.SSTable(str(bad_file))
 
 
 class TestSSTableLargeDataset:
@@ -285,7 +324,7 @@ class TestSSTableLargeDataset:
 
     async def test_many_entries_sparse_index(self, tmp_path):
         """Test with enough entries to have multiple sparse index entries."""
-        mt = MemTable()
+        mt = kv_store.storage.memtable.MemTable()
         ts = time.time()
         # Insert 100 entries to ensure multiple index entries (every 16th)
         for i in range(100):
@@ -293,7 +332,7 @@ class TestSSTableLargeDataset:
             mt.put(key, f"value_{i}".encode(), ts + i)
 
         file_path = str(tmp_path / "large.sst")
-        sstable = await SSTable.create_from_memtable(mt, file_path, level=0)
+        sstable = await kv_store.storage.sstable.SSTable.create_from_memtable(mt, file_path, level=0)
 
         # Verify all entries can be retrieved
         for i in range(100):
@@ -304,14 +343,14 @@ class TestSSTableLargeDataset:
 
     async def test_many_entries_metadata(self, tmp_path):
         """Test metadata with many entries."""
-        mt = MemTable()
+        mt = kv_store.storage.memtable.MemTable()
         ts = time.time()
         for i in range(50):
             key = f"key_{i:04d}"
             mt.put(key, f"value_{i}".encode(), ts + i)
 
         file_path = str(tmp_path / "large.sst")
-        sstable = await SSTable.create_from_memtable(mt, file_path, level=1)
+        sstable = await kv_store.storage.sstable.SSTable.create_from_memtable(mt, file_path, level=1)
 
         assert sstable.metadata.entry_count == 50
         assert sstable.metadata.min_key == "key_0000"

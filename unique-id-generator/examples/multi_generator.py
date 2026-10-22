@@ -13,18 +13,13 @@ Scenario:
 Run: python examples/multi_generator.py
 """
 
+import pathlib
 import sys
-from pathlib import Path
 
 # Allow running directly without pip install
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
 
-from unique_id import (
-    SnowflakeGenerator,
-    SnowflakeConfig,
-    IDParser,
-    MonotonicClock,
-)
+import unique_id
 
 
 def main():
@@ -39,24 +34,24 @@ def main():
     # multiple nodes for demonstration.
 
     # Datacenter 0: US-East (machines 0, 1)
-    us_east_m0 = SnowflakeGenerator(
-        config=SnowflakeConfig(datacenter_id=0, machine_id=0)
+    us_east_m0 = unique_id.SnowflakeGenerator(
+        config=unique_id.SnowflakeConfig(datacenter_id=0, machine_id=0)
     )
-    us_east_m1 = SnowflakeGenerator(
-        config=SnowflakeConfig(datacenter_id=0, machine_id=1)
+    us_east_m1 = unique_id.SnowflakeGenerator(
+        config=unique_id.SnowflakeConfig(datacenter_id=0, machine_id=1)
     )
 
     # Datacenter 1: EU-West (machines 0, 1)
-    eu_west_m0 = SnowflakeGenerator(
-        config=SnowflakeConfig(datacenter_id=1, machine_id=0)
+    eu_west_m0 = unique_id.SnowflakeGenerator(
+        config=unique_id.SnowflakeConfig(datacenter_id=1, machine_id=0)
     )
-    eu_west_m1 = SnowflakeGenerator(
-        config=SnowflakeConfig(datacenter_id=1, machine_id=1)
+    eu_west_m1 = unique_id.SnowflakeGenerator(
+        config=unique_id.SnowflakeConfig(datacenter_id=1, machine_id=1)
     )
 
     # Datacenter 2: AP-South (machine 0)
-    ap_south_m0 = SnowflakeGenerator(
-        config=SnowflakeConfig(datacenter_id=2, machine_id=0)
+    ap_south_m0 = unique_id.SnowflakeGenerator(
+        config=unique_id.SnowflakeConfig(datacenter_id=2, machine_id=0)
     )
 
     generators = {
@@ -114,12 +109,12 @@ def main():
     # Datacenter name lookup
     datacenter_names = {0: "US-East", 1: "EU-West", 2: "AP-South"}
 
-    parser = IDParser()  # Default config matches our generators
+    parser = unique_id.IDParser()  # Default config matches our generators
 
     # Parse a sample from each generator
     sample_ids = [
-        all_ids[0],   # First ID from US-East/Machine-0
-        all_ids[5],   # First ID from US-East/Machine-1
+        all_ids[0],  # First ID from US-East/Machine-0
+        all_ids[5],  # First ID from US-East/Machine-1
         all_ids[10],  # First ID from EU-West/Machine-0
         all_ids[15],  # First ID from EU-West/Machine-1
         all_ids[20],  # First ID from AP-South/Machine-0
@@ -154,7 +149,7 @@ def main():
     #   - 4-bit machine: 16 machines per DC (vs 32)
     #   - 14-bit sequence: 16,384 IDs/ms/machine (vs 4,096)
 
-    custom_config = SnowflakeConfig(
+    custom_config = unique_id.SnowflakeConfig(
         timestamp_bits=42,
         datacenter_bits=3,
         machine_bits=4,
@@ -163,30 +158,45 @@ def main():
         machine_id=7,
     )
 
-    print(f"  Custom layout: {custom_config.timestamp_bits}t + "
-          f"{custom_config.datacenter_bits}dc + "
-          f"{custom_config.machine_bits}m + "
-          f"{custom_config.sequence_bits}seq = 63 bits")
-    print(f"  Max datacenters:     {custom_config.max_datacenter_id + 1} "
-          f"(vs 32 default)")
-    print(f"  Max machines per DC: {custom_config.max_machine_id + 1} "
-          f"(vs 32 default)")
-    print(f"  Max IDs per ms:      {custom_config.max_sequence + 1} "
-          f"(vs 4096 default)")
-    print(f"  Epoch lifespan:      ~{2 ** custom_config.timestamp_bits // (365.25 * 24 * 3600 * 1000):.0f} years "
-          f"(vs ~69 years default)")
+    print(
+        f"  Custom layout: {custom_config.timestamp_bits}t + "
+        f"{custom_config.datacenter_bits}dc + "
+        f"{custom_config.machine_bits}m + "
+        f"{custom_config.sequence_bits}seq = 63 bits"
+    )
+    print(
+        f"  Max datacenters:     {custom_config.max_datacenter_id + 1} "
+        "(vs 32 default)"
+    )
+    print(
+        f"  Max machines per DC: {custom_config.max_machine_id + 1} "
+        "(vs 32 default)"
+    )
+    print(
+        f"  Max IDs per ms:      {custom_config.max_sequence + 1} "
+        "(vs 4096 default)"
+    )
+    print(
+        "  Epoch lifespan:     "
+        f" ~{2 ** custom_config.timestamp_bits // (365.25 * 24 * 3600 * 1000):.0f}"
+        " years (vs ~69 years default)"
+    )
     print()
 
     # Generate and parse with custom config
-    custom_gen = SnowflakeGenerator(config=custom_config, clock=MonotonicClock())
-    custom_parser = IDParser(config=custom_config)
+    custom_gen = unique_id.SnowflakeGenerator(
+        config=custom_config, clock=unique_id.MonotonicClock()
+    )
+    custom_parser = unique_id.IDParser(config=custom_config)
 
     custom_ids = custom_gen.generate_batch(5)
     print("  Generated IDs with custom layout:")
     for id_val in custom_ids:
         parsed = custom_parser.parse(id_val)
-        print(f"    ID: {id_val}  →  dc={parsed.datacenter_id}, "
-              f"machine={parsed.machine_id}, seq={parsed.sequence}")
+        print(
+            f"    ID: {id_val}  →  dc={parsed.datacenter_id}, "
+            f"machine={parsed.machine_id}, seq={parsed.sequence}"
+        )
     print()
 
     # =========================================================================

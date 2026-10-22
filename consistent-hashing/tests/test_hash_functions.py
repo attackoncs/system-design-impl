@@ -1,11 +1,9 @@
 """Unit tests for hash function implementations."""
 
+import consistent_hashing.hash_functions
 import pytest
 
-from consistent_hashing.hash_functions import md5_hash, sha1_hash, sha256_hash
-
-
-HASH_FUNCTIONS = [sha1_hash, md5_hash, sha256_hash]
+HASH_FUNCTIONS = [consistent_hashing.hash_functions.sha1_hash, consistent_hashing.hash_functions.md5_hash, consistent_hashing.hash_functions.sha256_hash]
 HASH_FUNCTION_IDS = ["sha1_hash", "md5_hash", "sha256_hash"]
 
 
@@ -64,5 +62,7 @@ class TestOutputIsPositiveInteger:
         inputs = ["", "a", "hello world", "server-1#99", "?"]
         for key in inputs:
             result = hash_fn(key)
-            assert isinstance(result, int), f"Expected int for input {key!r}, got {type(result)}"
+            assert isinstance(
+                result, int
+            ), f"Expected int for input {key!r}, got {type(result)}"
             assert result >= 0, f"Expected >= 0 for input {key!r}, got {result}"

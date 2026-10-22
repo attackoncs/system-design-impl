@@ -1,22 +1,22 @@
 """Consistent hash ring implementation.
 
-Provides the ConsistentHashRing class which distributes keys across
-server nodes using virtual nodes and clockwise traversal on a hash ring.
-Uses a sorted list of positions with binary search for O(log N) lookups.
+Provides the ConsistentHashRing class which distributes keys across server
+nodes using virtual nodes and clockwise traversal on a hash ring. Uses a sorted
+list of positions with binary search for O(log N) lookups.
 """
 
-from bisect import bisect_right, insort
-from typing import Optional, Callable
+import bisect
+from typing import Callable, Optional
 
-from consistent_hashing.hash_functions import sha1_hash
+import consistent_hashing.hash_functions
 
 
 class ConsistentHashRing:
     """Consistent hash ring with virtual nodes.
 
-    Uses a sorted list of hash positions and binary search (bisect)
-    for O(log N) key lookups. Each physical server is mapped to multiple
-    virtual nodes on the ring for balanced distribution.
+    Uses a sorted list of hash positions and binary search (bisect) for O(log
+    N) key lookups. Each physical server is mapped to multiple virtual nodes on
+    the ring for balanced distribution.
     """
 
     def __init__(
@@ -32,7 +32,9 @@ class ConsistentHashRing:
             num_virtual_nodes: Default number of virtual nodes per server.
             hash_function: Hash function mapping str -> int. Defaults to SHA-1.
         """
-        self._hash_function = hash_function or sha1_hash
+        self._hash_function = (
+            hash_function or consistent_hashing.hash_functions.sha1_hash
+        )
         self._default_num_virtual_nodes = num_virtual_nodes
 
         # Sorted list of hash positions for binary search
@@ -49,7 +51,9 @@ class ConsistentHashRing:
             for node in nodes:
                 self.add_node(node)
 
-    def add_node(self, node: str, num_virtual_nodes: Optional[int] = None) -> list[int]:
+    def add_node(
+        self, node: str, num_virtual_nodes: Optional[int] = None
+    ) -> list[int]:
         """Add a server node to the ring.
 
         Generates virtual nodes using the format "{node}#{index}" and
@@ -80,7 +84,7 @@ class ConsistentHashRing:
         for i in range(vn_count):
             virtual_key = self._virtual_node_key(node, i)
             position = self._hash(virtual_key)
-            insort(self._sorted_positions, position)
+            bisect.insort(self._sorted_positions, position)
             self._position_to_node[position] = node
             positions.append(position)
 
@@ -134,7 +138,7 @@ class ConsistentHashRing:
         hash_value = self._hash(key)
 
         # Find the first position >= hash_value (clockwise traversal)
-        idx = bisect_right(self._sorted_positions, hash_value)
+        idx = bisect.bisect_right(self._sorted_positions, hash_value)
 
         # Wrap around if past the last position
         if idx == len(self._sorted_positions):
@@ -163,7 +167,7 @@ class ConsistentHashRing:
             raise RuntimeError("Hash ring is empty - no nodes available.")
 
         hash_value = self._hash(key)
-        idx = bisect_right(self._sorted_positions, hash_value)
+        idx = bisect.bisect_right(self._sorted_positions, hash_value)
 
         # Wrap around if past the last position
         if idx == len(self._sorted_positions):

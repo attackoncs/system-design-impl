@@ -6,9 +6,9 @@ import math
 import time
 from typing import Any
 
-from ..config import RateLimitRule
-from ..storage.base import BaseStorage
-from .base import BaseAlgorithm, RateLimitResult
+from rate_limiter import config as rate_limiter_config
+from rate_limiter.algorithms import base as algorithms_base
+from rate_limiter.storage import base as storage_base
 
 # Redis Lua script for atomic fixed window counter operations.
 # KEYS[1] = window_start_key, KEYS[2] = counter_key
@@ -94,7 +94,8 @@ def _memory_fixed_window_script(
         storage: The MemoryStorage instance (use _get_raw/_set_raw).
 
     Returns:
-        A list: [allowed (1 or 0), remaining (int), limit (int), reset_after (float), retry_after (float)]
+        A list: [allowed (1 or 0), remaining (int), limit (int), reset_after
+        (float), retry_after (float)]
     """
     window_start_key = keys[0]
     counter_key = keys[1]
@@ -104,8 +105,8 @@ def _memory_fixed_window_script(
     now = float(args[2])
 
     # Get current state from storage
-    raw_window_start = storage._get_raw(window_start_key)
-    raw_counter = storage._get_raw(counter_key)
+    raw_window_start = storage.get_unlocked(window_start_key)
+    raw_counter = storage.get_unlocked(counter_key)
 
     # Calculate current window start
     current_window = math.floor(now / window) * window
@@ -133,8 +134,8 @@ def _memory_fixed_window_script(
     if counter < limit:
         counter += 1
         # Update storage
-        storage._set_raw(window_start_key, str(window_start), ttl)
-        storage._set_raw(counter_key, str(counter), ttl)
+        storage.set_unlocked(window_start_key, str(window_start), ttl)
+        storage.set_unlocked(counter_key, str(counter), ttl)
 
         remaining = limit - counter
         # Time until current window resets
@@ -143,8 +144,8 @@ def _memory_fixed_window_script(
         return [1, remaining, limit, reset_after, 0.0]
     else:
         # Denied — calculate retry_after
-        storage._set_raw(window_start_key, str(window_start), ttl)
-        storage._set_raw(counter_key, str(counter), ttl)
+        storage.set_unlocked(window_start_key, str(window_start), ttl)
+        storage.set_unlocked(counter_key, str(counter), ttl)
 
         # Time until next window starts
         retry_after = window_start + window - now
@@ -153,7 +154,7 @@ def _memory_fixed_window_script(
         return [0, 0, limit, reset_after, retry_after]
 
 
-class FixedWindowAlgorithm(BaseAlgorithm):
+class FixedWindowAlgorithm(algorithms_base.BaseAlgorithm):
     """Fixed Window Counter rate limiting algorithm.
 
     The fixed window algorithm divides time into fixed-size windows
@@ -167,9 +168,13 @@ class FixedWindowAlgorithm(BaseAlgorithm):
     """
 
     def check(
-        self, key: str, rule: RateLimitRule, storage: BaseStorage
-    ) -> RateLimitResult:
-        """Check if a request should be allowed under the fixed window algorithm.
+        self,
+        key: str,
+        rule: rate_limiter_config.RateLimitRule,
+        storage: storage_base.BaseStorage,
+    ) -> algorithms_base.RateLimitResult:
+        """Check if a request should be allowed under the fixed window
+        algorithm.
 
         Args:
             key: Unique identifier for the rate limit subject.
@@ -184,7 +189,8 @@ class FixedWindowAlgorithm(BaseAlgorithm):
         limit = rule.limit
         now = time.time()
 
-        # Include rule parameters in the key to ensure different rules are isolated
+        # Include rule parameters in the key to ensure different rules are
+        # isolated
         rule_suffix = f":{window}:{limit}"
         window_start_key = f"{key}{rule_suffix}:window_start"
         counter_key = f"{key}{rule_suffix}:counter"
@@ -208,7 +214,7 @@ class FixedWindowAlgorithm(BaseAlgorithm):
         reset_after = float(result[3])
         retry_after = float(result[4]) if not allowed else None
 
-        return RateLimitResult(
+        return algorithms_base.RateLimitResult(
             allowed=allowed,
             remaining=remaining,
             limit=limit_val,

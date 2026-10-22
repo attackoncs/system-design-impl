@@ -1,17 +1,17 @@
 """Content parsing and link extraction for the web crawler.
 
-Provides URL normalization, HTML content validation, and link extraction
-from HTML pages using only Python standard library modules.
+Provides URL normalization, HTML content validation, and link extraction from
+HTML pages using only Python standard library modules.
 """
 
 from __future__ import annotations
 
-from html.parser import HTMLParser
+import urllib.parse
+from html import parser as html_parser
 from typing import List, Optional, Tuple
-from urllib.parse import urljoin, urlparse, urlunparse
 
 
-class LinkExtractorParser(HTMLParser):
+class LinkExtractorParser(html_parser.HTMLParser):
     """HTMLParser subclass that extracts href attributes from <a> tags."""
 
     def __init__(self) -> None:
@@ -38,20 +38,23 @@ def normalize_url(url: str) -> str:
     Returns:
         Normalized URL string.
     """
-    parsed = urlparse(url)
+    parsed = urllib.parse.urlparse(url)
     normalized = parsed._replace(
         scheme=parsed.scheme.lower(),
         netloc=parsed.netloc.lower(),
         fragment="",
     )
-    return urlunparse(normalized)
+    return urllib.parse.urlunparse(normalized)
 
 
 class ContentParser:
-    """Validates that content is HTML based on Content-Type or content sniffing."""
+    """Validates that content is HTML based on Content-Type or content
+    sniffing.
+    """
 
     def is_html(self, content_type: str, body: bytes) -> bool:
-        """Check if content is HTML based on Content-Type header or content sniffing.
+        """Check if content is HTML based on Content-Type header or content
+        sniffing.
 
         First checks if "text/html" appears in the content_type string.
         If content_type is empty or doesn't indicate HTML, falls back to
@@ -94,7 +97,7 @@ class LinkExtractor:
         results: List[str] = []
         for href in parser.links:
             # Resolve relative URLs
-            absolute = urljoin(base_url, href)
+            absolute = urllib.parse.urljoin(base_url, href)
             # Normalize
             normalized = normalize_url(absolute)
             if normalized:

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
+import abc
+import dataclasses
+
+from rate_limiter import config
+from rate_limiter.storage import base
 
 
-@dataclass
+@dataclasses.dataclass
 class RateLimitResult:
     """Result of a rate limit check.
 
@@ -25,17 +28,17 @@ class RateLimitResult:
     retry_after: float | None
 
 
-class BaseAlgorithm(ABC):
+class BaseAlgorithm(abc.ABC):
     """Abstract base class for rate limiting algorithms.
 
-    All rate limiting algorithms must implement the `check` method,
-    which determines whether a request should be allowed based on
-    the configured rule and current state in storage.
+    All rate limiting algorithms must implement the `check` method, which
+    determines whether a request should be allowed based on the configured rule
+    and current state in storage.
     """
 
-    @abstractmethod
+    @abc.abstractmethod
     def check(
-        self, key: str, rule: "RateLimitRule", storage: "BaseStorage"
+        self, key: str, rule: config.RateLimitRule, storage: base.BaseStorage
     ) -> RateLimitResult:
         """Check if a request should be allowed.
 
@@ -48,4 +51,3 @@ class BaseAlgorithm(ABC):
             RateLimitResult indicating if the request is allowed
             and associated metadata.
         """
-        ...

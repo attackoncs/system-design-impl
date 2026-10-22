@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import hashlib
 
-from web_crawler.parser import normalize_url
+import web_crawler.parser
 
 
 class ContentSeen:
     """Content deduplication using SHA-256 fingerprints.
 
-    Maintains an in-memory set of content hashes to detect
-    duplicate page content.
+    Maintains an in-memory set of content hashes to detect duplicate page
+    content.
     """
 
     def __init__(self) -> None:
@@ -51,8 +51,8 @@ class ContentSeen:
 class URLSeen:
     """URL deduplication using normalized URL set.
 
-    Normalizes URLs (lowercase scheme/host, remove fragments)
-    before comparison to avoid visiting equivalent URLs.
+    Normalizes URLs (lowercase scheme/host, remove fragments) before comparison
+    to avoid visiting equivalent URLs.
     """
 
     def __init__(self) -> None:
@@ -67,7 +67,7 @@ class URLSeen:
         Returns:
             True if this URL (or a normalized equivalent) has been seen.
         """
-        return normalize_url(url) in self._seen
+        return web_crawler.parser.normalize_url(url) in self._seen
 
     def add(self, url: str) -> None:
         """Mark a URL as seen (stores normalized form).
@@ -75,7 +75,7 @@ class URLSeen:
         Args:
             url: The URL to record.
         """
-        self._seen.add(normalize_url(url))
+        self._seen.add(web_crawler.parser.normalize_url(url))
 
     @property
     def count(self) -> int:

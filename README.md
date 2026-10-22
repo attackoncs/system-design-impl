@@ -8,6 +8,8 @@ Production-quality Python implementations of system design concepts from the boo
 
 | Chapter | Topic | Status | Description |
 |---------|-------|--------|-------------|
+| 02 | [Scale From Zero](./scale-from-zero/) | ✅ Reference done | 1/8/10-process HTTP scaling lab: stateless sessions, load balancing, cache, profile replicas, sharding and durable jobs; 11 tests |
+| 03 | [Capacity Estimation](./capacity-estimation/) | ✅ Reference done | Explicit-unit Decimal QPS/storage/bandwidth/cache/node/SLO budgets, scenario CLI and sensitivity analysis; 9 tests |
 | 05 | [Rate Limiter](./rate-limiter/) | ✅ Done | 5 algorithms, Redis/memory backends, FastAPI/Flask integration |
 | 06 | [Consistent Hashing](./consistent-hashing/) | ✅ Done | Virtual nodes, O(log N) lookup, distribution statistics |
 | 07 | [Key-Value Store](./key-value-store/) | ✅ Done | Dynamo-style, LSM-tree storage, quorum consensus, gossip protocol, gRPC |
@@ -29,12 +31,18 @@ Production-quality Python implementations of system design concepts from the boo
 | 23 | [Hotel Reservation](./hotel-reservation-system/) | ✅ Reference done | Hotel shards, atomic nightly inventory, bounded overbooking, price snapshots, idempotent bookings and simulated payment/refund recovery; 13 tests |
 | 24 | [Distributed Email](./distributed-email-service/) | ✅ Reference done | Local HTTP/SMTP delivery, immutable attachments, user shards, asynchronous metadata replicas, versioned read flags and fielded search; 9 tests |
 | 25 | [S3-like Object Storage](./object-storage-system/) | ✅ Reference done | Versioned buckets, resumable multipart uploads, packed chunks, sharded listing snapshots, three data replicas and repair/GC; 10 tests |
+| 26 | [Gaming Leaderboard](./gaming-leaderboard-system/) | ✅ Reference done | Trusted monthly match journal, Redis primary/replica score shards, competition ties, exact global rank/windows and replay; 8 tests |
+| 27 | [Payment System](./payment-system/) | ✅ Reference done | Simulated hosted pay-ins/payouts/refunds, immutable double-entry ledger, unknown-result recovery, transactional outbox and reconciliation; 13 tests |
+| 28 | [Digital Wallet](./digital-wallet-system/) | ✅ Reference done | Sharded synthetic transfers, TCC recovery, replay/history/snapshots, fixed-writer HTTP journal quorum and in-transit reconciliation; 14 tests |
+| 29 | [Stock Exchange](./stock-exchange-system/) | ✅ Reference done | Synthetic price-time matching, cash/share reservations, sequenced primary/backup replay, market delta resync and reports; 13 tests |
 
 ## Planned
 
+Chapters 1 (community introduction) and 4 (interview framework) are reading chapters, not standalone system implementations.
+
 | Chapter | Topic | Status |
 |---------|-------|--------|
-| 26–29 | Chapter tasks | 📋 Planned |
+| 30 | The Learning Continues | 📚 Further reading; no standalone system |
 
 ## Project Structure
 
@@ -43,6 +51,8 @@ sdi-implement/
 ├── README.md                    # This file
 ├── README_CN.md                 # Chinese version
 ├── System Design Interview.md   # Book content reference
+├── scale-from-zero/             # Ch.02: Staged local HTTP scaling experiments
+├── capacity-estimation/         # Ch.03: Explicit-unit capacity and availability estimates
 ├── rate-limiter/                # Ch.05: Rate Limiter
 │   ├── README.md               # Usage documentation
 │   ├── README_CN.md            # Chinese Usage documentation
@@ -147,6 +157,10 @@ sdi-implement/
 ├── hotel-reservation-system/    # Ch.23: Atomic hotel inventory and payment compensation
 ├── distributed-email-service/   # Ch.24: Local SMTP, metadata replicas and mailbox search
 ├── object-storage-system/       # Ch.25: Versions, multipart uploads and data replica repair
+├── gaming-leaderboard-system/   # Ch.26: Monthly Redis rankings and journal recovery
+├── payment-system/              # Ch.27: Simulated payments, double-entry ledger and reconciliation
+├── digital-wallet-system/       # Ch.28: Sharded transfers, event replay and TCC recovery
+├── stock-exchange-system/       # Ch.29: Limit-order matching, replicas and market data recovery
 └── .gitignore
 ```
 

@@ -10,25 +10,20 @@ Demonstrates:
 Run: python examples/basic_usage.py
 """
 
+import pathlib
 import sys
-from pathlib import Path
 
 # Allow running directly without pip install
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
 
-from unique_id import (
-    SnowflakeGenerator,
-    SnowflakeConfig,
-    IDParser,
-    MonotonicClock,
-)
+import unique_id
 
 
 def main():
     # --- 1. Create a generator with default configuration ---
     print("=== Basic Snowflake ID Generation ===\n")
 
-    generator = SnowflakeGenerator()
+    generator = unique_id.SnowflakeGenerator()
     print(f"Generator config: {generator.config}")
     print()
 
@@ -48,7 +43,7 @@ def main():
 
     # --- 4. Parse an ID back into components ---
     print("--- ID Parsing ---")
-    parser = IDParser()
+    parser = unique_id.IDParser()
     sample_id = generator.generate()
     parsed = parser.parse(sample_id)
     print(f"  Generated ID: {sample_id}")
@@ -62,7 +57,7 @@ def main():
 
     # --- 5. Using MonotonicClock ---
     print("--- Using MonotonicClock ---")
-    mono_gen = SnowflakeGenerator(clock=MonotonicClock())
+    mono_gen = unique_id.SnowflakeGenerator(clock=unique_id.MonotonicClock())
     mono_ids = [mono_gen.generate() for _ in range(5)]
     print("  IDs with MonotonicClock (guaranteed no backwards movement):")
     for i, id_val in enumerate(mono_ids):
@@ -71,17 +66,17 @@ def main():
 
     # --- 6. Custom configuration ---
     print("--- Custom Configuration ---")
-    custom_config = SnowflakeConfig(
+    custom_config = unique_id.SnowflakeConfig(
         datacenter_id=5,
         machine_id=10,
     )
-    custom_gen = SnowflakeGenerator(config=custom_config)
+    custom_gen = unique_id.SnowflakeGenerator(config=custom_config)
     custom_id = custom_gen.generate()
     custom_parsed = parser.parse(custom_id)
-    print(f"  Config: datacenter=5, machine=10")
+    print("  Config: datacenter=5, machine=10")
     print(f"  Generated ID: {custom_id}")
     # Use parser with matching config
-    custom_parser = IDParser(config=custom_config)
+    custom_parser = unique_id.IDParser(config=custom_config)
     custom_parsed = custom_parser.parse(custom_id)
     print(f"  Parsed datacenter: {custom_parsed.datacenter_id}")
     print(f"  Parsed machine:    {custom_parsed.machine_id}")

@@ -5,9 +5,9 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from ..config import RateLimitRule
-from ..storage.base import BaseStorage
-from .base import BaseAlgorithm, RateLimitResult
+from rate_limiter import config as rate_limiter_config
+from rate_limiter.algorithms import base as algorithms_base
+from rate_limiter.storage import base as storage_base
 
 # Redis Lua script for atomic leaking bucket operations.
 # KEYS[1] = queue_count_key, KEYS[2] = last_drain_key
@@ -85,7 +85,8 @@ def _memory_leaking_bucket_script(
         storage: The MemoryStorage instance (use _get_raw/_set_raw).
 
     Returns:
-        A list: [allowed (1 or 0), remaining (int), limit (int), reset_after (float), retry_after (float)]
+        A list: [allowed (1 or 0), remaining (int), limit (int), reset_after
+        (float), retry_after (float)]
     """
     queue_count_key = keys[0]
     last_drain_key = keys[1]
@@ -95,8 +96,8 @@ def _memory_leaking_bucket_script(
     now = float(args[2])
 
     # Get current state from storage
-    raw_queue_count = storage._get_raw(queue_count_key)
-    raw_last_drain = storage._get_raw(last_drain_key)
+    raw_queue_count = storage.get_unlocked(queue_count_key)
+    raw_last_drain = storage.get_unlocked(last_drain_key)
 
     # Initialize if first request
     if raw_queue_count is None:
@@ -121,8 +122,8 @@ def _memory_leaking_bucket_script(
     if queue_count < capacity:
         queue_count += 1
         # Update storage
-        storage._set_raw(queue_count_key, str(queue_count), ttl)
-        storage._set_raw(last_drain_key, str(now), ttl)
+        storage.set_unlocked(queue_count_key, str(queue_count), ttl)
+        storage.set_unlocked(last_drain_key, str(now), ttl)
 
         remaining = int(capacity - queue_count)
         # Time until queue is fully drained
@@ -131,8 +132,8 @@ def _memory_leaking_bucket_script(
         return [1, remaining, int(capacity), reset_after, 0.0]
     else:
         # Queue is full — calculate time until one item drains
-        storage._set_raw(queue_count_key, str(queue_count), ttl)
-        storage._set_raw(last_drain_key, str(now), ttl)
+        storage.set_unlocked(queue_count_key, str(queue_count), ttl)
+        storage.set_unlocked(last_drain_key, str(now), ttl)
 
         retry_after = 1.0 / drain_rate if drain_rate > 0 else 0.0
         reset_after = queue_count / drain_rate if drain_rate > 0 else 0.0
@@ -140,7 +141,7 @@ def _memory_leaking_bucket_script(
         return [0, 0, int(capacity), reset_after, retry_after]
 
 
-class LeakingBucketAlgorithm(BaseAlgorithm):
+class LeakingBucketAlgorithm(algorithms_base.BaseAlgorithm):
     """Leaking Bucket rate limiting algorithm.
 
     The leaking bucket algorithm maintains a queue that drains at a
@@ -153,9 +154,13 @@ class LeakingBucketAlgorithm(BaseAlgorithm):
     """
 
     def check(
-        self, key: str, rule: RateLimitRule, storage: BaseStorage
-    ) -> RateLimitResult:
-        """Check if a request should be allowed under the leaking bucket algorithm.
+        self,
+        key: str,
+        rule: rate_limiter_config.RateLimitRule,
+        storage: storage_base.BaseStorage,
+    ) -> algorithms_base.RateLimitResult:
+        """Check if a request should be allowed under the leaking bucket
+        algorithm.
 
         Args:
             key: Unique identifier for the rate limit subject.
@@ -192,7 +197,7 @@ class LeakingBucketAlgorithm(BaseAlgorithm):
         reset_after = float(result[3])
         retry_after = float(result[4]) if not allowed else None
 
-        return RateLimitResult(
+        return algorithms_base.RateLimitResult(
             allowed=allowed,
             remaining=remaining,
             limit=limit,

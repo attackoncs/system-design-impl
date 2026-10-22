@@ -1,27 +1,36 @@
 """Fixed-template actual FFmpeg media adapter, including encrypted HLS."""
+
 import os
 import shutil
 import subprocess
 
-from .service import PROFILES
+import video_streaming.service
+
+try:
+    import imageio_ffmpeg
+except ImportError:
+    imageio_ffmpeg = None  # Optional bundled FFmpeg executable.
 
 
 class InvalidMedia(ValueError):
+    """The source cannot be decoded and should not be retried."""
+
     pass
 
 
 def executable():
+    """Return an available FFmpeg executable or raise RuntimeError."""
     path = shutil.which("ffmpeg")
     if path:
         return path
-    try:
-        import imageio_ffmpeg
-        return imageio_ffmpeg.get_ffmpeg_exe()
-    except ImportError:
-        raise RuntimeError("Install the media extra or provide FFmpeg on PATH") from None
+    if imageio_ffmpeg is None:
+        raise RuntimeError("Install the media extra or provide FFmpeg on PATH")
+    return imageio_ffmpeg.get_ffmpeg_exe()
 
 
 class FFmpegMedia:
+    """Executes bounded FFmpeg commands for thumbnails and encrypted HLS."""
+
     timeout = 60
 
     def __init__(self, binary=None, timeout=60):
@@ -32,41 +41,152 @@ class FFmpegMedia:
 
     @staticmethod
     def input(source):
-        # Source containers must not fetch URLs or interpret arbitrary playlist paths.
-        return ["-protocol_whitelist", "file,pipe,crypto", "-format_whitelist",
-                "mov,matroska,webm,avi,mpegts,mpeg,ogg,flv,asf", "-i", str(source)]
+        # Source containers must not fetch URLs or interpret arbitrary playlist
+        # paths.
+        """Return local-only FFmpeg input arguments for source."""
+        return [
+            "-protocol_whitelist",
+            "file,pipe,crypto",
+            "-format_whitelist",
+            "mov,matroska,webm,avi,mpegts,mpeg,ogg,flv,asf",
+            "-i",
+            str(source),
+        ]
 
     def run(self, arguments, fatal=False):
-        options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
-        result = subprocess.run([self.binary, "-hide_banner", "-nostdin", "-loglevel", "error", "-y"] + arguments,
-                                capture_output=True, timeout=self.timeout, **options)
+        """Run FFmpeg with a fixed timeout and surface processing failures.
+
+        Args:
+            arguments: Argument list appended to the fixed FFmpeg command
+                prefix.
+            fatal: Raise InvalidMedia instead of RuntimeError for a nonzero
+                exit.
+
+        Raises:
+            InvalidMedia: A fatal input validation command fails.
+            RuntimeError: A processing command exits unsuccessfully.
+            subprocess.TimeoutExpired: FFmpeg exceeds the configured time limit.
+        """
+        options = (
+            {"creationflags": subprocess.CREATE_NO_WINDOW}
+            if os.name == "nt"
+            else {}
+        )
+        result = subprocess.run(
+            [
+                self.binary,
+                "-hide_banner",
+                "-nostdin",
+                "-loglevel",
+                "error",
+                "-y",
+            ]
+            + arguments,
+            capture_output=True,
+            check=False,  # Classify input and processing failures below.
+            timeout=self.timeout,
+            **options,
+        )
         if result.returncode:
             if fatal:
                 raise InvalidMedia("source video cannot be decoded")
             raise RuntimeError("FFmpeg processing failed")
 
     def inspect(self, source, folder):
-        self.run(self.input(source) + ["-map", "0:v:0", "-frames:v", "1", "-f", "null", "-"], fatal=True)
+        """Decode one source video frame; return the adapter metadata on
+        success.
+        """
+        del folder  # Inspection produces no files.
+        self.run(
+            self.input(source)
+            + ["-map", "0:v:0", "-frames:v", "1", "-f", "null", "-"],
+            fatal=True,
+        )
         return {"adapter": "ffmpeg"}
 
     def thumbnail(self, source, folder):
+        """Create thumbnail.png in folder and return its path."""
         path = folder / "thumbnail.png"
-        self.run(self.input(source) + ["-map", "0:v:0", "-frames:v", "1", "-vf", "scale=320:-2", str(path)])
+        self.run(
+            self.input(source)
+            + [
+                "-map",
+                "0:v:0",
+                "-frames:v",
+                "1",
+                "-vf",
+                "scale=320:-2",
+                str(path),
+            ]
+        )
         return path
 
     def encode(self, source, folder, profile, key):
-        width, height, bitrate = PROFILES[profile]
+        """Encode one video rendition as encrypted HLS segments.
+
+        Args:
+            source: Local source path or materializable remote object.
+            folder: Attempt-local output directory.
+            profile: Supported rendition height from the service profile table.
+            key: Sixteen-byte AES key shared by this video's renditions.
+
+        Returns:
+            Paths of the rendition playlist and transport-stream segments.
+        """
+        width, height, bitrate = video_streaming.service.PROFILES[profile]
         key_path = folder / "encryption.key"
         key_path.write_bytes(key)
         key_info = folder / "key-info.txt"
-        key_info.write_text("../key.bin\n" + key_path.resolve().as_posix() + "\n", encoding="utf-8")
+        key_info.write_text(
+            "../key.bin\n" + key_path.resolve().as_posix() + "\n",
+            encoding="utf-8",
+        )
         path = folder / "index.m3u8"
-        self.run(self.input(source) + ["-map", "0:v:0", "-map", "0:a:0?",
-                  "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2",
-                  "-c:v", "libx264", "-preset", "ultrafast", "-threads", "2", "-pix_fmt", "yuv420p",
-                  "-b:v", str(bitrate), "-r", "30", "-g", "60", "-sc_threshold", "0",
-                  "-force_key_frames", "expr:gte(t,n_forced*2)", "-c:a", "aac", "-b:a", "96000",
-                  "-f", "hls", "-hls_time", "2", "-hls_playlist_type", "vod",
-                  "-hls_flags", "independent_segments", "-hls_key_info_file", str(key_info),
-                  "-hls_segment_filename", str(folder / "segment_%05d.ts"), str(path)])
+        self.run(
+            self.input(source)
+            + [
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a:0?",
+                "-vf",
+                f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-threads",
+                "2",
+                "-pix_fmt",
+                "yuv420p",
+                "-b:v",
+                str(bitrate),
+                "-r",
+                "30",
+                "-g",
+                "60",
+                "-sc_threshold",
+                "0",
+                "-force_key_frames",
+                "expr:gte(t,n_forced*2)",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "96000",
+                "-f",
+                "hls",
+                "-hls_time",
+                "2",
+                "-hls_playlist_type",
+                "vod",
+                "-hls_flags",
+                "independent_segments",
+                "-hls_key_info_file",
+                str(key_info),
+                "-hls_segment_filename",
+                str(folder / "segment_%05d.ts"),
+                str(path),
+            ]
+        )
         return [path] + sorted(folder.glob("segment_*.ts"))

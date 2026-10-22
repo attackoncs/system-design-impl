@@ -13,19 +13,10 @@ Tests cover:
 import re
 
 import pytest
-
-from url_shortener.exceptions import CollisionLimitExceededError
-from url_shortener.models import RedirectType, URLMapping
-from url_shortener.storage import InMemoryStorage
-from url_shortener.strategies import (
-    BASE62_CHARS,
-    SHORT_CODE_LENGTH,
-    AutoIncrementIDGenerator,
-    Base62Strategy,
-    HashCollisionStrategy,
-    encode_base62,
-    decode_base62,
-)
+import url_shortener.exceptions
+import url_shortener.models
+import url_shortener.storage
+import url_shortener.strategies
 
 # Regex for valid short codes: exactly 7 chars from [0-9, a-z, A-Z]
 VALID_CODE_PATTERN = re.compile(r"^[0-9a-zA-Z]{7}$")
@@ -38,65 +29,65 @@ class TestEncodeBase62:
     """Tests for encode_base62 with known values."""
 
     def test_encode_zero(self):
-        assert encode_base62(0) == "0"
+        assert url_shortener.strategies.encode_base62(0) == "0"
 
     def test_encode_one(self):
-        assert encode_base62(1) == "1"
+        assert url_shortener.strategies.encode_base62(1) == "1"
 
     def test_encode_61(self):
         # 61 is the last single-digit base-62 value -> 'Z'
-        assert encode_base62(61) == "Z"
+        assert url_shortener.strategies.encode_base62(61) == "Z"
 
     def test_encode_62(self):
         # 62 in base-62 is "10"
-        assert encode_base62(62) == "10"
+        assert url_shortener.strategies.encode_base62(62) == "10"
 
     def test_encode_known_value(self):
         # 62^2 = 3844 -> "100"
-        assert encode_base62(3844) == "100"
+        assert url_shortener.strategies.encode_base62(3844) == "100"
 
     def test_encode_large_number(self):
         # 62^6 = 56800235584 -> "1000000"
-        assert encode_base62(56800235584) == "1000000"
+        assert url_shortener.strategies.encode_base62(56800235584) == "1000000"
 
     def test_encode_uses_correct_charset(self):
         # Verify all characters in output are from BASE62_CHARS
         for n in [0, 10, 36, 61, 100, 1000, 999999]:
-            encoded = encode_base62(n)
+            encoded = url_shortener.strategies.encode_base62(n)
             for ch in encoded:
-                assert ch in BASE62_CHARS
+                assert ch in url_shortener.strategies.BASE62_CHARS
 
 
 class TestDecodeBase62:
     """Tests for decode_base62 with known values."""
 
     def test_decode_zero(self):
-        assert decode_base62("0") == 0
+        assert url_shortener.strategies.decode_base62("0") == 0
 
     def test_decode_one(self):
-        assert decode_base62("1") == 1
+        assert url_shortener.strategies.decode_base62("1") == 1
 
     def test_decode_Z(self):
-        assert decode_base62("Z") == 61
+        assert url_shortener.strategies.decode_base62("Z") == 61
 
     def test_decode_10(self):
-        assert decode_base62("10") == 62
+        assert url_shortener.strategies.decode_base62("10") == 62
 
     def test_decode_100(self):
-        assert decode_base62("100") == 3844
+        assert url_shortener.strategies.decode_base62("100") == 3844
 
     def test_decode_invalid_character(self):
         with pytest.raises(ValueError, match="Invalid base-62 character"):
-            decode_base62("abc!def")
+            url_shortener.strategies.decode_base62("abc!def")
 
     def test_decode_special_chars_invalid(self):
         with pytest.raises(ValueError):
-            decode_base62("@#$")
+            url_shortener.strategies.decode_base62("@#$")
 
     def test_encode_decode_roundtrip(self):
         """Encoding then decoding returns the original number."""
         for n in [0, 1, 42, 61, 62, 100, 999, 123456, 56800235584]:
-            assert decode_base62(encode_base62(n)) == n
+            assert url_shortener.strategies.decode_base62(url_shortener.strategies.encode_base62(n)) == n
 
 
 # --- HashCollisionStrategy tests ---
@@ -107,24 +98,26 @@ class TestHashCollisionStrategy:
 
     def test_generates_7_char_code(self):
         """Generated code is exactly 7 characters from base-62 alphabet."""
-        strategy = HashCollisionStrategy()
-        storage = InMemoryStorage()
+        strategy = url_shortener.strategies.HashCollisionStrategy()
+        storage = url_shortener.storage.InMemoryStorage()
         code = strategy.generate("https://example.com/long-url", storage)
         assert VALID_CODE_PATTERN.match(code)
 
     def test_generates_valid_base62_chars(self):
         """All characters in generated code are from base-62 charset."""
-        strategy = HashCollisionStrategy()
-        storage = InMemoryStorage()
-        code = strategy.generate("https://www.google.com/search?q=test", storage)
-        assert len(code) == SHORT_CODE_LENGTH
+        strategy = url_shortener.strategies.HashCollisionStrategy()
+        storage = url_shortener.storage.InMemoryStorage()
+        code = strategy.generate(
+            "https://www.google.com/search?q=test", storage
+        )
+        assert len(code) == url_shortener.strategies.SHORT_CODE_LENGTH
         for ch in code:
-            assert ch in BASE62_CHARS
+            assert ch in url_shortener.strategies.BASE62_CHARS
 
     def test_same_url_same_code(self):
         """Same URL produces the same code (deterministic)."""
-        strategy = HashCollisionStrategy()
-        storage = InMemoryStorage()
+        strategy = url_shortener.strategies.HashCollisionStrategy()
+        storage = url_shortener.storage.InMemoryStorage()
         url = "https://example.com/page"
         code1 = strategy.generate(url, storage)
         code2 = strategy.generate(url, storage)
@@ -132,8 +125,8 @@ class TestHashCollisionStrategy:
 
     def test_different_urls_may_differ(self):
         """Different URLs generally produce different codes."""
-        strategy = HashCollisionStrategy()
-        storage = InMemoryStorage()
+        strategy = url_shortener.strategies.HashCollisionStrategy()
+        storage = url_shortener.storage.InMemoryStorage()
         code1 = strategy.generate("https://example.com/a", storage)
         code2 = strategy.generate("https://example.com/b", storage)
         # Not guaranteed to differ (hash collisions possible), but very likely
@@ -143,15 +136,15 @@ class TestHashCollisionStrategy:
 
     def test_collision_resolution_retries(self):
         """When a collision occurs, strategy appends suffix and retries."""
-        strategy = HashCollisionStrategy()
-        storage = InMemoryStorage()
+        strategy = url_shortener.strategies.HashCollisionStrategy()
+        storage = url_shortener.storage.InMemoryStorage()
 
         url1 = "https://example.com/first"
         url2 = "https://example.com/second"
 
         # Generate code for url1 and store it
         code1 = strategy.generate(url1, storage)
-        mapping1 = URLMapping(short_code=code1, long_url=url1)
+        mapping1 = url_shortener.models.URLMapping(short_code=code1, long_url=url1)
         storage.save(mapping1)
 
         # Now generate for url2 - if it collides, it should resolve
@@ -162,12 +155,16 @@ class TestHashCollisionStrategy:
         # If no collision, they naturally differ
         if code1 == code2:
             # This shouldn't happen since url2 != url1
-            pytest.fail("Same code generated for different URLs without resolution")
+            pytest.fail(
+                "Same code generated for different URLs without resolution"
+            )
 
     def test_collision_resolution_with_forced_collision(self):
-        """Force a collision by pre-populating storage with the expected code."""
-        strategy = HashCollisionStrategy()
-        storage = InMemoryStorage()
+        """Force a collision by pre-populating storage with the expected
+        code.
+        """
+        strategy = url_shortener.strategies.HashCollisionStrategy()
+        storage = url_shortener.storage.InMemoryStorage()
 
         url = "https://example.com/test"
 
@@ -176,7 +173,7 @@ class TestHashCollisionStrategy:
 
         # Now store a DIFFERENT URL with that same code to force collision
         other_url = "https://other.com/different"
-        mapping = URLMapping(short_code=first_code, long_url=other_url)
+        mapping = url_shortener.models.URLMapping(short_code=first_code, long_url=other_url)
         storage.save(mapping)
 
         # Now generating for our URL should detect collision and retry
@@ -186,15 +183,17 @@ class TestHashCollisionStrategy:
         assert resolved_code != first_code
 
     def test_returns_existing_code_for_same_url(self):
-        """If the code already maps to the same URL, return it without retry."""
-        strategy = HashCollisionStrategy()
-        storage = InMemoryStorage()
+        """If the code already maps to the same URL, return it without
+        retry.
+        """
+        strategy = url_shortener.strategies.HashCollisionStrategy()
+        storage = url_shortener.storage.InMemoryStorage()
 
         url = "https://example.com/test"
         code = strategy.generate(url, storage)
 
         # Store the mapping
-        mapping = URLMapping(short_code=code, long_url=url)
+        mapping = url_shortener.models.URLMapping(short_code=code, long_url=url)
         storage.save(mapping)
 
         # Generating again for the same URL should return the same code
@@ -204,25 +203,27 @@ class TestHashCollisionStrategy:
     def test_collision_limit_exceeded_error(self):
         """CollisionLimitExceededError raised after max retries."""
         # Use max_retries=0 so it fails immediately on first collision
-        strategy = HashCollisionStrategy(max_retries=0)
-        storage = InMemoryStorage()
+        strategy = url_shortener.strategies.HashCollisionStrategy(max_retries=0)
+        storage = url_shortener.storage.InMemoryStorage()
 
         url = "https://example.com/test"
 
         # Compute the code and store a different URL with it
         code = strategy.generate(url, storage)
-        other_mapping = URLMapping(short_code=code, long_url="https://other.com/block")
+        other_mapping = url_shortener.models.URLMapping(
+            short_code=code, long_url="https://other.com/block"
+        )
         storage.save(other_mapping)
 
         # Now generating should fail since max_retries=0
-        with pytest.raises(CollisionLimitExceededError):
+        with pytest.raises(url_shortener.exceptions.CollisionLimitExceededError):
             strategy.generate(url, storage)
 
     def test_collision_limit_exceeded_with_multiple_retries(self):
         """CollisionLimitExceededError raised after exhausting all retries."""
         max_retries = 2
-        strategy = HashCollisionStrategy(max_retries=max_retries)
-        storage = InMemoryStorage()
+        strategy = url_shortener.strategies.HashCollisionStrategy(max_retries=max_retries)
+        storage = url_shortener.storage.InMemoryStorage()
 
         url = "https://example.com/exhaust"
 
@@ -231,15 +232,15 @@ class TestHashCollisionStrategy:
         url_to_hash = url
         for i in range(max_retries + 1):
             code = strategy._compute_code(url_to_hash)
-            blocking_mapping = URLMapping(
+            blocking_mapping = url_shortener.models.URLMapping(
                 short_code=code,
                 long_url=f"https://blocker.com/{i}",
             )
             storage.save(blocking_mapping)
-            url_to_hash = url_to_hash + HashCollisionStrategy.COLLISION_SUFFIX
+            url_to_hash = url_to_hash + url_shortener.strategies.HashCollisionStrategy.COLLISION_SUFFIX
 
         # Now all retry slots are blocked
-        with pytest.raises(CollisionLimitExceededError):
+        with pytest.raises(url_shortener.exceptions.CollisionLimitExceededError):
             strategy.generate(url, storage)
 
 
@@ -251,22 +252,22 @@ class TestBase62Strategy:
 
     def test_generates_7_char_code(self):
         """Generated code is exactly 7 characters."""
-        strategy = Base62Strategy()
-        storage = InMemoryStorage()
+        strategy = url_shortener.strategies.Base62Strategy()
+        storage = url_shortener.storage.InMemoryStorage()
         code = strategy.generate("https://example.com", storage)
-        assert len(code) == SHORT_CODE_LENGTH
+        assert len(code) == url_shortener.strategies.SHORT_CODE_LENGTH
 
     def test_generates_valid_base62_chars(self):
         """All characters in generated code are from base-62 charset."""
-        strategy = Base62Strategy()
-        storage = InMemoryStorage()
+        strategy = url_shortener.strategies.Base62Strategy()
+        storage = url_shortener.storage.InMemoryStorage()
         code = strategy.generate("https://example.com", storage)
         assert VALID_CODE_PATTERN.match(code)
 
     def test_sequential_codes_are_unique(self):
         """Sequential IDs produce unique codes."""
-        strategy = Base62Strategy()
-        storage = InMemoryStorage()
+        strategy = url_shortener.strategies.Base62Strategy()
+        storage = url_shortener.storage.InMemoryStorage()
         codes = set()
         for i in range(100):
             code = strategy.generate(f"https://example.com/{i}", storage)
@@ -275,16 +276,20 @@ class TestBase62Strategy:
 
     def test_codes_are_padded_to_7_chars(self):
         """Small IDs are left-padded with zeros to 7 characters."""
-        strategy = Base62Strategy(id_generator=AutoIncrementIDGenerator(start=1))
-        storage = InMemoryStorage()
+        strategy = url_shortener.strategies.Base62Strategy(
+            id_generator=url_shortener.strategies.AutoIncrementIDGenerator(start=1)
+        )
+        storage = url_shortener.storage.InMemoryStorage()
         code = strategy.generate("https://example.com", storage)
         # ID=1 encodes to "1", padded to "0000001"
         assert code == "0000001"
 
     def test_second_code_increments(self):
         """Second call produces the next sequential code."""
-        strategy = Base62Strategy(id_generator=AutoIncrementIDGenerator(start=1))
-        storage = InMemoryStorage()
+        strategy = url_shortener.strategies.Base62Strategy(
+            id_generator=url_shortener.strategies.AutoIncrementIDGenerator(start=1)
+        )
+        storage = url_shortener.storage.InMemoryStorage()
         code1 = strategy.generate("https://example.com/a", storage)
         code2 = strategy.generate("https://example.com/b", storage)
         assert code1 == "0000001"
@@ -292,8 +297,10 @@ class TestBase62Strategy:
 
     def test_custom_start_value(self):
         """Custom start value for ID generator is respected."""
-        strategy = Base62Strategy(id_generator=AutoIncrementIDGenerator(start=62))
-        storage = InMemoryStorage()
+        strategy = url_shortener.strategies.Base62Strategy(
+            id_generator=url_shortener.strategies.AutoIncrementIDGenerator(start=62)
+        )
+        storage = url_shortener.storage.InMemoryStorage()
         code = strategy.generate("https://example.com", storage)
         # 62 in base-62 is "10", padded to "0000010"
         assert code == "0000010"
@@ -306,22 +313,22 @@ class TestAutoIncrementIDGenerator:
     """Tests for AutoIncrementIDGenerator."""
 
     def test_starts_at_one_by_default(self):
-        gen = AutoIncrementIDGenerator()
+        gen = url_shortener.strategies.AutoIncrementIDGenerator()
         assert gen.next_id() == 1
 
     def test_produces_sequential_values(self):
-        gen = AutoIncrementIDGenerator()
+        gen = url_shortener.strategies.AutoIncrementIDGenerator()
         assert gen.next_id() == 1
         assert gen.next_id() == 2
         assert gen.next_id() == 3
 
     def test_custom_start_value(self):
-        gen = AutoIncrementIDGenerator(start=100)
+        gen = url_shortener.strategies.AutoIncrementIDGenerator(start=100)
         assert gen.next_id() == 100
         assert gen.next_id() == 101
 
     def test_many_sequential_values(self):
-        gen = AutoIncrementIDGenerator(start=1)
+        gen = url_shortener.strategies.AutoIncrementIDGenerator(start=1)
         for expected in range(1, 51):
             assert gen.next_id() == expected
 
@@ -344,10 +351,11 @@ class TestCustomIDGenerator:
             def next_id(self) -> int:
                 return self._id
 
-        strategy = Base62Strategy(id_generator=FixedIDGenerator(42))
-        storage = InMemoryStorage()
+        strategy = url_shortener.strategies.Base62Strategy(id_generator=FixedIDGenerator(42))
+        storage = url_shortener.storage.InMemoryStorage()
         code = strategy.generate("https://example.com", storage)
-        # 42 in base-62 is "g" (index 42 in charset: 0-9=10, a-z=36, so 42-10=32 -> 'W'... 
+        # 42 in base-62 is "g" (index 42 in charset: 0-9=10, a-z=36, so 42-10=32
+        # -> 'W'...
         # Actually: 42 // 62 = 0, 42 % 62 = 42 -> BASE62_CHARS[42] = 'G'
         # Let's just verify it's 7 chars and valid
         assert VALID_CODE_PATTERN.match(code)
@@ -368,12 +376,14 @@ class TestCustomIDGenerator:
                 return next(self._ids)
 
         ids = [1, 10, 100, 1000]
-        strategy = Base62Strategy(id_generator=ListIDGenerator(ids))
-        storage = InMemoryStorage()
+        strategy = url_shortener.strategies.Base62Strategy(id_generator=ListIDGenerator(ids))
+        storage = url_shortener.storage.InMemoryStorage()
 
         codes = []
         for url_suffix in ["a", "b", "c", "d"]:
-            code = strategy.generate(f"https://example.com/{url_suffix}", storage)
+            code = strategy.generate(
+                f"https://example.com/{url_suffix}", storage
+            )
             codes.append(code)
             assert VALID_CODE_PATTERN.match(code)
 

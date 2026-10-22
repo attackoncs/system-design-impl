@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from enum import Enum
+import dataclasses
+import enum
 from typing import Callable, Optional
 
 
-class Algorithm(Enum):
+class Algorithm(enum.Enum):
     """Supported rate limiting algorithms."""
 
     TOKEN_BUCKET = "token_bucket"
@@ -17,7 +17,7 @@ class Algorithm(Enum):
     SLIDING_WINDOW_COUNTER = "sliding_window_counter"
 
 
-@dataclass
+@dataclasses.dataclass
 class RateLimitRule:
     """A single rate limiting rule.
 
@@ -40,7 +40,7 @@ class RateLimitRule:
     name: Optional[str] = None
 
 
-@dataclass
+@dataclasses.dataclass
 class RateLimiterConfig:
     """Top-level rate limiter configuration.
 
@@ -55,7 +55,7 @@ class RateLimiterConfig:
             If False, deny requests when storage is unavailable.
     """
 
-    rules: list[RateLimitRule] = field(default_factory=list)
+    rules: list[RateLimitRule] = dataclasses.field(default_factory=list)
     storage_backend: str = "memory"
     redis_url: str = "redis://localhost:6379"
     key_prefix: str = "rl:"

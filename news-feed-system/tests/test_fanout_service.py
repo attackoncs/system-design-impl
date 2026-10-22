@@ -10,16 +10,14 @@ Covers:
 
 from __future__ import annotations
 
+import news_feed_system.config
+import news_feed_system.fanout_service
+import news_feed_system.models
+import news_feed_system.post_cache
+import news_feed_system.queue
+import news_feed_system.social_graph
+import news_feed_system.social_graph_cache
 import pytest
-
-from news_feed_system.config import FanoutConfig
-from news_feed_system.fanout_service import FanoutService
-from news_feed_system.models import FanoutTask, Post
-from news_feed_system.post_cache import PostCache
-from news_feed_system.queue import MessageQueue
-from news_feed_system.social_graph import InMemorySocialGraph
-from news_feed_system.social_graph_cache import CachedSocialGraph
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -29,20 +27,20 @@ from news_feed_system.social_graph_cache import CachedSocialGraph
 def make_service(
     celebrity_threshold: int = 5,
     batch_size: int = 100,
-) -> tuple[FanoutService, InMemorySocialGraph, PostCache, MessageQueue]:
+) -> tuple[news_feed_system.fanout_service.FanoutService, news_feed_system.social_graph.InMemorySocialGraph, news_feed_system.post_cache.PostCache, news_feed_system.queue.MessageQueue]:
     """Create a FanoutService with in-memory dependencies.
 
     Returns the service plus its underlying components for inspection.
     """
-    graph = InMemorySocialGraph()
-    cached_graph = CachedSocialGraph(graph, ttl_seconds=300.0)
-    post_cache = PostCache(hot_capacity=100, normal_capacity=1000)
-    queue = MessageQueue()
-    config = FanoutConfig(
+    graph = news_feed_system.social_graph.InMemorySocialGraph()
+    cached_graph = news_feed_system.social_graph_cache.CachedSocialGraph(graph, ttl_seconds=300.0)
+    post_cache = news_feed_system.post_cache.PostCache(hot_capacity=100, normal_capacity=1000)
+    queue = news_feed_system.queue.MessageQueue()
+    config = news_feed_system.config.FanoutConfig(
         celebrity_threshold=celebrity_threshold,
         batch_size=batch_size,
     )
-    service = FanoutService(
+    service = news_feed_system.fanout_service.FanoutService(
         social_graph=cached_graph,
         post_cache=post_cache,
         queue=queue,
@@ -51,9 +49,9 @@ def make_service(
     return service, graph, post_cache, queue
 
 
-async def collect_all_tasks(queue: MessageQueue) -> list[FanoutTask]:
+async def collect_all_tasks(queue: news_feed_system.queue.MessageQueue) -> list[news_feed_system.models.FanoutTask]:
     """Drain all tasks currently in the queue and return them."""
-    tasks: list[FanoutTask] = []
+    tasks: list[news_feed_system.models.FanoutTask] = []
     while queue.size() > 0:
         tasks.append(await queue.dequeue())
     return tasks
@@ -63,8 +61,8 @@ def make_post(
     post_id: str = "p1",
     author_id: str = "author1",
     selective_sharing: list[str] | None = None,
-) -> Post:
-    return Post(
+) -> news_feed_system.models.Post:
+    return news_feed_system.models.Post(
         post_id=post_id,
         author_id=author_id,
         content="Hello world",
@@ -158,10 +156,14 @@ async def test_celebrity_fanout_stores_post_in_cache_not_queue() -> None:
     await service.fanout(post)
 
     # Post must be in the post cache
-    assert post_cache.contains("p1"), "Celebrity post should be stored in PostCache"
+    assert post_cache.contains(
+        "p1"
+    ), "Celebrity post should be stored in PostCache"
 
     # No fanout tasks should be enqueued
-    assert queue.size() == 0, "Celebrity fanout must not push tasks to the queue"
+    assert (
+        queue.size() == 0
+    ), "Celebrity fanout must not push tasks to the queue"
 
 
 @pytest.mark.asyncio
@@ -184,18 +186,22 @@ async def test_celebrity_fanout_above_threshold_no_queue_tasks() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Requirement 3.1: Celebrity threshold boundary (exactly at threshold = celebrity)
+# Requirement 3.1: Celebrity threshold boundary (exactly at threshold =
+# celebrity)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_celebrity_threshold_boundary_exactly_at_threshold() -> None:
-    """A user with follower_count == celebrity_threshold is classified as celebrity.
+    """A user with follower_count == celebrity_threshold is classified as
+    celebrity.
 
     Validates: Requirement 3.1
     """
     threshold = 10
-    service, graph, post_cache, queue = make_service(celebrity_threshold=threshold)
+    service, graph, post_cache, queue = make_service(
+        celebrity_threshold=threshold
+    )
 
     # Add exactly `threshold` followers
     for i in range(threshold):
@@ -215,7 +221,9 @@ async def test_non_celebrity_threshold_one_below() -> None:
     Validates: Requirement 3.1
     """
     threshold = 10
-    service, graph, post_cache, queue = make_service(celebrity_threshold=threshold)
+    service, graph, post_cache, queue = make_service(
+        celebrity_threshold=threshold
+    )
 
     # Add threshold - 1 followers
     for i in range(threshold - 1):
@@ -235,7 +243,9 @@ async def test_celebrity_threshold_boundary_fanout_behavior() -> None:
     Validates: Requirements 3.1, 3.4
     """
     threshold = 3
-    service, graph, post_cache, queue = make_service(celebrity_threshold=threshold)
+    service, graph, post_cache, queue = make_service(
+        celebrity_threshold=threshold
+    )
 
     for i in range(threshold):
         await graph.add_follow(f"follower{i}", "author1")
@@ -255,7 +265,9 @@ async def test_non_celebrity_one_below_threshold_fanout_behavior() -> None:
     Validates: Requirements 3.1, 3.3
     """
     threshold = 3
-    service, graph, post_cache, queue = make_service(celebrity_threshold=threshold)
+    service, graph, post_cache, queue = make_service(
+        celebrity_threshold=threshold
+    )
 
     # threshold - 1 followers
     for i in range(threshold - 1):
@@ -343,8 +355,11 @@ async def test_remove_mute_restores_follower_to_fanout() -> None:
 
 
 @pytest.mark.asyncio
-async def test_mute_is_directional_author_muting_follower_has_no_effect() -> None:
-    """Muting is follower-side: author muting a follower does not affect fanout.
+async def test_mute_is_directional_author_muting_follower_has_no_effect() -> (
+    None
+):
+    """Muting is follower-side: author muting a follower does not affect
+    fanout.
 
     Validates: Requirements 12.1, 12.3
     """
@@ -391,9 +406,10 @@ async def test_selective_sharing_includes_only_specified_followers() -> None:
     for task in tasks:
         all_targets.update(task.target_user_ids)
 
-    assert all_targets == {"follower1", "follower3"}, (
-        "Only followers in the selective sharing list should receive the post"
-    )
+    assert all_targets == {
+        "follower1",
+        "follower3",
+    }, "Only followers in the selective sharing list should receive the post"
 
 
 @pytest.mark.asyncio
@@ -488,7 +504,9 @@ async def test_mute_and_selective_sharing_combined() -> None:
     for task in tasks:
         all_targets.update(task.target_user_ids)
 
-    assert "follower2" not in all_targets, "Muted follower excluded even if in sharing list"
+    assert (
+        "follower2" not in all_targets
+    ), "Muted follower excluded even if in sharing list"
     assert "follower1" in all_targets
     assert "follower3" in all_targets
     assert "follower4" not in all_targets, "follower4 not in sharing list"

@@ -1,27 +1,30 @@
 """Notification service for alerting followers of new posts.
 
-When a post is successfully persisted, the NotificationService records
-a notification for each of the author's followers so they can be informed
-that new content is available.
+When a post is successfully persisted, the NotificationService records a
+notification for each of the author's followers so they can be informed that
+new content is available.
 """
 
 from __future__ import annotations
 
-from collections import defaultdict
+import collections
 from typing import Dict, List
 
-from news_feed_system.social_graph_cache import CachedSocialGraph
+import news_feed_system.social_graph_cache
 
 
 class NotificationService:
     """Notifies followers when new content is published.
 
     Maintains an in-memory store of pending notifications per user.
-    Notifications are recorded when an author publishes a post and can
-    be retrieved by any follower to discover new content.
+    Notifications are recorded when an author publishes a post and can be
+    retrieved by any follower to discover new content.
     """
 
-    def __init__(self, social_graph: CachedSocialGraph) -> None:
+    def __init__(
+        self,
+        social_graph: news_feed_system.social_graph_cache.CachedSocialGraph,
+    ) -> None:
         """Initialise the notification service.
 
         Args:
@@ -30,7 +33,9 @@ class NotificationService:
         """
         self._social_graph = social_graph
         # user_id -> list of (author_id, post_id) notification tuples
-        self._notifications: Dict[str, List[tuple]] = defaultdict(list)
+        self._notifications: Dict[str, List[tuple]] = collections.defaultdict(
+            list
+        )
 
     async def notify_followers(self, author_id: str, post_id: str) -> None:
         """Record a notification for every follower of *author_id*.

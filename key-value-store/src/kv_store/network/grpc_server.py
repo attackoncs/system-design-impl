@@ -1,11 +1,12 @@
-"""gRPC server for the distributed key-value store.
+"""GRPC server for the distributed key-value store.
 
 Implements the KVStoreService defined in kvstore.proto, handling:
 - Client-facing CRUD operations (Put, Get, Delete) via RequestCoordinator
 - Inter-node replication (Replicate) writing directly to local StorageEngine
 - Gossip membership exchange (GossipExchange) via GossipProtocol
 - Hinted handoff delivery (HintedHandoff) writing to local storage
-- Anti-entropy Merkle tree sync (MerkleTreeSync) comparing trees and returning diffs
+- Anti-entropy Merkle tree sync (MerkleTreeSync) comparing trees and returning
+diffs
 
 Uses grpc.aio for async server support.
 """
@@ -13,20 +14,22 @@ Uses grpc.aio for async server support.
 from __future__ import annotations
 
 import logging
-import time
 from typing import Optional
 
 import grpc
 import grpc.aio
 
-from kv_store.network import kvstore_pb2
-from kv_store.network import kvstore_pb2_grpc
-from kv_store.replication.vector_clock import VectorClock
+from kv_store.cluster import gossip as cluster_gossip
+from kv_store.network import kvstore_pb2, kvstore_pb2_grpc
+from kv_store.replication import quorum as replication_quorum
+from kv_store.replication import vector_clock as replication_vector_clock
 
 logger = logging.getLogger(__name__)
 
 
-def vector_clock_to_proto(clock: VectorClock) -> kvstore_pb2.VectorClockProto:
+def vector_clock_to_proto(
+    clock: replication_vector_clock.VectorClock,
+) -> kvstore_pb2.VectorClockProto:
     """Convert a VectorClock to its protobuf representation.
 
     Args:
@@ -42,7 +45,9 @@ def vector_clock_to_proto(clock: VectorClock) -> kvstore_pb2.VectorClockProto:
     return proto
 
 
-def proto_to_vector_clock(proto: kvstore_pb2.VectorClockProto) -> VectorClock:
+def proto_to_vector_clock(
+    proto: kvstore_pb2.VectorClockProto,
+) -> replication_vector_clock.VectorClock:
     """Convert a VectorClockProto to a VectorClock instance.
 
     Args:
@@ -52,15 +57,15 @@ def proto_to_vector_clock(proto: kvstore_pb2.VectorClockProto) -> VectorClock:
         VectorClock instance.
     """
     entries = {entry.node_id: entry.counter for entry in proto.entries}
-    return VectorClock.from_dict(entries)
+    return replication_vector_clock.VectorClock.from_dict(entries)
 
 
 class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
-    """gRPC service implementation for the KVStoreService.
+    """GRPC service implementation for the KVStoreService.
 
-    Delegates client operations to the RequestCoordinator and handles
-    inter-node communication for replication, gossip, hinted handoff,
-    and anti-entropy sync.
+    Delegates client operations to the RequestCoordinator and handles inter-
+    node communication for replication, gossip, hinted handoff, and anti-
+    entropy sync.
     """
 
     def __init__(
@@ -74,7 +79,8 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
 
         Args:
             coordinator: RequestCoordinator for handling client Put/Get/Delete.
-            storage_engine: StorageEngine for direct local writes (Replicate, HintedHandoff).
+            storage_engine: StorageEngine for direct local writes (Replicate,
+                HintedHandoff).
             gossip_protocol: GossipProtocol for membership exchange.
             merkle_tree: MerkleTree for anti-entropy sync.
         """
@@ -87,7 +93,8 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
         """Handle a Put RPC - delegate to RequestCoordinator.
 
         Args:
-            request: PutRequest with key, value, vector_clock, consistency_level.
+            request: PutRequest with key, value, vector_clock,
+                consistency_level.
             context: gRPC service context.
 
         Returns:
@@ -100,11 +107,13 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
                 client_clock = proto_to_vector_clock(request.vector_clock)
 
             # Parse consistency level
-            from kv_store.replication.quorum import ConsistencyLevel
+
             consistency = None
             if request.consistency_level:
                 try:
-                    consistency = ConsistencyLevel(request.consistency_level)
+                    consistency = replication_quorum.ConsistencyLevel(
+                        request.consistency_level
+                    )
                 except ValueError:
                     pass
 
@@ -119,7 +128,11 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
                 success=result.success,
                 vector_clock=vector_clock_to_proto(result.vector_clock),
             )
-        except Exception as e:
+        # Isolate this operation; record failures before continuing.
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logging.getLogger(__name__).exception(
+                "Failure isolated in %s", "Put"
+            )
             logger.error("Put RPC failed: %s", e)
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
@@ -136,11 +149,13 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
             GetResponse with value, vector clock, and conflict information.
         """
         try:
-            from kv_store.replication.quorum import ConsistencyLevel
+
             consistency = None
             if request.consistency_level:
                 try:
-                    consistency = ConsistencyLevel(request.consistency_level)
+                    consistency = replication_quorum.ConsistencyLevel(
+                        request.consistency_level
+                    )
                 except ValueError:
                     pass
 
@@ -171,7 +186,11 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
                     response.conflicting_values.append(cv)
 
             return response
-        except Exception as e:
+        # Isolate this operation; record failures before continuing.
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logging.getLogger(__name__).exception(
+                "Failure isolated in %s", "Get"
+            )
             logger.error("Get RPC failed: %s", e)
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
@@ -192,11 +211,12 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
             if request.vector_clock and request.vector_clock.entries:
                 client_clock = proto_to_vector_clock(request.vector_clock)
 
-            from kv_store.replication.quorum import ConsistencyLevel
             consistency = None
             if request.consistency_level:
                 try:
-                    consistency = ConsistencyLevel(request.consistency_level)
+                    consistency = replication_quorum.ConsistencyLevel(
+                        request.consistency_level
+                    )
                 except ValueError:
                     pass
 
@@ -210,7 +230,11 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
                 success=result.success,
                 vector_clock=vector_clock_to_proto(result.vector_clock),
             )
-        except Exception as e:
+        # Isolate this operation; record failures before continuing.
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logging.getLogger(__name__).exception(
+                "Failure isolated in %s", "Delete"
+            )
             logger.error("Delete RPC failed: %s", e)
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
@@ -222,7 +246,8 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
         Used for inter-node replication of writes.
 
         Args:
-            request: ReplicateRequest with key, value, vector_clock, timestamp, is_tombstone.
+            request: ReplicateRequest with key, value, vector_clock, timestamp,
+                is_tombstone.
             context: gRPC service context.
 
         Returns:
@@ -230,13 +255,19 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
         """
         try:
             if request.is_tombstone:
-                await self._storage_engine.delete(request.key, request.timestamp)
+                await self._storage_engine.delete(
+                    request.key, request.timestamp
+                )
             else:
                 await self._storage_engine.put(
                     request.key, request.value, request.timestamp
                 )
             return kvstore_pb2.ReplicateResponse(success=True)
-        except Exception as e:
+        # Isolate this operation; record failures before continuing.
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logging.getLogger(__name__).exception(
+                "Failure isolated in %s", "Replicate"
+            )
             logger.error("Replicate RPC failed: %s", e)
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
@@ -256,19 +287,18 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
             GossipMessage with local membership list.
         """
         try:
-            from kv_store.cluster.gossip import MemberInfo, NodeStatus
 
-            # Convert proto members to MemberInfo
+            # Convert proto members to cluster_gossip.MemberInfo
             remote_members = []
             for member_proto in request.members:
-                status = NodeStatus.ALIVE
+                status = cluster_gossip.NodeStatus.ALIVE
                 try:
-                    status = NodeStatus(member_proto.status)
+                    status = cluster_gossip.NodeStatus(member_proto.status)
                 except ValueError:
                     pass
 
                 remote_members.append(
-                    MemberInfo(
+                    cluster_gossip.MemberInfo(
                         node_id=member_proto.node_id,
                         address=member_proto.address,
                         heartbeat_counter=member_proto.heartbeat_counter,
@@ -291,7 +321,11 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
                 response.members.append(member_proto)
 
             return response
-        except Exception as e:
+        # Isolate this operation; record failures before continuing.
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logging.getLogger(__name__).exception(
+                "Failure isolated in %s", "GossipExchange"
+            )
             logger.error("GossipExchange RPC failed: %s", e)
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
@@ -304,7 +338,8 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
         while it was unavailable.
 
         Args:
-            request: HintedHandoffRequest with key, value, vector_clock, timestamp, is_tombstone.
+            request: HintedHandoffRequest with key, value, vector_clock,
+                timestamp, is_tombstone.
             context: gRPC service context.
 
         Returns:
@@ -312,13 +347,19 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
         """
         try:
             if request.is_tombstone:
-                await self._storage_engine.delete(request.key, request.timestamp)
+                await self._storage_engine.delete(
+                    request.key, request.timestamp
+                )
             else:
                 await self._storage_engine.put(
                     request.key, request.value, request.timestamp
                 )
             return kvstore_pb2.HintedHandoffResponse(success=True)
-        except Exception as e:
+        # Isolate this operation; record failures before continuing.
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logging.getLogger(__name__).exception(
+                "Failure isolated in %s", "HintedHandoff"
+            )
             logger.error("HintedHandoff RPC failed: %s", e)
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
@@ -367,7 +408,11 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
                         response.key_value_pairs.append(kv_pair)
 
             return response
-        except Exception as e:
+        # Isolate this operation; record failures before continuing.
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logging.getLogger(__name__).exception(
+                "Failure isolated in %s", "MerkleTreeSync"
+            )
             logger.error("MerkleTreeSync RPC failed: %s", e)
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))

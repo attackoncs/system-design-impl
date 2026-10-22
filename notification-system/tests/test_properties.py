@@ -1,40 +1,55 @@
 """Property-based tests for the notification system using Hypothesis.
 
-These tests verify universal correctness properties that must hold
-across all valid inputs, complementing example-based unit tests.
+These tests verify universal correctness properties that must hold across all
+valid inputs, complementing example-based unit tests.
 """
 
 import asyncio
+import datetime
+import re
 import uuid
 from typing import List
 
+import hypothesis
+import notification_system.config
+import notification_system.contacts
+import notification_system.dedup
+import notification_system.exceptions
+import notification_system.log
+import notification_system.models
+import notification_system.queue
+import notification_system.rate_limiter
+import notification_system.retry
+import notification_system.service
+import notification_system.settings
+import notification_system.templates
+import notification_system.tracker
 import pytest
-from hypothesis import given, settings, assume
 from hypothesis import strategies as st
-
-from notification_system.dedup import Deduplicator
-from notification_system.exceptions import DuplicateNotificationError, QueueFullError
-from notification_system.models import Channel, NotificationRequest, NotificationTask
-from notification_system.queue import MessageQueue
-
 
 # --- Strategies ---
 
-channels = st.sampled_from(list(Channel))
-recipient_ids = st.text(min_size=1, max_size=20, alphabet=st.characters(whitelist_categories=("L", "N")))
+channels = st.sampled_from(list(notification_system.models.Channel))
+recipient_ids = st.text(
+    min_size=1,
+    max_size=20,
+    alphabet=st.characters(whitelist_categories=("L", "N")),
+)
 content_strings = st.text(min_size=1, max_size=100)
-ttl_values = st.floats(min_value=1.0, max_value=3600.0, allow_nan=False, allow_infinity=False)
+ttl_values = st.floats(
+    min_value=1.0, max_value=3600.0, allow_nan=False, allow_infinity=False
+)
 
 
 def make_task(channel, notification_id="notif-1"):
     """Helper to create a NotificationTask for a given channel."""
-    request = NotificationRequest(
+    request = notification_system.models.NotificationRequest(
         recipient_id="user-1",
         channel=channel,
         title="Test",
         body="Test body",
     )
-    return NotificationTask(
+    return notification_system.models.NotificationTask(
         notification_id=notification_id,
         request=request,
         channel=channel,
@@ -45,14 +60,16 @@ def make_task(channel, notification_id="notif-1"):
 # Validates: Requirements 2.3, 2.4, 2.5
 
 
-@given(
+@hypothesis.given(
     channel=channels,
     max_depth=st.integers(min_value=1, max_value=100),
     num_enqueues=st.integers(min_value=0, max_value=100),
     num_dequeues=st.integers(min_value=0, max_value=100),
 )
-@settings(max_examples=200)
-def test_queue_depth_equals_enqueues_minus_dequeues(channel, max_depth, num_enqueues, num_dequeues):
+@hypothesis.settings(max_examples=200)
+def test_queue_depth_equals_enqueues_minus_dequeues(
+    channel, max_depth, num_enqueues, num_dequeues
+):
     """Property 6: Queue depth invariant.
 
     After N enqueues and M dequeues (M <= N, N <= max_depth),
@@ -60,12 +77,13 @@ def test_queue_depth_equals_enqueues_minus_dequeues(channel, max_depth, num_enqu
 
     **Validates: Requirements 2.3, 2.4, 2.5**
     """
-    # Constrain: can't enqueue more than max_depth, can't dequeue more than enqueued
+    # Constrain: can't enqueue more than max_depth, can't dequeue more than
+    # enqueued
     actual_enqueues = min(num_enqueues, max_depth)
     actual_dequeues = min(num_dequeues, actual_enqueues)
 
     async def run():
-        mq = MessageQueue(max_depth=max_depth)
+        mq = notification_system.queue.MessageQueue(max_depth=max_depth)
 
         # Enqueue actual_enqueues tasks
         for i in range(actual_enqueues):
@@ -86,11 +104,11 @@ def test_queue_depth_equals_enqueues_minus_dequeues(channel, max_depth, num_enqu
     asyncio.get_event_loop().run_until_complete(run())
 
 
-@given(
+@hypothesis.given(
     channel=channels,
     max_depth=st.integers(min_value=1, max_value=50),
 )
-@settings(max_examples=100)
+@hypothesis.settings(max_examples=100)
 def test_queue_full_raises_error_at_max_depth(channel, max_depth):
     """Property 6: Queue depth invariant - overflow case.
 
@@ -101,7 +119,7 @@ def test_queue_full_raises_error_at_max_depth(channel, max_depth):
     """
 
     async def run():
-        mq = MessageQueue(max_depth=max_depth)
+        mq = notification_system.queue.MessageQueue(max_depth=max_depth)
 
         # Fill the queue to max_depth
         for i in range(max_depth):
@@ -114,7 +132,7 @@ def test_queue_full_raises_error_at_max_depth(channel, max_depth):
 
         # Attempting to enqueue one more should raise QueueFullError
         overflow_task = make_task(channel, notification_id="overflow")
-        with pytest.raises(QueueFullError) as exc_info:
+        with pytest.raises(notification_system.exceptions.QueueFullError) as exc_info:
             await mq.enqueue(overflow_task)
 
         assert exc_info.value.channel == channel.value
@@ -126,7 +144,7 @@ def test_queue_full_raises_error_at_max_depth(channel, max_depth):
     asyncio.get_event_loop().run_until_complete(run())
 
 
-@given(
+@hypothesis.given(
     channel=channels,
     max_depth=st.integers(min_value=1, max_value=50),
     operations=st.lists(
@@ -135,7 +153,7 @@ def test_queue_full_raises_error_at_max_depth(channel, max_depth):
         max_size=100,
     ),
 )
-@settings(max_examples=200)
+@hypothesis.settings(max_examples=200)
 def test_queue_depth_never_exceeds_max_depth(channel, max_depth, operations):
     """Property 6: Queue depth invariant - arbitrary operation sequences.
 
@@ -146,7 +164,7 @@ def test_queue_depth_never_exceeds_max_depth(channel, max_depth, operations):
     """
 
     async def run():
-        mq = MessageQueue(max_depth=max_depth)
+        mq = notification_system.queue.MessageQueue(max_depth=max_depth)
         enqueue_count = 0
         dequeue_count = 0
 
@@ -156,7 +174,7 @@ def test_queue_depth_never_exceeds_max_depth(channel, max_depth, operations):
                 try:
                     await mq.enqueue(task)
                     enqueue_count += 1
-                except QueueFullError:
+                except notification_system.exceptions.QueueFullError:
                     # Expected when queue is full
                     pass
             else:  # dequeue
@@ -177,12 +195,17 @@ def test_queue_depth_never_exceeds_max_depth(channel, max_depth, operations):
 
 # Strategies for Property 14
 recipient_ids = st.text(
-    min_size=1, max_size=50,
-    alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="_-"),
+    min_size=1,
+    max_size=50,
+    alphabet=st.characters(
+        whitelist_categories=("L", "N"), whitelist_characters="_-"
+    ),
 )
 content_strings = st.text(min_size=1, max_size=200)
 notification_ids_uuid = st.builds(lambda: uuid.uuid4().hex)
-ttl_values = st.floats(min_value=1.0, max_value=3600.0, allow_nan=False, allow_infinity=False)
+ttl_values = st.floats(
+    min_value=1.0, max_value=3600.0, allow_nan=False, allow_infinity=False
+)
 
 
 class TestProperty14DuplicateSuppressionWithinWindow:
@@ -195,7 +218,7 @@ class TestProperty14DuplicateSuppressionWithinWindow:
     **Validates: Requirements 7.2, 7.4**
     """
 
-    @given(
+    @hypothesis.given(
         recipient_id=recipient_ids,
         channel=channels,
         content=content_strings,
@@ -203,11 +226,11 @@ class TestProperty14DuplicateSuppressionWithinWindow:
         duplicate_id=notification_ids_uuid,
         ttl=ttl_values,
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_duplicate_raises_error_within_window(
         self,
         recipient_id: str,
-        channel: Channel,
+        channel: notification_system.models.Channel,
         content: str,
         original_id: str,
         duplicate_id: str,
@@ -220,32 +243,36 @@ class TestProperty14DuplicateSuppressionWithinWindow:
         **Validates: Requirements 7.2, 7.4**
         """
         current_time = 0.0
-        dedup = Deduplicator(window_seconds=ttl, clock=lambda: current_time)
+        dedup = notification_system.dedup.Deduplicator(window_seconds=ttl, clock=lambda: current_time)
 
         # First call should succeed without raising
         dedup.check_and_record(recipient_id, channel, content, original_id)
 
-        # Second call with same (recipient, channel, content) within TTL should raise
-        with pytest.raises(DuplicateNotificationError) as exc_info:
+        # Second call with same (recipient, channel, content) within TTL should
+        # raise
+        with pytest.raises(notification_system.exceptions.DuplicateNotificationError) as exc_info:
             dedup.check_and_record(recipient_id, channel, content, duplicate_id)
 
-        # The error must reference the original notification ID (Requirement 7.4)
+        # The error must reference the original notification ID (Requirement
+        # 7.4)
         assert exc_info.value.original_id == original_id
 
-    @given(
+    @hypothesis.given(
         recipient_id=recipient_ids,
         channel=channels,
         content=content_strings,
         original_id=notification_ids_uuid,
         duplicate_id=notification_ids_uuid,
         ttl=ttl_values,
-        elapsed_fraction=st.floats(min_value=0.0, max_value=0.99, allow_nan=False, allow_infinity=False),
+        elapsed_fraction=st.floats(
+            min_value=0.0, max_value=0.99, allow_nan=False, allow_infinity=False
+        ),
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_duplicate_detected_at_any_point_within_window(
         self,
         recipient_id: str,
-        channel: Channel,
+        channel: notification_system.models.Channel,
         content: str,
         original_id: str,
         duplicate_id: str,
@@ -262,7 +289,7 @@ class TestProperty14DuplicateSuppressionWithinWindow:
         def clock():
             return current_time
 
-        dedup = Deduplicator(window_seconds=ttl, clock=clock)
+        dedup = notification_system.dedup.Deduplicator(window_seconds=ttl, clock=clock)
 
         # Record the original notification at time 0
         dedup.check_and_record(recipient_id, channel, content, original_id)
@@ -271,7 +298,7 @@ class TestProperty14DuplicateSuppressionWithinWindow:
         current_time = ttl * elapsed_fraction
 
         # Should still be detected as duplicate
-        with pytest.raises(DuplicateNotificationError) as exc_info:
+        with pytest.raises(notification_system.exceptions.DuplicateNotificationError) as exc_info:
             dedup.check_and_record(recipient_id, channel, content, duplicate_id)
 
         assert exc_info.value.original_id == original_id
@@ -290,35 +317,35 @@ content_strings = st.text(min_size=1, max_size=200)
 class TestProperty13DeduplicationKeyDeterminism:
     """Property 13: Deduplication key determinism.
 
-    For any (recipient_id, channel, content) triple, computing the deduplication
-    key multiple times SHALL always produce the same result. Two triples that
-    differ in any component SHALL produce different keys.
+    For any (recipient_id, channel, content) triple, computing the
+    deduplication key multiple times SHALL always produce the same result. Two
+    triples that differ in any component SHALL produce different keys.
 
     **Validates: Requirements 7.1**
     """
 
-    @given(
+    @hypothesis.given(
         recipient_id=recipient_ids,
         channel=channels,
         content=content_strings,
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_compute_key_is_deterministic(
-        self, recipient_id: str, channel: Channel, content: str
+        self, recipient_id: str, channel: notification_system.models.Channel, content: str
     ) -> None:
         """For any input triple, compute_key always returns the same result.
 
         **Validates: Requirements 7.1**
         """
-        dedup = Deduplicator()
+        dedup = notification_system.dedup.Deduplicator()
         key1 = dedup.compute_key(recipient_id, channel, content)
         key2 = dedup.compute_key(recipient_id, channel, content)
         assert key1 == key2, (
-            f"compute_key is not deterministic for "
+            "compute_key is not deterministic for "
             f"({recipient_id!r}, {channel}, {content!r}): {key1} != {key2}"
         )
 
-    @given(
+    @hypothesis.given(
         recipient_id_a=recipient_ids,
         channel_a=channels,
         content_a=content_strings,
@@ -326,14 +353,14 @@ class TestProperty13DeduplicationKeyDeterminism:
         channel_b=channels,
         content_b=content_strings,
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_different_inputs_produce_different_keys(
         self,
         recipient_id_a: str,
-        channel_a: Channel,
+        channel_a: notification_system.models.Channel,
         content_a: str,
         recipient_id_b: str,
-        channel_b: Channel,
+        channel_b: notification_system.models.Channel,
         content_b: str,
     ) -> None:
         """Different inputs produce different keys (with high probability).
@@ -343,64 +370,65 @@ class TestProperty13DeduplicationKeyDeterminism:
         **Validates: Requirements 7.1**
         """
         # Only test when at least one component differs
-        assume(
+        hypothesis.assume(
             recipient_id_a != recipient_id_b
             or channel_a != channel_b
             or content_a != content_b
         )
 
-        dedup = Deduplicator()
+        dedup = notification_system.dedup.Deduplicator()
         key_a = dedup.compute_key(recipient_id_a, channel_a, content_a)
         key_b = dedup.compute_key(recipient_id_b, channel_b, content_b)
         assert key_a != key_b, (
-            f"Different inputs produced the same key: "
-            f"({recipient_id_a!r}, {channel_a}, {content_a!r}) and "
-            f"({recipient_id_b!r}, {channel_b}, {content_b!r}) both gave {key_a}"
+            f"Different inputs produced the same key: ({recipient_id_a!r},"
+            f" {channel_a}, {content_a!r}) and ({recipient_id_b!r},"
+            f" {channel_b}, {content_b!r}) both gave {key_a}"
         )
 
 
 # --- Property 10: Rate limiter enforcement ---
 # Validates: Requirements 6.1, 6.4
 
-from notification_system.config import RateLimitConfig
-from notification_system.exceptions import RateLimitExceededError
-from notification_system.rate_limiter import SlidingWindowRateLimiter
 
 # Strategies for rate limiter tests
 user_ids = st.text(
-    alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="_-"),
+    alphabet=st.characters(
+        whitelist_categories=("L", "N"), whitelist_characters="_-"
+    ),
     min_size=1,
     max_size=20,
 )
 
 rate_limit_configs = st.builds(
-    RateLimitConfig,
+    notification_system.config.RateLimitConfig,
     max_count=st.integers(min_value=1, max_value=50),
-    window_seconds=st.floats(min_value=1.0, max_value=3600.0, allow_nan=False, allow_infinity=False),
+    window_seconds=st.floats(
+        min_value=1.0, max_value=3600.0, allow_nan=False, allow_infinity=False
+    ),
 )
 
 
 class TestProperty10RateLimiterEnforcement:
     """Property 10: Rate limiter enforcement.
 
-    For any rate limit config (max_count N, window W), after recording
-    exactly N notifications for a user+channel, the next check raises
+    For any rate limit config (max_count N, window W), after recording exactly
+    N notifications for a user+channel, the next check raises
     RateLimitExceededError. Before N, checks pass.
 
     **Validates: Requirements 6.1, 6.4**
     """
 
-    @given(
+    @hypothesis.given(
         user_id=user_ids,
         channel=channels,
         config=rate_limit_configs,
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_rate_limit_enforced_after_n_notifications(
-        self, user_id: str, channel: Channel, config: RateLimitConfig
+        self, user_id: str, channel: notification_system.models.Channel, config: notification_system.config.RateLimitConfig
     ):
-        """After exactly N recordings within window W, the (N+1)th check
-        raises RateLimitExceededError.
+        """After exactly N recordings within window W, the (N+1)th check raises
+        RateLimitExceededError.
 
         **Validates: Requirements 6.1, 6.4**
         """
@@ -412,43 +440,46 @@ class TestProperty10RateLimiterEnforcement:
         # Set up limiter with the generated config for the specific channel
         # Use a very high global limit so it doesn't interfere
         per_channel_limits = {channel: config}
-        global_limit = RateLimitConfig(max_count=10000, window_seconds=config.window_seconds)
+        global_limit = notification_system.config.RateLimitConfig(
+            max_count=10000, window_seconds=config.window_seconds
+        )
 
-        limiter = SlidingWindowRateLimiter(
+        limiter = notification_system.rate_limiter.SlidingWindowRateLimiter(
             per_channel_limits=per_channel_limits,
             global_limit=global_limit,
             clock=clock,
         )
 
-        # Record exactly N notifications - all checks before recording should pass
+        # Record exactly N notifications - all checks before recording should
+        # pass
         for i in range(config.max_count):
             # Check should pass before we've hit the limit
             limiter.check(user_id, channel)
             limiter.record(user_id, channel)
 
         # The (N+1)th check should raise RateLimitExceededError
-        with pytest.raises(RateLimitExceededError) as exc_info:
+        with pytest.raises(notification_system.exceptions.RateLimitExceededError) as exc_info:
             limiter.check(user_id, channel)
 
         assert exc_info.value.user_id == user_id
         assert exc_info.value.limit == config.max_count
         assert exc_info.value.window == config.window_seconds
 
-    @given(
+    @hypothesis.given(
         user_id=user_ids,
         channel=channels,
         config=rate_limit_configs,
         k=st.integers(min_value=0, max_value=49),
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_checks_pass_before_limit_reached(
-        self, user_id: str, channel: Channel, config: RateLimitConfig, k: int
+        self, user_id: str, channel: notification_system.models.Channel, config: notification_system.config.RateLimitConfig, k: int
     ):
         """Before N notifications are recorded, checks pass without raising.
 
         **Validates: Requirements 6.1, 6.4**
         """
-        assume(k < config.max_count)
+        hypothesis.assume(k < config.max_count)
 
         current_time = 0.0
 
@@ -456,9 +487,11 @@ class TestProperty10RateLimiterEnforcement:
             return current_time
 
         per_channel_limits = {channel: config}
-        global_limit = RateLimitConfig(max_count=10000, window_seconds=config.window_seconds)
+        global_limit = notification_system.config.RateLimitConfig(
+            max_count=10000, window_seconds=config.window_seconds
+        )
 
-        limiter = SlidingWindowRateLimiter(
+        limiter = notification_system.rate_limiter.SlidingWindowRateLimiter(
             per_channel_limits=per_channel_limits,
             global_limit=global_limit,
             clock=clock,
@@ -476,14 +509,10 @@ class TestProperty10RateLimiterEnforcement:
 # --- Property 11: Per-channel rate limit independence ---
 # Validates: Requirements 6.2
 
-from notification_system.config import RateLimitConfig
-from notification_system.exceptions import RateLimitExceededError
-from notification_system.rate_limiter import SlidingWindowRateLimiter
-
 
 def distinct_channel_pairs():
     """Strategy that generates two distinct Channel values."""
-    all_channels = list(Channel)
+    all_channels = list(notification_system.models.Channel)
     return st.tuples(
         st.sampled_from(all_channels),
         st.sampled_from(all_channels),
@@ -493,24 +522,28 @@ def distinct_channel_pairs():
 class TestProperty11PerChannelRateLimitIndependence:
     """Property 11: Per-channel rate limit independence.
 
-    For any user, exhausting the rate limit on one channel SHALL NOT
-    affect the rate limit availability on other channels (each channel's
-    limit is tracked independently).
+    For any user, exhausting the rate limit on one channel SHALL NOT affect the
+    rate limit availability on other channels (each channel's limit is tracked
+    independently).
 
     **Validates: Requirements 6.2**
     """
 
-    @given(
+    @hypothesis.given(
         channel_pair=distinct_channel_pairs(),
-        user_id=st.text(min_size=1, max_size=20, alphabet=st.characters(whitelist_categories=("L", "N"))),
+        user_id=st.text(
+            min_size=1,
+            max_size=20,
+            alphabet=st.characters(whitelist_categories=("L", "N")),
+        ),
         max_count=st.integers(min_value=1, max_value=20),
     )
-    @settings(max_examples=100)
+    @hypothesis.settings(max_examples=100)
     def test_exhausting_one_channel_does_not_affect_another(
         self, channel_pair: tuple, user_id: str, max_count: int
     ):
-        """Exhausting the rate limit on one channel does not affect the
-        rate limit on a different channel for the same user.
+        """Exhausting the rate limit on one channel does not affect the rate
+        limit on a different channel for the same user.
 
         **Validates: Requirements 6.2**
         """
@@ -518,12 +551,12 @@ class TestProperty11PerChannelRateLimitIndependence:
 
         # Configure per-channel limits with the same max_count for all channels
         per_channel_limits = {
-            ch: RateLimitConfig(max_count=max_count, window_seconds=3600.0)
-            for ch in Channel
+            ch: notification_system.config.RateLimitConfig(max_count=max_count, window_seconds=3600.0)
+            for ch in notification_system.models.Channel
         }
         # Set global limit high enough to not interfere with per-channel testing
-        global_limit = RateLimitConfig(
-            max_count=max_count * len(Channel) + 100, window_seconds=3600.0
+        global_limit = notification_system.config.RateLimitConfig(
+            max_count=max_count * len(notification_system.models.Channel) + 100, window_seconds=3600.0
         )
 
         clock_time = [0.0]
@@ -531,7 +564,7 @@ class TestProperty11PerChannelRateLimitIndependence:
         def fake_clock() -> float:
             return clock_time[0]
 
-        limiter = SlidingWindowRateLimiter(
+        limiter = notification_system.rate_limiter.SlidingWindowRateLimiter(
             per_channel_limits=per_channel_limits,
             global_limit=global_limit,
             clock=fake_clock,
@@ -545,7 +578,7 @@ class TestProperty11PerChannelRateLimitIndependence:
 
         # Verify channel_a is now rate-limited
         clock_time[0] = float(max_count)
-        with pytest.raises(RateLimitExceededError):
+        with pytest.raises(notification_system.exceptions.RateLimitExceededError):
             limiter.check(user_id, channel_a)
 
         # Verify channel_b is NOT affected - should still accept notifications
@@ -560,18 +593,19 @@ class TestProperty11PerChannelRateLimitIndependence:
 
         # Now channel_b should also be exhausted (independently)
         clock_time[0] = float(max_count + max_count)
-        with pytest.raises(RateLimitExceededError):
+        with pytest.raises(notification_system.exceptions.RateLimitExceededError):
             limiter.check(user_id, channel_b)
 
 
 # --- Property 9: Template registration round-trip ---
 # Validates: Requirements 5.6
 
-from notification_system.templates import NotificationTemplate, TemplateRegistry
 
 # Strategy for valid template IDs: non-empty strings of word characters
 template_ids = st.text(
-    alphabet=st.characters(whitelist_categories=("L", "N", "Pc"), whitelist_characters="-"),
+    alphabet=st.characters(
+        whitelist_categories=("L", "N", "Pc"), whitelist_characters="-"
+    ),
     min_size=1,
     max_size=50,
 )
@@ -583,28 +617,31 @@ template_text = st.text(min_size=0, max_size=200)
 class TestProperty9TemplateRegistrationRoundTrip:
     """Property 9: Template registration round-trip.
 
-    For any notification template registered with a unique ID, retrieving
-    that template by ID SHALL return a template with the same ID, title
-    template, and body template, and the ID appears in list_ids().
+    For any notification template registered with a unique ID, retrieving that
+    template by ID SHALL return a template with the same ID, title template,
+    and body template, and the ID appears in list_ids().
 
     **Validates: Requirements 5.6**
     """
 
-    @given(
+    @hypothesis.given(
         template_id=template_ids,
         title=template_text,
         body=template_text,
     )
-    @settings(max_examples=100)
+    @hypothesis.settings(max_examples=100)
     def test_registered_template_retrievable_by_id(
         self, template_id: str, title: str, body: str
     ) -> None:
-        """Registering a template and retrieving it by ID returns the same template object.
+        """Registering a template and retrieving it by ID returns the same
+        template object.
 
         **Validates: Requirements 5.6**
         """
-        registry = TemplateRegistry()
-        template = NotificationTemplate(template_id=template_id, title=title, body=body)
+        registry = notification_system.templates.TemplateRegistry()
+        template = notification_system.templates.NotificationTemplate(
+            template_id=template_id, title=title, body=body
+        )
 
         registry.register(template)
         retrieved = registry.get(template_id)
@@ -615,12 +652,12 @@ class TestProperty9TemplateRegistrationRoundTrip:
         assert retrieved.title_template == title
         assert retrieved.body_template == body
 
-    @given(
+    @hypothesis.given(
         template_id=template_ids,
         title=template_text,
         body=template_text,
     )
-    @settings(max_examples=100)
+    @hypothesis.settings(max_examples=100)
     def test_registered_template_id_in_list_ids(
         self, template_id: str, title: str, body: str
     ) -> None:
@@ -628,8 +665,10 @@ class TestProperty9TemplateRegistrationRoundTrip:
 
         **Validates: Requirements 5.6**
         """
-        registry = TemplateRegistry()
-        template = NotificationTemplate(template_id=template_id, title=title, body=body)
+        registry = notification_system.templates.TemplateRegistry()
+        template = notification_system.templates.NotificationTemplate(
+            template_id=template_id, title=title, body=body
+        )
 
         registry.register(template)
 
@@ -639,18 +678,17 @@ class TestProperty9TemplateRegistrationRoundTrip:
 # --- Property 7: Template rendering substitution ---
 # Validates: Requirements 5.1, 5.2
 
-import re
-
-from notification_system.templates import NotificationTemplate
-
 
 # Strategy for valid placeholder names (word characters, starts with letter)
-_placeholder_name_st = st.from_regex(r"[a-zA-Z][a-zA-Z0-9_]{0,14}", fullmatch=True)
+_placeholder_name_st = st.from_regex(
+    r"[a-zA-Z][a-zA-Z0-9_]{0,14}", fullmatch=True
+)
 
 
 @st.composite
 def template_with_params(draw):
-    """Generate a template with placeholders and a complete matching params dict.
+    """Generate a template with placeholders and a complete matching params
+    dict.
 
     Produces a tuple of (title_template, body_template, params) where:
     - title and body contain {placeholder} syntax interspersed with literal text
@@ -668,7 +706,8 @@ def template_with_params(draw):
         )
     )
 
-    # Literal text that cannot contain braces (avoids accidental placeholder syntax)
+    # Literal text that cannot contain braces (avoids accidental placeholder
+    # syntax)
     literal_st = st.text(
         alphabet=st.characters(
             blacklist_characters="{}",
@@ -700,7 +739,8 @@ def template_with_params(draw):
     body_parts.append(draw(literal_st))
     body = "".join(body_parts)
 
-    # Generate param values without brace characters (no {word} patterns in values)
+    # Generate param values without brace characters (no {word} patterns in
+    # values)
     value_st = st.text(
         alphabet=st.characters(
             blacklist_characters="{}",
@@ -722,15 +762,15 @@ _PLACEHOLDER_RE = re.compile(r"\{\w+\}")
 class TestProperty7TemplateRenderingSubstitution:
     """Property 7: Template rendering substitution.
 
-    For any template with placeholders and a complete params dict,
-    rendering produces output where all placeholders are replaced with
-    their corresponding values and no {placeholder} syntax remains.
+    For any template with placeholders and a complete params dict, rendering
+    produces output where all placeholders are replaced with their
+    corresponding values and no {placeholder} syntax remains.
 
     **Validates: Requirements 5.1, 5.2**
     """
 
-    @given(data=template_with_params())
-    @settings(max_examples=200)
+    @hypothesis.given(data=template_with_params())
+    @hypothesis.settings(max_examples=200)
     def test_no_placeholder_syntax_remains_after_render(self, data):
         """Rendered output contains no {placeholder} syntax.
 
@@ -738,7 +778,7 @@ class TestProperty7TemplateRenderingSubstitution:
         """
         title_template, body_template, params = data
 
-        template = NotificationTemplate(
+        template = notification_system.templates.NotificationTemplate(
             template_id="prop7-test",
             title=title_template,
             body=body_template,
@@ -747,19 +787,19 @@ class TestProperty7TemplateRenderingSubstitution:
         rendered_title, rendered_body = template.render(params)
 
         # No {placeholder} syntax should remain in the rendered output
-        assert not _PLACEHOLDER_RE.search(rendered_title), (
-            "Rendered title still contains placeholder syntax: {!r}".format(
-                rendered_title
-            )
+        assert not _PLACEHOLDER_RE.search(
+            rendered_title
+        ), "Rendered title still contains placeholder syntax: {!r}".format(
+            rendered_title
         )
-        assert not _PLACEHOLDER_RE.search(rendered_body), (
-            "Rendered body still contains placeholder syntax: {!r}".format(
-                rendered_body
-            )
+        assert not _PLACEHOLDER_RE.search(
+            rendered_body
+        ), "Rendered body still contains placeholder syntax: {!r}".format(
+            rendered_body
         )
 
-    @given(data=template_with_params())
-    @settings(max_examples=200)
+    @hypothesis.given(data=template_with_params())
+    @hypothesis.settings(max_examples=200)
     def test_each_placeholder_replaced_by_corresponding_value(self, data):
         """Each placeholder is substituted with its corresponding param value.
 
@@ -767,7 +807,7 @@ class TestProperty7TemplateRenderingSubstitution:
         """
         title_template, body_template, params = data
 
-        template = NotificationTemplate(
+        template = notification_system.templates.NotificationTemplate(
             template_id="prop7-test",
             title=title_template,
             body=body_template,
@@ -775,8 +815,10 @@ class TestProperty7TemplateRenderingSubstitution:
 
         rendered_title, rendered_body = template.render(params)
 
-        # For each placeholder in the title, verify its value appears in the output
-        # We verify by reconstructing what the output should be via manual substitution
+        # For each placeholder in the title, verify its value appears in the
+        # output
+        # We verify by reconstructing what the output should be via manual
+        # substitution
         expected_title = title_template
         for ph, val in params.items():
             expected_title = expected_title.replace("{" + ph + "}", val)
@@ -785,15 +827,15 @@ class TestProperty7TemplateRenderingSubstitution:
         for ph, val in params.items():
             expected_body = expected_body.replace("{" + ph + "}", val)
 
-        assert rendered_title == expected_title, (
-            "Title mismatch: expected {!r}, got {!r}".format(
-                expected_title, rendered_title
-            )
+        assert (
+            rendered_title == expected_title
+        ), "Title mismatch: expected {!r}, got {!r}".format(
+            expected_title, rendered_title
         )
-        assert rendered_body == expected_body, (
-            "Body mismatch: expected {!r}, got {!r}".format(
-                expected_body, rendered_body
-            )
+        assert (
+            rendered_body == expected_body
+        ), "Body mismatch: expected {!r}, got {!r}".format(
+            expected_body, rendered_body
         )
 
 
@@ -810,21 +852,23 @@ class TestProperty5QueueFIFOOrdering:
     **Validates: Requirements 2.6**
     """
 
-    @given(
+    @hypothesis.given(
         channel=channels,
         task_ids=st.lists(
             st.text(
                 min_size=1,
                 max_size=30,
-                alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="-_"),
+                alphabet=st.characters(
+                    whitelist_categories=("L", "N"), whitelist_characters="-_"
+                ),
             ),
             min_size=1,
             max_size=50,
         ),
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_dequeue_order_matches_enqueue_order(
-        self, channel: Channel, task_ids: List[str]
+        self, channel: notification_system.models.Channel, task_ids: List[str]
     ):
         """For any list of notification task IDs enqueued to the same channel,
         dequeuing returns them in exactly the same FIFO order.
@@ -833,7 +877,7 @@ class TestProperty5QueueFIFOOrdering:
         """
 
         async def run():
-            mq = MessageQueue(max_depth=len(task_ids) + 10)
+            mq = notification_system.queue.MessageQueue(max_depth=len(task_ids) + 10)
 
             # Enqueue all tasks in order
             for tid in task_ids:
@@ -854,32 +898,34 @@ class TestProperty5QueueFIFOOrdering:
 
         asyncio.get_event_loop().run_until_complete(run())
 
-    @given(
+    @hypothesis.given(
         channel=channels,
         task_ids=st.lists(
             st.text(
                 min_size=1,
                 max_size=30,
-                alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="-_"),
+                alphabet=st.characters(
+                    whitelist_categories=("L", "N"), whitelist_characters="-_"
+                ),
             ),
             min_size=2,
             max_size=50,
         ),
         dequeue_count=st.integers(min_value=1, max_value=49),
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_partial_dequeue_preserves_fifo_order(
-        self, channel: Channel, task_ids: List[str], dequeue_count: int
+        self, channel: notification_system.models.Channel, task_ids: List[str], dequeue_count: int
     ):
-        """Dequeuing a subset of enqueued tasks still preserves FIFO order
-        for the dequeued portion.
+        """Dequeuing a subset of enqueued tasks still preserves FIFO order for
+        the dequeued portion.
 
         **Validates: Requirements 2.6**
         """
-        assume(dequeue_count <= len(task_ids))
+        hypothesis.assume(dequeue_count <= len(task_ids))
 
         async def run():
-            mq = MessageQueue(max_depth=len(task_ids) + 10)
+            mq = notification_system.queue.MessageQueue(max_depth=len(task_ids) + 10)
 
             # Enqueue all tasks in order
             for tid in task_ids:
@@ -905,17 +951,16 @@ class TestProperty5QueueFIFOOrdering:
 # --- Property 8: Template missing placeholder error ---
 # Validates: Requirements 5.3
 
-from notification_system.exceptions import TemplateRenderError
-from notification_system.templates import NotificationTemplate
-
 
 @st.composite
 def template_with_incomplete_params(draw):
     """Generate a template with placeholders and an incomplete params dict.
 
-    Produces a tuple of (title_template, body_template, incomplete_params, missing_keys)
+    Produces a tuple of (title_template, body_template, incomplete_params,
+    missing_keys)
     where:
-    - title and body contain {placeholder} syntax with at least one placeholder total
+    - title and body contain {placeholder} syntax with at least one placeholder
+    total
     - incomplete_params is missing at least one required key
     - missing_keys is the sorted list of keys that are missing
     """
@@ -930,7 +975,8 @@ def template_with_incomplete_params(draw):
         )
     )
 
-    # Literal text that cannot contain braces (avoids accidental placeholder syntax)
+    # Literal text that cannot contain braces (avoids accidental placeholder
+    # syntax)
     literal_st = st.text(
         alphabet=st.characters(
             blacklist_characters="{}",
@@ -962,19 +1008,22 @@ def template_with_incomplete_params(draw):
     body_parts.append(draw(literal_st))
     body = "".join(body_parts)
 
-    # Compute the ACTUAL required keys from the template text (union of title + body)
+    # Compute the ACTUAL required keys from the template text (union of title +
+    # body)
     all_required = set(title_placeholders) | set(body_placeholders)
 
     # Choose a non-empty subset of actual required keys to OMIT
     num_to_omit = draw(st.integers(min_value=1, max_value=len(all_required)))
-    keys_to_omit = set(draw(
-        st.lists(
-            st.sampled_from(sorted(all_required)),
-            min_size=num_to_omit,
-            max_size=num_to_omit,
-            unique=True,
+    keys_to_omit = set(
+        draw(
+            st.lists(
+                st.sampled_from(sorted(all_required)),
+                min_size=num_to_omit,
+                max_size=num_to_omit,
+                unique=True,
+            )
         )
-    ))
+    )
 
     # Build incomplete params: provide values only for keys NOT omitted
     value_st = st.text(
@@ -1005,22 +1054,25 @@ class TestProperty8TemplateMissingPlaceholderError:
     **Validates: Requirements 5.3**
     """
 
-    @given(data=template_with_incomplete_params())
-    @settings(max_examples=200)
+    @hypothesis.given(data=template_with_incomplete_params())
+    @hypothesis.settings(max_examples=200)
     def test_missing_keys_raises_template_render_error(self, data):
-        """Rendering a template with missing placeholders raises TemplateRenderError.
+        """Rendering a template with missing placeholders raises
+        TemplateRenderError.
 
         **Validates: Requirements 5.3**
         """
-        title_template, body_template, incomplete_params, expected_missing = data
+        title_template, body_template, incomplete_params, expected_missing = (
+            data
+        )
 
-        template = NotificationTemplate(
+        template = notification_system.templates.NotificationTemplate(
             template_id="prop8-test",
             title=title_template,
             body=body_template,
         )
 
-        with pytest.raises(TemplateRenderError) as exc_info:
+        with pytest.raises(notification_system.exceptions.TemplateRenderError) as exc_info:
             template.render(incomplete_params)
 
         # The error must report the correct missing keys
@@ -1029,23 +1081,25 @@ class TestProperty8TemplateMissingPlaceholderError:
             f"got {sorted(exc_info.value.missing_keys)}"
         )
 
-    @given(data=template_with_incomplete_params())
-    @settings(max_examples=200)
+    @hypothesis.given(data=template_with_incomplete_params())
+    @hypothesis.settings(max_examples=200)
     def test_error_contains_correct_template_id(self, data):
         """TemplateRenderError includes the correct template_id.
 
         **Validates: Requirements 5.3**
         """
-        title_template, body_template, incomplete_params, expected_missing = data
+        title_template, body_template, incomplete_params, expected_missing = (
+            data
+        )
 
         template_id = "prop8-tmpl-id"
-        template = NotificationTemplate(
+        template = notification_system.templates.NotificationTemplate(
             template_id=template_id,
             title=title_template,
             body=body_template,
         )
 
-        with pytest.raises(TemplateRenderError) as exc_info:
+        with pytest.raises(notification_system.exceptions.TemplateRenderError) as exc_info:
             template.render(incomplete_params)
 
         assert exc_info.value.template_id == template_id
@@ -1054,38 +1108,45 @@ class TestProperty8TemplateMissingPlaceholderError:
 # --- Property 12: Sliding window expiry ---
 # Validates: Requirements 6.6
 
-from notification_system.config import RateLimitConfig
-from notification_system.exceptions import RateLimitExceededError
-from notification_system.rate_limiter import SlidingWindowRateLimiter
-
 
 class TestProperty12SlidingWindowExpiry:
     """Property 12: Sliding window expiry.
 
     For any user and channel, after the configured time window has fully
-    elapsed since all recorded notifications, the rate limiter SHALL accept
-    new notifications (the window slides forward and old entries expire).
+    elapsed since all recorded notifications, the rate limiter SHALL accept new
+    notifications (the window slides forward and old entries expire).
 
     **Validates: Requirements 6.6**
     """
 
-    @given(
+    @hypothesis.given(
         user_id=st.text(
             min_size=1,
             max_size=20,
-            alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="_-"),
+            alphabet=st.characters(
+                whitelist_categories=("L", "N"), whitelist_characters="_-"
+            ),
         ),
         channel=channels,
         max_count=st.integers(min_value=1, max_value=20),
-        window_seconds=st.floats(min_value=1.0, max_value=3600.0, allow_nan=False, allow_infinity=False),
+        window_seconds=st.floats(
+            min_value=1.0,
+            max_value=3600.0,
+            allow_nan=False,
+            allow_infinity=False,
+        ),
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_rate_limit_resets_after_window_expires(
-        self, user_id: str, channel: Channel, max_count: int, window_seconds: float
+        self,
+        user_id: str,
+        channel: notification_system.models.Channel,
+        max_count: int,
+        window_seconds: float,
     ):
         """After the sliding window fully expires, previously recorded
-        notifications no longer count toward the rate limit. A user who
-        was rate-limited can send again after the window passes.
+        notifications no longer count toward the rate limit. A user who was
+        rate-limited can send again after the window passes.
 
         **Validates: Requirements 6.6**
         """
@@ -1094,11 +1155,15 @@ class TestProperty12SlidingWindowExpiry:
         def clock() -> float:
             return current_time[0]
 
-        config = RateLimitConfig(max_count=max_count, window_seconds=window_seconds)
+        config = notification_system.config.RateLimitConfig(
+            max_count=max_count, window_seconds=window_seconds
+        )
         per_channel_limits = {channel: config}
-        global_limit = RateLimitConfig(max_count=10000, window_seconds=window_seconds)
+        global_limit = notification_system.config.RateLimitConfig(
+            max_count=10000, window_seconds=window_seconds
+        )
 
-        limiter = SlidingWindowRateLimiter(
+        limiter = notification_system.rate_limiter.SlidingWindowRateLimiter(
             per_channel_limits=per_channel_limits,
             global_limit=global_limit,
             clock=clock,
@@ -1110,7 +1175,7 @@ class TestProperty12SlidingWindowExpiry:
             limiter.record(user_id, channel)
 
         # Verify the user is now rate-limited
-        with pytest.raises(RateLimitExceededError):
+        with pytest.raises(notification_system.exceptions.RateLimitExceededError):
             limiter.check(user_id, channel)
 
         # Advance time past the full window
@@ -1119,23 +1184,34 @@ class TestProperty12SlidingWindowExpiry:
         # After the window expires, the user should be able to send again
         limiter.check(user_id, channel)  # Should NOT raise
 
-    @given(
+    @hypothesis.given(
         user_id=st.text(
             min_size=1,
             max_size=20,
-            alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="_-"),
+            alphabet=st.characters(
+                whitelist_categories=("L", "N"), whitelist_characters="_-"
+            ),
         ),
         channel=channels,
         max_count=st.integers(min_value=1, max_value=20),
-        window_seconds=st.floats(min_value=1.0, max_value=3600.0, allow_nan=False, allow_infinity=False),
+        window_seconds=st.floats(
+            min_value=1.0,
+            max_value=3600.0,
+            allow_nan=False,
+            allow_infinity=False,
+        ),
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_can_fill_rate_limit_again_after_window_expires(
-        self, user_id: str, channel: Channel, max_count: int, window_seconds: float
+        self,
+        user_id: str,
+        channel: notification_system.models.Channel,
+        max_count: int,
+        window_seconds: float,
     ):
-        """After the window expires and old entries are pruned, the user
-        can record another full batch of max_count notifications before
-        being rate-limited again.
+        """After the window expires and old entries are pruned, the user can
+        record another full batch of max_count notifications before being rate-
+        limited again.
 
         **Validates: Requirements 6.6**
         """
@@ -1144,11 +1220,15 @@ class TestProperty12SlidingWindowExpiry:
         def clock() -> float:
             return current_time[0]
 
-        config = RateLimitConfig(max_count=max_count, window_seconds=window_seconds)
+        config = notification_system.config.RateLimitConfig(
+            max_count=max_count, window_seconds=window_seconds
+        )
         per_channel_limits = {channel: config}
-        global_limit = RateLimitConfig(max_count=10000, window_seconds=window_seconds)
+        global_limit = notification_system.config.RateLimitConfig(
+            max_count=10000, window_seconds=window_seconds
+        )
 
-        limiter = SlidingWindowRateLimiter(
+        limiter = notification_system.rate_limiter.SlidingWindowRateLimiter(
             per_channel_limits=per_channel_limits,
             global_limit=global_limit,
             clock=clock,
@@ -1160,7 +1240,7 @@ class TestProperty12SlidingWindowExpiry:
             limiter.record(user_id, channel)
 
         # Verify rate-limited
-        with pytest.raises(RateLimitExceededError):
+        with pytest.raises(notification_system.exceptions.RateLimitExceededError):
             limiter.check(user_id, channel)
 
         # Advance time past the window
@@ -1172,27 +1252,44 @@ class TestProperty12SlidingWindowExpiry:
             limiter.record(user_id, channel)
 
         # And now should be rate-limited again
-        with pytest.raises(RateLimitExceededError):
+        with pytest.raises(notification_system.exceptions.RateLimitExceededError):
             limiter.check(user_id, channel)
 
-    @given(
+    @hypothesis.given(
         user_id=st.text(
             min_size=1,
             max_size=20,
-            alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="_-"),
+            alphabet=st.characters(
+                whitelist_categories=("L", "N"), whitelist_characters="_-"
+            ),
         ),
         channel=channels,
         max_count=st.integers(min_value=2, max_value=20),
-        window_seconds=st.floats(min_value=2.0, max_value=3600.0, allow_nan=False, allow_infinity=False),
-        elapsed_fraction=st.floats(min_value=0.01, max_value=0.99, allow_nan=False, allow_infinity=False),
+        window_seconds=st.floats(
+            min_value=2.0,
+            max_value=3600.0,
+            allow_nan=False,
+            allow_infinity=False,
+        ),
+        elapsed_fraction=st.floats(
+            min_value=0.01,
+            max_value=0.99,
+            allow_nan=False,
+            allow_infinity=False,
+        ),
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_still_rate_limited_before_window_expires(
-        self, user_id: str, channel: Channel, max_count: int, window_seconds: float, elapsed_fraction: float
+        self,
+        user_id: str,
+        channel: notification_system.models.Channel,
+        max_count: int,
+        window_seconds: float,
+        elapsed_fraction: float,
     ):
         """Before the window fully expires, the rate limit is still enforced.
-        This confirms the sliding window only releases entries after the
-        full window duration.
+        This confirms the sliding window only releases entries after the full
+        window duration.
 
         **Validates: Requirements 6.6**
         """
@@ -1201,11 +1298,15 @@ class TestProperty12SlidingWindowExpiry:
         def clock() -> float:
             return current_time[0]
 
-        config = RateLimitConfig(max_count=max_count, window_seconds=window_seconds)
+        config = notification_system.config.RateLimitConfig(
+            max_count=max_count, window_seconds=window_seconds
+        )
         per_channel_limits = {channel: config}
-        global_limit = RateLimitConfig(max_count=10000, window_seconds=window_seconds)
+        global_limit = notification_system.config.RateLimitConfig(
+            max_count=10000, window_seconds=window_seconds
+        )
 
-        limiter = SlidingWindowRateLimiter(
+        limiter = notification_system.rate_limiter.SlidingWindowRateLimiter(
             per_channel_limits=per_channel_limits,
             global_limit=global_limit,
             clock=clock,
@@ -1220,177 +1321,185 @@ class TestProperty12SlidingWindowExpiry:
         current_time[0] = window_seconds * elapsed_fraction
 
         # Should still be rate-limited since window hasn't fully elapsed
-        with pytest.raises(RateLimitExceededError):
+        with pytest.raises(notification_system.exceptions.RateLimitExceededError):
             limiter.check(user_id, channel)
-
 
 
 # --- Property 17: Default opt-in for new users ---
 # Validates: Requirements 8.2
 
-from notification_system.settings import NotificationSettings
-
 
 class TestProperty17DefaultOptInForNewUsers:
     """Property 17: Default opt-in for new users.
 
-    For any new user ID that has never been seen, all channels default
-    to opted-in. This ensures new users receive notifications on every
-    channel until they explicitly opt out.
+    For any new user ID that has never been seen, all channels default to
+    opted-in. This ensures new users receive notifications on every channel
+    until they explicitly opt out.
 
     **Validates: Requirements 8.2**
     """
 
-    @given(
+    @hypothesis.given(
         user_id=st.text(
             min_size=1,
             max_size=50,
-            alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="_-"),
+            alphabet=st.characters(
+                whitelist_categories=("L", "N"), whitelist_characters="_-"
+            ),
         ),
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_new_user_all_channels_opted_in(self, user_id: str):
         """For any new user ID, is_opted_in returns True for every channel.
 
         **Validates: Requirements 8.2**
         """
-        ns = NotificationSettings()
+        ns = notification_system.settings.NotificationSettings()
 
-        for channel in Channel:
+        for channel in notification_system.models.Channel:
             assert ns.is_opted_in(user_id, channel) is True, (
                 f"Expected user {user_id!r} to be opted-in for {channel}, "
-                f"but got False"
+                "but got False"
             )
 
-    @given(
+    @hypothesis.given(
         user_id=st.text(
             min_size=1,
             max_size=50,
-            alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="_-"),
+            alphabet=st.characters(
+                whitelist_categories=("L", "N"), whitelist_characters="_-"
+            ),
         ),
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_new_user_get_all_preferences_all_true(self, user_id: str):
-        """For any new user ID, get_all_preferences returns True for every channel.
+        """For any new user ID, get_all_preferences returns True for every
+        channel.
 
         **Validates: Requirements 8.2**
         """
-        ns = NotificationSettings()
+        ns = notification_system.settings.NotificationSettings()
 
         prefs = ns.get_all_preferences(user_id)
 
         # All channels must be present and opted-in
-        for channel in Channel:
+        for channel in notification_system.models.Channel:
             assert channel in prefs, (
-                f"Channel {channel} missing from preferences for user {user_id!r}"
+                f"Channel {channel} missing from preferences for user"
+                f" {user_id!r}"
             )
             assert prefs[channel] is True, (
-                f"Expected user {user_id!r} preference for {channel} to be True, "
-                f"got {prefs[channel]}"
+                f"Expected user {user_id!r} preference for {channel} to be"
+                f" True, got {prefs[channel]}"
             )
 
-    @given(
+    @hypothesis.given(
         user_ids=st.lists(
             st.text(
                 min_size=1,
                 max_size=50,
-                alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="_-"),
+                alphabet=st.characters(
+                    whitelist_categories=("L", "N"), whitelist_characters="_-"
+                ),
             ),
             min_size=1,
             max_size=10,
             unique=True,
         ),
     )
-    @settings(max_examples=100)
+    @hypothesis.settings(max_examples=100)
     def test_multiple_new_users_all_default_opted_in(self, user_ids):
-        """For any set of distinct new user IDs, each user defaults to
-        opted-in on all channels independently.
+        """For any set of distinct new user IDs, each user defaults to opted-in
+        on all channels independently.
 
         **Validates: Requirements 8.2**
         """
-        ns = NotificationSettings()
+        ns = notification_system.settings.NotificationSettings()
 
         for user_id in user_ids:
-            for channel in Channel:
-                assert ns.is_opted_in(user_id, channel) is True, (
-                    f"Expected user {user_id!r} to be opted-in for {channel}"
-                )
+            for channel in notification_system.models.Channel:
+                assert (
+                    ns.is_opted_in(user_id, channel) is True
+                ), f"Expected user {user_id!r} to be opted-in for {channel}"
 
 
 # --- Property 16: Notification settings round-trip ---
 # Validates: Requirements 8.1, 8.3, 8.4
 
-from notification_system.settings import NotificationSettings
 
 # Strategies for settings tests
 _settings_user_ids = st.text(
     min_size=1,
     max_size=30,
-    alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="_-"),
+    alphabet=st.characters(
+        whitelist_categories=("L", "N"), whitelist_characters="_-"
+    ),
 )
 
 
 class TestProperty16NotificationSettingsRoundTrip:
     """Property 16: Notification settings round-trip.
 
-    For any user and channel, after opt_out followed by opt_in, the user
-    is opted in. After opt_in followed by opt_out, the user is opted out.
-    The final state always matches the last operation.
+    For any user and channel, after opt_out followed by opt_in, the user is
+    opted in. After opt_in followed by opt_out, the user is opted out. The
+    final state always matches the last operation.
 
     **Validates: Requirements 8.1, 8.3, 8.4**
     """
 
-    @given(
+    @hypothesis.given(
         user_id=_settings_user_ids,
         channel=channels,
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_opt_out_then_opt_in_results_in_opted_in(
-        self, user_id: str, channel: Channel
+        self, user_id: str, channel: notification_system.models.Channel
     ):
         """After opt_out followed by opt_in, the user is opted in.
 
         **Validates: Requirements 8.1, 8.3, 8.4**
         """
-        ns = NotificationSettings()
+        ns = notification_system.settings.NotificationSettings()
 
         # Opt out then opt back in
         ns.opt_out(user_id, channel)
-        assert not ns.is_opted_in(user_id, channel), (
-            f"User {user_id!r} should be opted out of {channel} after opt_out()"
-        )
+        assert not ns.is_opted_in(
+            user_id, channel
+        ), f"User {user_id!r} should be opted out of {channel} after opt_out()"
 
         ns.opt_in(user_id, channel)
         assert ns.is_opted_in(user_id, channel), (
-            f"User {user_id!r} should be opted in to {channel} after opt_out() then opt_in()"
+            f"User {user_id!r} should be opted in to {channel} after opt_out()"
+            " then opt_in()"
         )
 
-    @given(
+    @hypothesis.given(
         user_id=_settings_user_ids,
         channel=channels,
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_opt_in_then_opt_out_results_in_opted_out(
-        self, user_id: str, channel: Channel
+        self, user_id: str, channel: notification_system.models.Channel
     ):
         """After opt_in followed by opt_out, the user is opted out.
 
         **Validates: Requirements 8.1, 8.3, 8.4**
         """
-        ns = NotificationSettings()
+        ns = notification_system.settings.NotificationSettings()
 
         # Opt in then opt out
         ns.opt_in(user_id, channel)
-        assert ns.is_opted_in(user_id, channel), (
-            f"User {user_id!r} should be opted in to {channel} after opt_in()"
-        )
+        assert ns.is_opted_in(
+            user_id, channel
+        ), f"User {user_id!r} should be opted in to {channel} after opt_in()"
 
         ns.opt_out(user_id, channel)
         assert not ns.is_opted_in(user_id, channel), (
-            f"User {user_id!r} should be opted out of {channel} after opt_in() then opt_out()"
+            f"User {user_id!r} should be opted out of {channel} after opt_in()"
+            " then opt_out()"
         )
 
-    @given(
+    @hypothesis.given(
         user_id=_settings_user_ids,
         channel=channels,
         operations=st.lists(
@@ -1399,16 +1508,16 @@ class TestProperty16NotificationSettingsRoundTrip:
             max_size=50,
         ),
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_final_state_matches_last_operation(
-        self, user_id: str, channel: Channel, operations: List[str]
+        self, user_id: str, channel: notification_system.models.Channel, operations: List[str]
     ):
         """For any sequence of opt_in/opt_out operations, the final state
         always matches the last operation performed.
 
         **Validates: Requirements 8.1, 8.3, 8.4**
         """
-        ns = NotificationSettings()
+        ns = notification_system.settings.NotificationSettings()
 
         for op in operations:
             if op == "opt_in":
@@ -1420,82 +1529,90 @@ class TestProperty16NotificationSettingsRoundTrip:
         last_op = operations[-1]
         if last_op == "opt_in":
             assert ns.is_opted_in(user_id, channel), (
-                f"Final state should be opted-in after last operation was opt_in, "
-                f"but is_opted_in returned False for user {user_id!r}, channel {channel}"
+                "Final state should be opted-in after last operation was"
+                f" opt_in, but is_opted_in returned False for user {user_id!r},"
+                f" channel {channel}"
             )
         else:
             assert not ns.is_opted_in(user_id, channel), (
-                f"Final state should be opted-out after last operation was opt_out, "
-                f"but is_opted_in returned True for user {user_id!r}, channel {channel}"
+                "Final state should be opted-out after last operation was"
+                f" opt_out, but is_opted_in returned True for user {user_id!r},"
+                f" channel {channel}"
             )
-
 
 
 # --- Property 23: Analytics aggregation consistency ---
 # Validates: Requirements 10.4, 10.5
 
-from datetime import datetime, timezone
-
-from notification_system.models import Channel, NotificationStatus, VALID_TRANSITIONS
-from notification_system.tracker import EventTracker
-
 
 # Terminal statuses that get_aggregate_counts tracks
 _AGGREGATE_STATUSES = {
-    NotificationStatus.SENT,
-    NotificationStatus.DELIVERED,
-    NotificationStatus.FAILED,
-    NotificationStatus.CLICKED,
+    notification_system.models.NotificationStatus.SENT,
+    notification_system.models.NotificationStatus.DELIVERED,
+    notification_system.models.NotificationStatus.FAILED,
+    notification_system.models.NotificationStatus.CLICKED,
 }
 
-# Valid terminal states a notification can reach via valid transitions from CREATED
-_FINAL_STATES = st.sampled_from([
-    NotificationStatus.SENT,
-    NotificationStatus.DELIVERED,
-    NotificationStatus.FAILED,
-    NotificationStatus.CLICKED,
-])
+# Valid terminal states a notification can reach via valid transitions from
+# CREATED
+_FINAL_STATES = st.sampled_from(
+    [
+        notification_system.models.NotificationStatus.SENT,
+        notification_system.models.NotificationStatus.DELIVERED,
+        notification_system.models.NotificationStatus.FAILED,
+        notification_system.models.NotificationStatus.CLICKED,
+    ]
+)
 
 
-def _valid_path_to_status(status: NotificationStatus) -> List[NotificationStatus]:
-    """Return a valid state machine path from CREATED to the given terminal status."""
-    if status == NotificationStatus.FAILED:
+def _valid_path_to_status(
+    status: notification_system.models.NotificationStatus,
+) -> List[notification_system.models.NotificationStatus]:
+    """Return a valid state machine path from CREATED to the given terminal
+    status.
+    """
+    if status == notification_system.models.NotificationStatus.FAILED:
         # CREATED -> QUEUED -> FAILED (shortest path to FAILED)
-        return [NotificationStatus.CREATED, NotificationStatus.QUEUED, NotificationStatus.FAILED]
-    elif status == NotificationStatus.SENT:
         return [
-            NotificationStatus.CREATED,
-            NotificationStatus.QUEUED,
-            NotificationStatus.SENDING,
-            NotificationStatus.SENT,
+            notification_system.models.NotificationStatus.CREATED,
+            notification_system.models.NotificationStatus.QUEUED,
+            notification_system.models.NotificationStatus.FAILED,
         ]
-    elif status == NotificationStatus.DELIVERED:
+    elif status == notification_system.models.NotificationStatus.SENT:
         return [
-            NotificationStatus.CREATED,
-            NotificationStatus.QUEUED,
-            NotificationStatus.SENDING,
-            NotificationStatus.SENT,
-            NotificationStatus.DELIVERED,
+            notification_system.models.NotificationStatus.CREATED,
+            notification_system.models.NotificationStatus.QUEUED,
+            notification_system.models.NotificationStatus.SENDING,
+            notification_system.models.NotificationStatus.SENT,
         ]
-    elif status == NotificationStatus.CLICKED:
+    elif status == notification_system.models.NotificationStatus.DELIVERED:
         return [
-            NotificationStatus.CREATED,
-            NotificationStatus.QUEUED,
-            NotificationStatus.SENDING,
-            NotificationStatus.SENT,
-            NotificationStatus.DELIVERED,
-            NotificationStatus.CLICKED,
+            notification_system.models.NotificationStatus.CREATED,
+            notification_system.models.NotificationStatus.QUEUED,
+            notification_system.models.NotificationStatus.SENDING,
+            notification_system.models.NotificationStatus.SENT,
+            notification_system.models.NotificationStatus.DELIVERED,
+        ]
+    elif status == notification_system.models.NotificationStatus.CLICKED:
+        return [
+            notification_system.models.NotificationStatus.CREATED,
+            notification_system.models.NotificationStatus.QUEUED,
+            notification_system.models.NotificationStatus.SENDING,
+            notification_system.models.NotificationStatus.SENT,
+            notification_system.models.NotificationStatus.DELIVERED,
+            notification_system.models.NotificationStatus.CLICKED,
         ]
     else:
         # For non-terminal states, just return CREATED
-        return [NotificationStatus.CREATED]
+        return [notification_system.models.NotificationStatus.CREATED]
 
 
 @st.composite
 def notifications_with_final_states(draw):
     """Generate a list of (notification_id, channel, final_status) tuples.
 
-    Each notification will be driven through a valid state path to its final status.
+    Each notification will be driven through a valid state path to its final
+    status.
     """
     num_notifications = draw(st.integers(min_value=1, max_value=30))
     notifications = []
@@ -1510,22 +1627,22 @@ def notifications_with_final_states(draw):
 class TestProperty23AnalyticsAggregationConsistency:
     """Property 23: Analytics aggregation consistency.
 
-    The aggregate counts from get_aggregate_counts() are consistent with
-    the events recorded. The sum of counts should not exceed total
-    notifications tracked.
+    The aggregate counts from get_aggregate_counts() are consistent with the
+    events recorded. The sum of counts should not exceed total notifications
+    tracked.
 
     **Validates: Requirements 10.4, 10.5**
     """
 
-    @given(data=notifications_with_final_states())
-    @settings(max_examples=200)
+    @hypothesis.given(data=notifications_with_final_states())
+    @hypothesis.settings(max_examples=200)
     def test_aggregate_counts_match_recorded_final_states(self, data):
-        """The aggregate counts returned by get_aggregate_counts() match
-        the actual final states of all recorded notifications.
+        """The aggregate counts returned by get_aggregate_counts() match the
+        actual final states of all recorded notifications.
 
         **Validates: Requirements 10.4, 10.5**
         """
-        tracker = EventTracker()
+        tracker = notification_system.tracker.EventTracker()
 
         # Track expected counts manually
         expected_sent = 0
@@ -1539,39 +1656,42 @@ class TestProperty23AnalyticsAggregationConsistency:
                 tracker.record(nid, channel, status)
 
             # Count based on final status
-            if final_status == NotificationStatus.SENT:
+            if final_status == notification_system.models.NotificationStatus.SENT:
                 expected_sent += 1
-            elif final_status == NotificationStatus.DELIVERED:
+            elif final_status == notification_system.models.NotificationStatus.DELIVERED:
                 expected_delivered += 1
-            elif final_status == NotificationStatus.FAILED:
+            elif final_status == notification_system.models.NotificationStatus.FAILED:
                 expected_failed += 1
-            elif final_status == NotificationStatus.CLICKED:
+            elif final_status == notification_system.models.NotificationStatus.CLICKED:
                 expected_clicked += 1
 
         counts = tracker.get_aggregate_counts()
 
-        assert counts["total_sent"] == expected_sent, (
-            f"Expected total_sent={expected_sent}, got {counts['total_sent']}"
-        )
+        assert (
+            counts["total_sent"] == expected_sent
+        ), f"Expected total_sent={expected_sent}, got {counts['total_sent']}"
         assert counts["total_delivered"] == expected_delivered, (
-            f"Expected total_delivered={expected_delivered}, got {counts['total_delivered']}"
+            f"Expected total_delivered={expected_delivered}, got"
+            f" {counts['total_delivered']}"
         )
         assert counts["total_failed"] == expected_failed, (
-            f"Expected total_failed={expected_failed}, got {counts['total_failed']}"
+            f"Expected total_failed={expected_failed}, got"
+            f" {counts['total_failed']}"
         )
         assert counts["total_clicked"] == expected_clicked, (
-            f"Expected total_clicked={expected_clicked}, got {counts['total_clicked']}"
+            f"Expected total_clicked={expected_clicked}, got"
+            f" {counts['total_clicked']}"
         )
 
-    @given(data=notifications_with_final_states())
-    @settings(max_examples=200)
+    @hypothesis.given(data=notifications_with_final_states())
+    @hypothesis.settings(max_examples=200)
     def test_aggregate_sum_does_not_exceed_total_notifications(self, data):
-        """The sum of all aggregate counts should not exceed the total
-        number of distinct notifications tracked.
+        """The sum of all aggregate counts should not exceed the total number
+        of distinct notifications tracked.
 
         **Validates: Requirements 10.4, 10.5**
         """
-        tracker = EventTracker()
+        tracker = notification_system.tracker.EventTracker()
 
         for nid, channel, final_status in data:
             path = _valid_path_to_status(final_status)
@@ -1592,18 +1712,19 @@ class TestProperty23AnalyticsAggregationConsistency:
             f"total notifications ({len(data)})"
         )
 
-    @given(
+    @hypothesis.given(
         data=notifications_with_final_states(),
         query_channel=channels,
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_channel_stats_rates_are_consistent(self, data, query_channel):
-        """Per-channel stats (success_rate + failure_rate) should not exceed 1.0,
-        and the total count should match the number of notifications on that channel.
+        """Per-channel stats (success_rate + failure_rate) should not exceed
+        1.0, and the total count should match the number of notifications on
+        that channel.
 
         **Validates: Requirements 10.4, 10.5**
         """
-        tracker = EventTracker()
+        tracker = notification_system.tracker.EventTracker()
 
         channel_notification_count = 0
         for nid, channel, final_status in data:
@@ -1617,14 +1738,15 @@ class TestProperty23AnalyticsAggregationConsistency:
 
         # Total must match the number of notifications for this channel
         assert stats["total"] == channel_notification_count, (
-            f"Expected total={channel_notification_count} for channel {query_channel}, "
-            f"got {stats['total']}"
+            f"Expected total={channel_notification_count} for channel"
+            f" {query_channel}, got {stats['total']}"
         )
 
         # success_rate + failure_rate should not exceed 1.0
         assert stats["success_rate"] + stats["failure_rate"] <= 1.0 + 1e-9, (
-            f"success_rate ({stats['success_rate']}) + failure_rate ({stats['failure_rate']}) "
-            f"exceeds 1.0 for channel {query_channel}"
+            f"success_rate ({stats['success_rate']}) + failure_rate"
+            f" ({stats['failure_rate']}) exceeds 1.0 for channel"
+            f" {query_channel}"
         )
 
         # Rates must be non-negative
@@ -1635,32 +1757,30 @@ class TestProperty23AnalyticsAggregationConsistency:
 # --- Property 22: Event retrieval completeness ---
 # Validates: Requirements 10.2, 10.3
 
-from datetime import datetime, timezone, timedelta
-
-from notification_system.models import NotificationStatus, NotificationEvent, VALID_TRANSITIONS
-from notification_system.tracker import EventTracker
-
 
 @st.composite
 def valid_state_transition_sequence(draw):
-    """Generate a valid sequence of state transitions following the state machine.
+    """Generate a valid sequence of state transitions following the state
+    machine.
 
-    Starts from any status and follows VALID_TRANSITIONS to produce a
-    sequence of 1 to 8 states that form a valid path through the state machine.
+    Starts from any status and follows VALID_TRANSITIONS to produce a sequence
+    of 1 to 8 states that form a valid path through the state machine.
     """
     channel = draw(channels)
 
     # Start with any status as the initial state
-    current = draw(st.sampled_from(list(NotificationStatus)))
+    current = draw(st.sampled_from(list(notification_system.models.NotificationStatus)))
     sequence = [current]
 
     # Follow valid transitions up to a max length
     max_steps = draw(st.integers(min_value=0, max_value=7))
     for _ in range(max_steps):
-        allowed = VALID_TRANSITIONS.get(current, set())
+        allowed = notification_system.models.VALID_TRANSITIONS.get(current, set())
         if not allowed:
             break  # Terminal state, no further transitions
-        next_status = draw(st.sampled_from(sorted(allowed, key=lambda s: s.value)))
+        next_status = draw(
+            st.sampled_from(sorted(allowed, key=lambda s: s.value))
+        )
         sequence.append(next_status)
         current = next_status
 
@@ -1670,28 +1790,30 @@ def valid_state_transition_sequence(draw):
 class TestProperty22EventRetrievalCompleteness:
     """Property 22: Event retrieval completeness.
 
-    For any notification ID for which events have been recorded, retrieving
-    the event history SHALL return all recorded events in chronological order,
-    each containing a valid timestamp, notification ID, channel, and status.
-    The history length equals the number of recorded events.
+    For any notification ID for which events have been recorded, retrieving the
+    event history SHALL return all recorded events in chronological order, each
+    containing a valid timestamp, notification ID, channel, and status. The
+    history length equals the number of recorded events.
 
     **Validates: Requirements 10.2, 10.3**
     """
 
-    @given(
+    @hypothesis.given(
         notification_id=st.text(
             min_size=1,
             max_size=30,
-            alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="-_"),
+            alphabet=st.characters(
+                whitelist_categories=("L", "N"), whitelist_characters="-_"
+            ),
         ),
         transition_data=valid_state_transition_sequence(),
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_all_recorded_events_appear_in_history(
         self, notification_id: str, transition_data: tuple
     ):
-        """Every event recorded via record() appears in get_history() and
-        the history length equals the number of recorded events.
+        """Every event recorded via record() appears in get_history() and the
+        history length equals the number of recorded events.
 
         **Validates: Requirements 10.2, 10.3**
         """
@@ -1702,9 +1824,11 @@ class TestProperty22EventRetrievalCompleteness:
 
         def clock():
             time_counter[0] += 1
-            return datetime(2024, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=time_counter[0])
+            return datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc) + datetime.timedelta(
+                seconds=time_counter[0]
+            )
 
-        tracker = EventTracker(clock=clock)
+        tracker = notification_system.tracker.EventTracker(clock=clock)
 
         # Record all events in the valid transition sequence
         for status in status_sequence:
@@ -1715,53 +1839,61 @@ class TestProperty22EventRetrievalCompleteness:
 
         # History length must equal the number of recorded events
         assert len(history) == len(status_sequence), (
-            f"Expected {len(status_sequence)} events in history, got {len(history)}"
+            f"Expected {len(status_sequence)} events in history, got"
+            f" {len(history)}"
         )
 
         # Each event must have the correct notification_id, channel, and status
-        for i, (event, expected_status) in enumerate(zip(history, status_sequence)):
+        for i, (event, expected_status) in enumerate(
+            zip(history, status_sequence)
+        ):
             assert event.notification_id == notification_id, (
                 f"Event {i}: expected notification_id={notification_id!r}, "
                 f"got {event.notification_id!r}"
             )
-            assert event.channel == channel, (
-                f"Event {i}: expected channel={channel}, got {event.channel}"
-            )
+            assert (
+                event.channel == channel
+            ), f"Event {i}: expected channel={channel}, got {event.channel}"
             assert event.status == expected_status, (
-                f"Event {i}: expected status={expected_status}, got {event.status}"
+                f"Event {i}: expected status={expected_status}, got"
+                f" {event.status}"
             )
-            assert event.timestamp is not None, (
-                f"Event {i}: timestamp must not be None"
-            )
+            assert (
+                event.timestamp is not None
+            ), f"Event {i}: timestamp must not be None"
 
-    @given(
+    @hypothesis.given(
         notification_id=st.text(
             min_size=1,
             max_size=30,
-            alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="-_"),
+            alphabet=st.characters(
+                whitelist_categories=("L", "N"), whitelist_characters="-_"
+            ),
         ),
         transition_data=valid_state_transition_sequence(),
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_history_is_in_chronological_order(
         self, notification_id: str, transition_data: tuple
     ):
-        """The event history is returned in chronological order (timestamps
-        are non-decreasing).
+        """The event history is returned in chronological order (timestamps are
+        non-decreasing).
 
         **Validates: Requirements 10.2, 10.3**
         """
         channel, status_sequence = transition_data
-        assume(len(status_sequence) >= 2)
+        hypothesis.assume(len(status_sequence) >= 2)
 
         # Use a monotonically increasing clock
         time_counter = [0]
 
         def clock():
             time_counter[0] += 1
-            return datetime(2024, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=time_counter[0])
+            return datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc) + datetime.timedelta(
+                seconds=time_counter[0]
+            )
 
-        tracker = EventTracker(clock=clock)
+        tracker = notification_system.tracker.EventTracker(clock=clock)
 
         for status in status_sequence:
             tracker.record(notification_id, channel, status)
@@ -1775,34 +1907,38 @@ class TestProperty22EventRetrievalCompleteness:
                 f"{history[i].timestamp} > {history[i + 1].timestamp}"
             )
 
-    @given(
+    @hypothesis.given(
         notification_id=st.text(
             min_size=1,
             max_size=30,
-            alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="-_"),
+            alphabet=st.characters(
+                whitelist_categories=("L", "N"), whitelist_characters="-_"
+            ),
         ),
         transition_data=valid_state_transition_sequence(),
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_history_returns_independent_copy(
         self, notification_id: str, transition_data: tuple
     ):
-        """get_history() returns a list that does not share references with
-        the tracker's internal storage (modifying the returned list does not
-        affect subsequent calls).
+        """get_history() returns a list that does not share references with the
+        tracker's internal storage (modifying the returned list does not affect
+        subsequent calls).
 
         **Validates: Requirements 10.2, 10.3**
         """
         channel, status_sequence = transition_data
-        assume(len(status_sequence) >= 1)
+        hypothesis.assume(len(status_sequence) >= 1)
 
         time_counter = [0]
 
         def clock():
             time_counter[0] += 1
-            return datetime(2024, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=time_counter[0])
+            return datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc) + datetime.timedelta(
+                seconds=time_counter[0]
+            )
 
-        tracker = EventTracker(clock=clock)
+        tracker = notification_system.tracker.EventTracker(clock=clock)
 
         for status in status_sequence:
             tracker.record(notification_id, channel, status)
@@ -1815,7 +1951,7 @@ class TestProperty22EventRetrievalCompleteness:
         # A second call should still return the full history
         history2 = tracker.get_history(notification_id)
         assert len(history2) == original_len, (
-            f"Mutating returned history affected internal state: "
+            "Mutating returned history affected internal state: "
             f"expected {original_len} events, got {len(history2)}"
         )
 
@@ -1823,30 +1959,30 @@ class TestProperty22EventRetrievalCompleteness:
 # --- Property 24: Notification log query correctness ---
 # Validates: Requirements 12.1, 12.2
 
-from datetime import datetime, timezone, timedelta
-
-from notification_system.log import InMemoryNotificationLog
-from notification_system.models import Channel, LogEntry, NotificationStatus
 
 # Strategies for log entry generation
 _log_notification_ids = st.text(
     min_size=1,
     max_size=30,
-    alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="-_"),
+    alphabet=st.characters(
+        whitelist_categories=("L", "N"), whitelist_characters="-_"
+    ),
 )
 _log_recipient_ids = st.text(
     min_size=1,
     max_size=20,
-    alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="-_"),
+    alphabet=st.characters(
+        whitelist_categories=("L", "N"), whitelist_characters="-_"
+    ),
 )
-_log_channels = st.sampled_from(list(Channel))
-_log_statuses = st.sampled_from(list(NotificationStatus))
+_log_channels = st.sampled_from(list(notification_system.models.Channel))
+_log_statuses = st.sampled_from(list(notification_system.models.NotificationStatus))
 _log_content_summaries = st.text(min_size=1, max_size=100)
 _log_attempts = st.integers(min_value=1, max_value=10)
 _log_timestamps = st.datetimes(
-    min_value=datetime(2020, 1, 1),
-    max_value=datetime(2025, 12, 31),
-    timezones=st.just(timezone.utc),
+    min_value=datetime.datetime(2020, 1, 1),
+    max_value=datetime.datetime(2025, 12, 31),
+    timezones=st.just(datetime.timezone.utc),
 )
 
 
@@ -1856,7 +1992,7 @@ def log_entries(draw, min_size=1, max_size=20):
     count = draw(st.integers(min_value=min_size, max_value=max_size))
     entries = []
     for _ in range(count):
-        entry = LogEntry(
+        entry = notification_system.models.LogEntry(
             notification_id=draw(_log_notification_ids),
             recipient_id=draw(_log_recipient_ids),
             channel=draw(_log_channels),
@@ -1879,16 +2015,18 @@ class TestProperty24NotificationLogQueryCorrectness:
     **Validates: Requirements 12.1, 12.2**
     """
 
-    @given(entries=log_entries(min_size=1, max_size=20))
-    @settings(max_examples=200)
+    @hypothesis.given(entries=log_entries(min_size=1, max_size=20))
+    @hypothesis.settings(max_examples=200)
     def test_all_appended_entries_retrievable_via_empty_query(
-        self, entries: list,
+        self,
+        entries: list,
     ):
-        """Every entry appended to the log is retrievable via an unfiltered query.
+        """Every entry appended to the log is retrievable via an unfiltered
+        query.
 
         **Validates: Requirements 12.1, 12.2**
         """
-        log = InMemoryNotificationLog()
+        log = notification_system.log.InMemoryNotificationLog()
         for entry in entries:
             log.append(entry)
 
@@ -1898,19 +2036,21 @@ class TestProperty24NotificationLogQueryCorrectness:
         for entry in entries:
             assert entry in results
 
-    @given(
+    @hypothesis.given(
         entries=log_entries(min_size=2, max_size=20),
         query_notification_id=_log_notification_ids,
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_query_by_notification_id_returns_only_matching(
-        self, entries: list, query_notification_id: str,
+        self,
+        entries: list,
+        query_notification_id: str,
     ):
         """Querying by notification_id returns only entries matching that ID.
 
         **Validates: Requirements 12.1, 12.2**
         """
-        log = InMemoryNotificationLog()
+        log = notification_system.log.InMemoryNotificationLog()
         for entry in entries:
             log.append(entry)
 
@@ -1921,22 +2061,26 @@ class TestProperty24NotificationLogQueryCorrectness:
             assert result.notification_id == query_notification_id
 
         # All entries with that notification_id must be in results
-        expected = [e for e in entries if e.notification_id == query_notification_id]
+        expected = [
+            e for e in entries if e.notification_id == query_notification_id
+        ]
         assert len(results) == len(expected)
 
-    @given(
+    @hypothesis.given(
         entries=log_entries(min_size=2, max_size=20),
         query_channel=_log_channels,
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_query_by_channel_returns_only_matching(
-        self, entries: list, query_channel: Channel,
+        self,
+        entries: list,
+        query_channel: notification_system.models.Channel,
     ):
         """Querying by channel returns only entries for that channel.
 
         **Validates: Requirements 12.1, 12.2**
         """
-        log = InMemoryNotificationLog()
+        log = notification_system.log.InMemoryNotificationLog()
         for entry in entries:
             log.append(entry)
 
@@ -1950,19 +2094,21 @@ class TestProperty24NotificationLogQueryCorrectness:
         expected = [e for e in entries if e.channel == query_channel]
         assert len(results) == len(expected)
 
-    @given(
+    @hypothesis.given(
         entries=log_entries(min_size=2, max_size=20),
         query_status=_log_statuses,
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_query_by_status_returns_only_matching(
-        self, entries: list, query_status: NotificationStatus,
+        self,
+        entries: list,
+        query_status: notification_system.models.NotificationStatus,
     ):
         """Querying by status returns only entries with that status.
 
         **Validates: Requirements 12.1, 12.2**
         """
-        log = InMemoryNotificationLog()
+        log = notification_system.log.InMemoryNotificationLog()
         for entry in entries:
             log.append(entry)
 
@@ -1976,20 +2122,24 @@ class TestProperty24NotificationLogQueryCorrectness:
         expected = [e for e in entries if e.status == query_status]
         assert len(results) == len(expected)
 
-    @given(
+    @hypothesis.given(
         entries=log_entries(min_size=2, max_size=20),
         query_notification_id=_log_notification_ids,
         query_channel=_log_channels,
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_query_by_multiple_filters_returns_intersection(
-        self, entries: list, query_notification_id: str, query_channel: Channel,
+        self,
+        entries: list,
+        query_notification_id: str,
+        query_channel: notification_system.models.Channel,
     ):
-        """Querying with multiple filters returns only entries matching ALL criteria.
+        """Querying with multiple filters returns only entries matching ALL
+        criteria.
 
         **Validates: Requirements 12.1, 12.2**
         """
-        log = InMemoryNotificationLog()
+        log = notification_system.log.InMemoryNotificationLog()
         for entry in entries:
             log.append(entry)
 
@@ -2005,23 +2155,27 @@ class TestProperty24NotificationLogQueryCorrectness:
 
         # All entries matching both filters must be in results
         expected = [
-            e for e in entries
-            if e.notification_id == query_notification_id and e.channel == query_channel
+            e
+            for e in entries
+            if e.notification_id == query_notification_id
+            and e.channel == query_channel
         ]
         assert len(results) == len(expected)
 
-    @given(
+    @hypothesis.given(
         entries=log_entries(min_size=3, max_size=15),
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_query_by_time_range_returns_only_entries_within_range(
-        self, entries: list,
+        self,
+        entries: list,
     ):
-        """Querying by time range returns only entries within [start_time, end_time].
+        """Querying by time range returns only entries within [start_time,
+        end_time].
 
         **Validates: Requirements 12.1, 12.2**
         """
-        log = InMemoryNotificationLog()
+        log = notification_system.log.InMemoryNotificationLog()
         for entry in entries:
             log.append(entry)
 
@@ -2040,7 +2194,8 @@ class TestProperty24NotificationLogQueryCorrectness:
 
         # All entries within the range must be in results
         expected = [
-            e for e in entries
+            e
+            for e in entries
             if e.timestamp >= start_time and e.timestamp <= end_time
         ]
         assert len(results) == len(expected)
@@ -2049,30 +2204,31 @@ class TestProperty24NotificationLogQueryCorrectness:
 # --- Property 21: Event state machine validity ---
 # Validates: Requirements 10.1
 
-from notification_system.models import NotificationStatus, VALID_TRANSITIONS
-from notification_system.tracker import EventTracker
 
 # Strategies for event tracker tests
 notification_ids_str = st.text(
     min_size=1,
     max_size=30,
-    alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="-_"),
+    alphabet=st.characters(
+        whitelist_categories=("L", "N"), whitelist_characters="-_"
+    ),
 )
-all_statuses = st.sampled_from(list(NotificationStatus))
+all_statuses = st.sampled_from(list(notification_system.models.NotificationStatus))
 
 
 @st.composite
 def invalid_transition_pair(draw):
-    """Generate a (from_status, to_status) pair that is NOT in VALID_TRANSITIONS.
+    """Generate a (from_status, to_status) pair that is NOT in
+    VALID_TRANSITIONS.
 
     Returns a tuple (from_status, to_status) where to_status is not in
     VALID_TRANSITIONS[from_status].
     """
-    from_status = draw(st.sampled_from(list(NotificationStatus)))
-    allowed = VALID_TRANSITIONS.get(from_status, set())
+    from_status = draw(st.sampled_from(list(notification_system.models.NotificationStatus)))
+    allowed = notification_system.models.VALID_TRANSITIONS.get(from_status, set())
     # All statuses that are NOT valid transitions from from_status
-    invalid_targets = [s for s in NotificationStatus if s not in allowed]
-    assume(len(invalid_targets) > 0)
+    invalid_targets = [s for s in notification_system.models.NotificationStatus if s not in allowed]
+    hypothesis.assume(len(invalid_targets) > 0)
     to_status = draw(st.sampled_from(invalid_targets))
     return from_status, to_status
 
@@ -2086,11 +2242,11 @@ def valid_transition_pair(draw):
     """
     # Only pick from statuses that have at least one valid transition
     statuses_with_transitions = [
-        s for s in NotificationStatus if VALID_TRANSITIONS.get(s, set())
+        s for s in notification_system.models.NotificationStatus if notification_system.models.VALID_TRANSITIONS.get(s, set())
     ]
-    assume(len(statuses_with_transitions) > 0)
+    hypothesis.assume(len(statuses_with_transitions) > 0)
     from_status = draw(st.sampled_from(statuses_with_transitions))
-    allowed = VALID_TRANSITIONS[from_status]
+    allowed = notification_system.models.VALID_TRANSITIONS[from_status]
     to_status = draw(st.sampled_from(sorted(allowed, key=lambda s: s.value)))
     return from_status, to_status
 
@@ -2106,14 +2262,14 @@ class TestProperty21EventStateMachineValidity:
     **Validates: Requirements 10.1**
     """
 
-    @given(
+    @hypothesis.given(
         notification_id=notification_ids_str,
         channel=channels,
         data=invalid_transition_pair(),
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_invalid_transition_raises_value_error(
-        self, notification_id: str, channel: Channel, data: tuple
+        self, notification_id: str, channel: notification_system.models.Channel, data: tuple
     ):
         """Recording an invalid state transition raises ValueError.
 
@@ -2121,7 +2277,7 @@ class TestProperty21EventStateMachineValidity:
         """
         from_status, to_status = data
 
-        tracker = EventTracker()
+        tracker = notification_system.tracker.EventTracker()
 
         # Record the initial state (any status is accepted as the first event)
         tracker.record(notification_id, channel, from_status)
@@ -2130,28 +2286,29 @@ class TestProperty21EventStateMachineValidity:
         with pytest.raises(ValueError) as exc_info:
             tracker.record(notification_id, channel, to_status)
 
-        # Error message should reference the notification and the invalid transition
+        # Error message should reference the notification and the invalid
+        # transition
         assert notification_id in str(exc_info.value)
         assert from_status.value in str(exc_info.value)
         assert to_status.value in str(exc_info.value)
 
-    @given(
+    @hypothesis.given(
         notification_id=notification_ids_str,
         channel=channels,
         data=valid_transition_pair(),
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_valid_transition_is_accepted(
-        self, notification_id: str, channel: Channel, data: tuple
+        self, notification_id: str, channel: notification_system.models.Channel, data: tuple
     ):
-        """Recording a valid state transition does not raise and updates
-        the current status correctly.
+        """Recording a valid state transition does not raise and updates the
+        current status correctly.
 
         **Validates: Requirements 10.1**
         """
         from_status, to_status = data
 
-        tracker = EventTracker()
+        tracker = notification_system.tracker.EventTracker()
 
         # Record the initial state
         tracker.record(notification_id, channel, from_status)
@@ -2162,21 +2319,24 @@ class TestProperty21EventStateMachineValidity:
         # Current status should be updated
         assert tracker.get_current_status(notification_id) == to_status
 
-    @given(
+    @hypothesis.given(
         notification_id=notification_ids_str,
         channel=channels,
         initial_status=all_statuses,
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_any_status_accepted_as_initial_event(
-        self, notification_id: str, channel: Channel, initial_status: NotificationStatus
+        self,
+        notification_id: str,
+        channel: notification_system.models.Channel,
+        initial_status: notification_system.models.NotificationStatus,
     ):
-        """Any status is accepted as the first event for a notification
-        (no prior state to validate against).
+        """Any status is accepted as the first event for a notification (no
+        prior state to validate against).
 
         **Validates: Requirements 10.1**
         """
-        tracker = EventTracker()
+        tracker = notification_system.tracker.EventTracker()
 
         # First event should always succeed regardless of status
         tracker.record(notification_id, channel, initial_status)
@@ -2187,21 +2347,21 @@ class TestProperty21EventStateMachineValidity:
         assert len(history) == 1
         assert history[0].status == initial_status
 
-    @given(
+    @hypothesis.given(
         notification_id=notification_ids_str,
         channel=channels,
         transitions=st.lists(valid_transition_pair(), min_size=1, max_size=5),
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_sequence_of_valid_transitions_all_accepted(
-        self, notification_id: str, channel: Channel, transitions: list
+        self, notification_id: str, channel: notification_system.models.Channel, transitions: list
     ):
         """A sequence of valid transitions (each following from the previous
         state) is fully accepted by the tracker.
 
         **Validates: Requirements 10.1**
         """
-        tracker = EventTracker()
+        tracker = notification_system.tracker.EventTracker()
 
         # Start with the first transition's from_status
         first_from, first_to = transitions[0]
@@ -2210,11 +2370,13 @@ class TestProperty21EventStateMachineValidity:
 
         current = first_to
 
-        # For subsequent transitions, we need to find valid transitions from current
-        # Since generated transitions may not chain, we build a valid chain manually
+        # For subsequent transitions, we need to find valid transitions from
+        # current
+        # Since generated transitions may not chain, we build a valid chain
+        # manually
         for from_status, to_status in transitions[1:]:
             # Check if there's a valid transition from current
-            allowed = VALID_TRANSITIONS.get(current, set())
+            allowed = notification_system.models.VALID_TRANSITIONS.get(current, set())
             if not allowed:
                 break  # Terminal state, can't continue
             # Pick the first allowed transition
@@ -2231,20 +2393,18 @@ class TestProperty21EventStateMachineValidity:
 # --- Property 19: Retry exhaustion marks permanent failure ---
 # Validates: Requirements 9.2, 9.4
 
-from notification_system.config import RetryConfig
-from notification_system.exceptions import DeliveryError
-from notification_system.models import Channel, NotificationRequest, NotificationStatus, NotificationTask
-from notification_system.queue import MessageQueue
-from notification_system.retry import RetryHandler
-from notification_system.tracker import EventTracker
-from notification_system.log import NotificationLog
-
 
 # Strategies for Property 19
 _retry_max_retries = st.integers(min_value=1, max_value=10)
-_retry_base_delay = st.floats(min_value=0.001, max_value=10.0, allow_nan=False, allow_infinity=False)
-_retry_max_delay = st.floats(min_value=10.0, max_value=300.0, allow_nan=False, allow_infinity=False)
-_retry_jitter_factor = st.floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False)
+_retry_base_delay = st.floats(
+    min_value=0.001, max_value=10.0, allow_nan=False, allow_infinity=False
+)
+_retry_max_delay = st.floats(
+    min_value=10.0, max_value=300.0, allow_nan=False, allow_infinity=False
+)
+_retry_jitter_factor = st.floats(
+    min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False
+)
 
 
 @st.composite
@@ -2259,7 +2419,7 @@ def retry_config_and_exhausted_attempt(draw):
     max_delay = draw(_retry_max_delay)
     jitter_factor = draw(_retry_jitter_factor)
 
-    config = RetryConfig(
+    config = notification_system.config.RetryConfig(
         max_retries=max_retries,
         base_delay=base_delay,
         max_delay=max_delay,
@@ -2267,7 +2427,9 @@ def retry_config_and_exhausted_attempt(draw):
     )
 
     # Generate an attempt number that equals or exceeds max_retries
-    attempt = draw(st.integers(min_value=max_retries, max_value=max_retries + 10))
+    attempt = draw(
+        st.integers(min_value=max_retries, max_value=max_retries + 10)
+    )
 
     return config, attempt
 
@@ -2276,25 +2438,27 @@ class TestProperty19RetryExhaustionMarksPermanentFailure:
     """Property 19: Retry exhaustion marks permanent failure.
 
     When a task's attempt count equals or exceeds max_retries, handle_failure
-    marks it as permanently FAILED (records FAILED status in tracker) and
-    does NOT re-enqueue the task.
+    marks it as permanently FAILED (records FAILED status in tracker) and does
+    NOT re-enqueue the task.
 
     **Validates: Requirements 9.2, 9.4**
     """
 
-    @given(
+    @hypothesis.given(
         data=retry_config_and_exhausted_attempt(),
         channel=channels,
         notification_id=st.text(
             min_size=1,
             max_size=30,
-            alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="-_"),
+            alphabet=st.characters(
+                whitelist_categories=("L", "N"), whitelist_characters="-_"
+            ),
         ),
         error_reason=st.text(min_size=1, max_size=50),
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_exhausted_retries_records_failed_status(
-        self, data, channel: Channel, notification_id: str, error_reason: str
+        self, data, channel: notification_system.models.Channel, notification_id: str, error_reason: str
     ):
         """When task.attempt >= max_retries, handle_failure records FAILED
         status in the event tracker.
@@ -2304,31 +2468,31 @@ class TestProperty19RetryExhaustionMarksPermanentFailure:
         config, attempt = data
 
         async def run():
-            queue = MessageQueue(max_depth=100)
-            tracker = EventTracker()
-            notification_log = NotificationLog()
+            queue = notification_system.queue.MessageQueue(max_depth=100)
+            tracker = notification_system.tracker.EventTracker()
+            notification_log = notification_system.log.NotificationLog()
 
-            handler = RetryHandler(
+            handler = notification_system.retry.RetryHandler(
                 config=config,
                 queue=queue,
                 tracker=tracker,
                 notification_log=notification_log,
             )
 
-            request = NotificationRequest(
+            request = notification_system.models.NotificationRequest(
                 recipient_id="user-test",
                 channel=channel,
                 title="Test Title",
                 body="Test body content for property 19",
             )
-            task = NotificationTask(
+            task = notification_system.models.NotificationTask(
                 notification_id=notification_id,
                 request=request,
                 channel=channel,
                 attempt=attempt,
             )
 
-            error = DeliveryError(
+            error = notification_system.exceptions.DeliveryError(
                 notification_id=notification_id,
                 channel=channel.value,
                 reason=error_reason,
@@ -2339,60 +2503,63 @@ class TestProperty19RetryExhaustionMarksPermanentFailure:
 
             # Verify the tracker recorded FAILED status
             current_status = tracker.get_current_status(notification_id)
-            assert current_status == NotificationStatus.FAILED, (
-                f"Expected FAILED status after retry exhaustion, "
-                f"got {current_status} (attempt={attempt}, max_retries={config.max_retries})"
+            assert current_status == notification_system.models.NotificationStatus.FAILED, (
+                "Expected FAILED status after retry exhaustion, got"
+                f" {current_status} (attempt={attempt},"
+                f" max_retries={config.max_retries})"
             )
 
         asyncio.get_event_loop().run_until_complete(run())
 
-    @given(
+    @hypothesis.given(
         data=retry_config_and_exhausted_attempt(),
         channel=channels,
         notification_id=st.text(
             min_size=1,
             max_size=30,
-            alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="-_"),
+            alphabet=st.characters(
+                whitelist_categories=("L", "N"), whitelist_characters="-_"
+            ),
         ),
         error_reason=st.text(min_size=1, max_size=50),
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_exhausted_retries_does_not_reenqueue(
-        self, data, channel: Channel, notification_id: str, error_reason: str
+        self, data, channel: notification_system.models.Channel, notification_id: str, error_reason: str
     ):
-        """When task.attempt >= max_retries, handle_failure does NOT
-        re-enqueue the task to the message queue.
+        """When task.attempt >= max_retries, handle_failure does NOT re-enqueue
+        the task to the message queue.
 
         **Validates: Requirements 9.2, 9.4**
         """
         config, attempt = data
 
         async def run():
-            queue = MessageQueue(max_depth=100)
-            tracker = EventTracker()
-            notification_log = NotificationLog()
+            queue = notification_system.queue.MessageQueue(max_depth=100)
+            tracker = notification_system.tracker.EventTracker()
+            notification_log = notification_system.log.NotificationLog()
 
-            handler = RetryHandler(
+            handler = notification_system.retry.RetryHandler(
                 config=config,
                 queue=queue,
                 tracker=tracker,
                 notification_log=notification_log,
             )
 
-            request = NotificationRequest(
+            request = notification_system.models.NotificationRequest(
                 recipient_id="user-test",
                 channel=channel,
                 title="Test Title",
                 body="Test body content for property 19",
             )
-            task = NotificationTask(
+            task = notification_system.models.NotificationTask(
                 notification_id=notification_id,
                 request=request,
                 channel=channel,
                 attempt=attempt,
             )
 
-            error = DeliveryError(
+            error = notification_system.exceptions.DeliveryError(
                 notification_id=notification_id,
                 channel=channel.value,
                 reason=error_reason,
@@ -2403,29 +2570,32 @@ class TestProperty19RetryExhaustionMarksPermanentFailure:
 
             # Verify the queue is still empty (task was NOT re-enqueued)
             assert queue.depth(channel) == 0, (
-                f"Expected queue to be empty after retry exhaustion, "
+                "Expected queue to be empty after retry exhaustion, "
                 f"but depth is {queue.depth(channel)} "
                 f"(attempt={attempt}, max_retries={config.max_retries})"
             )
 
         asyncio.get_event_loop().run_until_complete(run())
 
-    @given(
+    @hypothesis.given(
         data=retry_config_and_exhausted_attempt(),
         channel=channels,
         notification_id=st.text(
             min_size=1,
             max_size=30,
-            alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="-_"),
+            alphabet=st.characters(
+                whitelist_categories=("L", "N"), whitelist_characters="-_"
+            ),
         ),
         error_reason=st.text(min_size=1, max_size=50),
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_exhausted_retries_at_exact_boundary(
-        self, data, channel: Channel, notification_id: str, error_reason: str
+        self, data, channel: notification_system.models.Channel, notification_id: str, error_reason: str
     ):
         """When task.attempt == max_retries exactly (boundary case),
-        handle_failure still marks as permanently FAILED and does not re-enqueue.
+        handle_failure still marks as permanently FAILED and does not re-
+        enqueue.
 
         **Validates: Requirements 9.2, 9.4**
         """
@@ -2434,31 +2604,31 @@ class TestProperty19RetryExhaustionMarksPermanentFailure:
         attempt = config.max_retries
 
         async def run():
-            queue = MessageQueue(max_depth=100)
-            tracker = EventTracker()
-            notification_log = NotificationLog()
+            queue = notification_system.queue.MessageQueue(max_depth=100)
+            tracker = notification_system.tracker.EventTracker()
+            notification_log = notification_system.log.NotificationLog()
 
-            handler = RetryHandler(
+            handler = notification_system.retry.RetryHandler(
                 config=config,
                 queue=queue,
                 tracker=tracker,
                 notification_log=notification_log,
             )
 
-            request = NotificationRequest(
+            request = notification_system.models.NotificationRequest(
                 recipient_id="user-test",
                 channel=channel,
                 title="Test Title",
                 body="Test body content for property 19",
             )
-            task = NotificationTask(
+            task = notification_system.models.NotificationTask(
                 notification_id=notification_id,
                 request=request,
                 channel=channel,
                 attempt=attempt,
             )
 
-            error = DeliveryError(
+            error = notification_system.exceptions.DeliveryError(
                 notification_id=notification_id,
                 channel=channel.value,
                 reason=error_reason,
@@ -2469,16 +2639,16 @@ class TestProperty19RetryExhaustionMarksPermanentFailure:
 
             # Both conditions must hold at the boundary
             current_status = tracker.get_current_status(notification_id)
-            assert current_status == NotificationStatus.FAILED, (
-                f"Expected FAILED at boundary (attempt={attempt} == max_retries={config.max_retries}), "
-                f"got {current_status}"
+            assert current_status == notification_system.models.NotificationStatus.FAILED, (
+                f"Expected FAILED at boundary (attempt={attempt} =="
+                f" max_retries={config.max_retries}), got {current_status}"
             )
             assert queue.depth(channel) == 0, (
-                f"Expected empty queue at boundary, but depth is {queue.depth(channel)}"
+                "Expected empty queue at boundary, but depth is"
+                f" {queue.depth(channel)}"
             )
 
         asyncio.get_event_loop().run_until_complete(run())
-
 
 
 # --- Property 15: Deduplication TTL expiry ---
@@ -2489,19 +2659,20 @@ class TestProperty19RetryExhaustionMarksPermanentFailure:
 # --- Property 18: Exponential backoff with cap ---
 # Validates: Requirements 9.1, 9.3
 
-from notification_system.config import RetryConfig
-from notification_system.retry import RetryHandler
-from notification_system.tracker import EventTracker
-from notification_system.queue import MessageQueue
-from notification_system.log import NotificationLog
 
 # Strategy for valid RetryConfig values
 retry_configs = st.builds(
-    RetryConfig,
+    notification_system.config.RetryConfig,
     max_retries=st.integers(min_value=1, max_value=10),
-    base_delay=st.floats(min_value=0.01, max_value=10.0, allow_nan=False, allow_infinity=False),
-    max_delay=st.floats(min_value=1.0, max_value=600.0, allow_nan=False, allow_infinity=False),
-    jitter_factor=st.floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False),
+    base_delay=st.floats(
+        min_value=0.01, max_value=10.0, allow_nan=False, allow_infinity=False
+    ),
+    max_delay=st.floats(
+        min_value=1.0, max_value=600.0, allow_nan=False, allow_infinity=False
+    ),
+    jitter_factor=st.floats(
+        min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False
+    ),
 )
 
 # Strategy for attempt numbers
@@ -2511,60 +2682,62 @@ attempt_numbers = st.integers(min_value=0, max_value=20)
 class TestProperty18ExponentialBackoffWithCap:
     """Property 18: Exponential backoff with cap.
 
-    For any retry attempt number N with configured base_delay B and max_delay M,
-    the computed delay SHALL be at most M and SHALL follow the formula
-    min(B × 2^N + jitter, M) where jitter is non-negative.
+    For any retry attempt number N with configured base_delay B and max_delay
+    M, the computed delay SHALL be at most M and SHALL follow the formula min(B
+    × 2^N + jitter, M) where jitter is non-negative.
 
     **Validates: Requirements 9.1, 9.3**
     """
 
-    @given(
+    @hypothesis.given(
         config=retry_configs,
         attempt=attempt_numbers,
     )
-    @settings(max_examples=500)
+    @hypothesis.settings(max_examples=500)
     def test_delay_is_at_least_base_exponential(
-        self, config: RetryConfig, attempt: int
+        self, config: notification_system.config.RetryConfig, attempt: int
     ):
         """The computed delay is >= base_delay * 2^attempt (the exponential
         component without jitter), because jitter is always non-negative.
 
         **Validates: Requirements 9.1, 9.3**
         """
-        tracker = EventTracker()
-        queue = MessageQueue(max_depth=100)
-        log = NotificationLog()
-        handler = RetryHandler(
+        tracker = notification_system.tracker.EventTracker()
+        queue = notification_system.queue.MessageQueue(max_depth=100)
+        log = notification_system.log.NotificationLog()
+        handler = notification_system.retry.RetryHandler(
             config=config, queue=queue, tracker=tracker, notification_log=log
         )
 
         delay = handler.compute_delay(attempt)
-        base_exponential = config.base_delay * (2 ** attempt)
+        base_exponential = config.base_delay * (2**attempt)
 
         # Delay must be >= the base exponential (jitter is non-negative)
-        # But also capped at max_delay, so the lower bound is min(base_exponential, max_delay)
+        # But also capped at max_delay, so the lower bound is
+        # min(base_exponential, max_delay)
         expected_lower_bound = min(base_exponential, config.max_delay)
         assert delay >= expected_lower_bound, (
-            f"Delay {delay} is less than expected lower bound {expected_lower_bound} "
-            f"(base_delay={config.base_delay}, attempt={attempt}, max_delay={config.max_delay})"
+            f"Delay {delay} is less than expected lower bound"
+            f" {expected_lower_bound} (base_delay={config.base_delay},"
+            f" attempt={attempt}, max_delay={config.max_delay})"
         )
 
-    @given(
+    @hypothesis.given(
         config=retry_configs,
         attempt=attempt_numbers,
     )
-    @settings(max_examples=500)
+    @hypothesis.settings(max_examples=500)
     def test_delay_never_exceeds_max_delay(
-        self, config: RetryConfig, attempt: int
+        self, config: notification_system.config.RetryConfig, attempt: int
     ):
         """The computed delay SHALL never exceed the configured max_delay.
 
         **Validates: Requirements 9.1, 9.3**
         """
-        tracker = EventTracker()
-        queue = MessageQueue(max_depth=100)
-        log = NotificationLog()
-        handler = RetryHandler(
+        tracker = notification_system.tracker.EventTracker()
+        queue = notification_system.queue.MessageQueue(max_depth=100)
+        log = notification_system.log.NotificationLog()
+        handler = notification_system.retry.RetryHandler(
             config=config, queue=queue, tracker=tracker, notification_log=log
         )
 
@@ -2575,7 +2748,7 @@ class TestProperty18ExponentialBackoffWithCap:
             f"(base_delay={config.base_delay}, attempt={attempt})"
         )
 
-    @given(
+    @hypothesis.given(
         config=retry_configs,
         attempts=st.lists(
             st.integers(min_value=0, max_value=20),
@@ -2583,9 +2756,9 @@ class TestProperty18ExponentialBackoffWithCap:
             max_size=10,
         ),
     )
-    @settings(max_examples=500)
+    @hypothesis.settings(max_examples=500)
     def test_base_exponential_is_monotonically_non_decreasing(
-        self, config: RetryConfig, attempts: list
+        self, config: notification_system.config.RetryConfig, attempts: list
     ):
         """The base exponential component (base_delay * 2^attempt) is
         monotonically non-decreasing with attempt number. When capped at
@@ -2602,110 +2775,116 @@ class TestProperty18ExponentialBackoffWithCap:
         # The base exponential (without jitter) must be non-decreasing
         prev_base = None
         for attempt in sorted_attempts:
-            base_exponential = config.base_delay * (2 ** attempt)
-            # The effective minimum delay (capped) is min(base_exponential, max_delay)
+            base_exponential = config.base_delay * (2**attempt)
+            # The effective minimum delay (capped) is min(base_exponential,
+            # max_delay)
             effective_min = min(base_exponential, config.max_delay)
 
             if prev_base is not None:
                 assert effective_min >= prev_base, (
-                    f"Monotonicity violated: attempt {attempt} gives effective min "
-                    f"{effective_min} which is less than previous {prev_base}"
+                    f"Monotonicity violated: attempt {attempt} gives effective"
+                    f" min {effective_min} which is less than previous"
+                    f" {prev_base}"
                 )
             prev_base = effective_min
 
-    @given(
+    @hypothesis.given(
         config=retry_configs,
         attempt=attempt_numbers,
     )
-    @settings(max_examples=500)
-    def test_jitter_is_non_negative(
-        self, config: RetryConfig, attempt: int
-    ):
-        """The jitter component is always non-negative, meaning the delay
-        is always >= the base exponential component (before capping).
+    @hypothesis.settings(max_examples=500)
+    def test_jitter_is_non_negative(self, config: notification_system.config.RetryConfig, attempt: int):
+        """The jitter component is always non-negative, meaning the delay is
+        always >= the base exponential component (before capping).
 
         **Validates: Requirements 9.1, 9.3**
         """
-        tracker = EventTracker()
-        queue = MessageQueue(max_depth=100)
-        log = NotificationLog()
-        handler = RetryHandler(
+        tracker = notification_system.tracker.EventTracker()
+        queue = notification_system.queue.MessageQueue(max_depth=100)
+        log = notification_system.log.NotificationLog()
+        handler = notification_system.retry.RetryHandler(
             config=config, queue=queue, tracker=tracker, notification_log=log
         )
 
         delay = handler.compute_delay(attempt)
-        base_exponential = config.base_delay * (2 ** attempt)
+        base_exponential = config.base_delay * (2**attempt)
 
         # If base_exponential <= max_delay, then delay >= base_exponential
-        # (because jitter is non-negative and result is min(base + jitter, max_delay))
+        # (because jitter is non-negative and result is min(base + jitter,
+        # max_delay))
         if base_exponential <= config.max_delay:
             assert delay >= base_exponential, (
                 f"Delay {delay} < base_exponential {base_exponential}, "
-                f"indicating negative jitter"
+                "indicating negative jitter"
             )
-
 
 
 # --- Property 20: Retryable vs non-retryable error classification ---
 # Validates: Requirements 9.6
 
-from notification_system.config import RetryConfig
-from notification_system.exceptions import DeliveryError
-from notification_system.models import NotificationStatus, NotificationTask, NotificationRequest
-from notification_system.queue import MessageQueue
-from notification_system.tracker import EventTracker
-from notification_system.log import NotificationLog
-from notification_system.retry import RetryHandler
-
 
 # Strategies for retry error classification tests
 _retry_attempt_counts = st.integers(min_value=0, max_value=10)
 _max_retries = st.integers(min_value=1, max_value=10)
-_error_reasons = st.text(min_size=1, max_size=100, alphabet=st.characters(whitelist_categories=("L", "N", "P", "Z")))
+_error_reasons = st.text(
+    min_size=1,
+    max_size=100,
+    alphabet=st.characters(whitelist_categories=("L", "N", "P", "Z")),
+)
 
 
 class TestProperty20RetryableVsNonRetryableErrorClassification:
     """Property 20: Retryable vs non-retryable error classification.
 
-    When a DeliveryError has retryable=False, handle_failure immediately
-    marks the notification as FAILED regardless of attempt count.
-    When retryable=True and attempts remain, it re-enqueues the task.
+    When a DeliveryError has retryable=False, handle_failure immediately marks
+    the notification as FAILED regardless of attempt count. When retryable=True
+    and attempts remain, it re-enqueues the task.
 
     **Validates: Requirements 9.6**
     """
 
-    @given(
+    @hypothesis.given(
         channel=channels,
         attempt=_retry_attempt_counts,
         max_retries=_max_retries,
         reason=_error_reasons,
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_non_retryable_error_immediately_fails(
-        self, channel: Channel, attempt: int, max_retries: int, reason: str
+        self, channel: notification_system.models.Channel, attempt: int, max_retries: int, reason: str
     ):
-        """When a DeliveryError has retryable=False, handle_failure marks
-        the notification as FAILED immediately, regardless of attempt count.
+        """When a DeliveryError has retryable=False, handle_failure marks the
+        notification as FAILED immediately, regardless of attempt count.
 
         **Validates: Requirements 9.6**
         """
 
         async def run():
-            config = RetryConfig(max_retries=max_retries, base_delay=1.0, max_delay=60.0, jitter_factor=0.1)
-            queue = MessageQueue(max_depth=100)
-            tracker = EventTracker()
-            log = NotificationLog()
+            config = notification_system.config.RetryConfig(
+                max_retries=max_retries,
+                base_delay=1.0,
+                max_delay=60.0,
+                jitter_factor=0.1,
+            )
+            queue = notification_system.queue.MessageQueue(max_depth=100)
+            tracker = notification_system.tracker.EventTracker()
+            log = notification_system.log.NotificationLog()
 
-            handler = RetryHandler(config=config, queue=queue, tracker=tracker, notification_log=log)
+            handler = notification_system.retry.RetryHandler(
+                config=config,
+                queue=queue,
+                tracker=tracker,
+                notification_log=log,
+            )
 
-            request = NotificationRequest(
+            request = notification_system.models.NotificationRequest(
                 recipient_id="user-1",
                 channel=channel,
                 title="Test",
                 body="Test body content",
             )
             notification_id = f"notif-nonretry-{attempt}"
-            task = NotificationTask(
+            task = notification_system.models.NotificationTask(
                 notification_id=notification_id,
                 request=request,
                 channel=channel,
@@ -2713,11 +2892,11 @@ class TestProperty20RetryableVsNonRetryableErrorClassification:
             )
 
             # Set up tracker with initial state so FAILED transition is valid
-            tracker.record(notification_id, channel, NotificationStatus.CREATED)
-            tracker.record(notification_id, channel, NotificationStatus.QUEUED)
-            tracker.record(notification_id, channel, NotificationStatus.SENDING)
+            tracker.record(notification_id, channel, notification_system.models.NotificationStatus.CREATED)
+            tracker.record(notification_id, channel, notification_system.models.NotificationStatus.QUEUED)
+            tracker.record(notification_id, channel, notification_system.models.NotificationStatus.SENDING)
 
-            error = DeliveryError(
+            error = notification_system.exceptions.DeliveryError(
                 notification_id=notification_id,
                 channel=channel.value,
                 reason=reason,
@@ -2728,58 +2907,68 @@ class TestProperty20RetryableVsNonRetryableErrorClassification:
 
             # The notification should be marked as FAILED
             status = tracker.get_current_status(notification_id)
-            assert status == NotificationStatus.FAILED, (
-                f"Expected FAILED for non-retryable error, got {status}"
-            )
+            assert (
+                status == notification_system.models.NotificationStatus.FAILED
+            ), f"Expected FAILED for non-retryable error, got {status}"
 
             # The queue should remain empty (no re-enqueue)
-            assert queue.depth(channel) == 0, (
-                "Non-retryable error should not re-enqueue the task"
-            )
+            assert (
+                queue.depth(channel) == 0
+            ), "Non-retryable error should not re-enqueue the task"
 
         asyncio.get_event_loop().run_until_complete(run())
 
-    @given(
+    @hypothesis.given(
         channel=channels,
         attempt=_retry_attempt_counts,
         max_retries=_max_retries,
         reason=_error_reasons,
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_retryable_error_with_attempts_remaining_re_enqueues(
-        self, channel: Channel, attempt: int, max_retries: int, reason: str
+        self, channel: notification_system.models.Channel, attempt: int, max_retries: int, reason: str
     ):
-        """When a DeliveryError has retryable=True and attempts remain
-        (attempt < max_retries), handle_failure re-enqueues the task.
+        """When a DeliveryError has retryable=True and attempts remain (attempt
+        < max_retries), handle_failure re-enqueues the task.
 
         **Validates: Requirements 9.6**
         """
         # Ensure attempts remain
-        assume(attempt < max_retries)
+        hypothesis.assume(attempt < max_retries)
 
         async def run():
-            config = RetryConfig(max_retries=max_retries, base_delay=0.001, max_delay=0.01, jitter_factor=0.0)
-            queue = MessageQueue(max_depth=100)
-            tracker = EventTracker()
-            log = NotificationLog()
+            config = notification_system.config.RetryConfig(
+                max_retries=max_retries,
+                base_delay=0.001,
+                max_delay=0.01,
+                jitter_factor=0.0,
+            )
+            queue = notification_system.queue.MessageQueue(max_depth=100)
+            tracker = notification_system.tracker.EventTracker()
+            log = notification_system.log.NotificationLog()
 
-            handler = RetryHandler(config=config, queue=queue, tracker=tracker, notification_log=log)
+            handler = notification_system.retry.RetryHandler(
+                config=config,
+                queue=queue,
+                tracker=tracker,
+                notification_log=log,
+            )
 
-            request = NotificationRequest(
+            request = notification_system.models.NotificationRequest(
                 recipient_id="user-1",
                 channel=channel,
                 title="Test",
                 body="Test body content",
             )
             notification_id = f"notif-retry-{attempt}"
-            task = NotificationTask(
+            task = notification_system.models.NotificationTask(
                 notification_id=notification_id,
                 request=request,
                 channel=channel,
                 attempt=attempt,
             )
 
-            error = DeliveryError(
+            error = notification_system.exceptions.DeliveryError(
                 notification_id=notification_id,
                 channel=channel.value,
                 reason=reason,
@@ -2790,7 +2979,8 @@ class TestProperty20RetryableVsNonRetryableErrorClassification:
 
             # The task should be re-enqueued
             assert queue.depth(channel) == 1, (
-                f"Expected task to be re-enqueued, but queue depth is {queue.depth(channel)}"
+                "Expected task to be re-enqueued, but queue depth is"
+                f" {queue.depth(channel)}"
             )
 
             # Verify the re-enqueued task has incremented attempt
@@ -2801,14 +2991,14 @@ class TestProperty20RetryableVsNonRetryableErrorClassification:
 
         asyncio.get_event_loop().run_until_complete(run())
 
-    @given(
+    @hypothesis.given(
         channel=channels,
         max_retries=_max_retries,
         reason=_error_reasons,
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_retryable_error_at_max_retries_marks_failed(
-        self, channel: Channel, max_retries: int, reason: str
+        self, channel: notification_system.models.Channel, max_retries: int, reason: str
     ):
         """When a DeliveryError has retryable=True but attempt >= max_retries,
         handle_failure marks the notification as FAILED (exhausted retries).
@@ -2817,21 +3007,31 @@ class TestProperty20RetryableVsNonRetryableErrorClassification:
         """
 
         async def run():
-            config = RetryConfig(max_retries=max_retries, base_delay=0.001, max_delay=0.01, jitter_factor=0.0)
-            queue = MessageQueue(max_depth=100)
-            tracker = EventTracker()
-            log = NotificationLog()
+            config = notification_system.config.RetryConfig(
+                max_retries=max_retries,
+                base_delay=0.001,
+                max_delay=0.01,
+                jitter_factor=0.0,
+            )
+            queue = notification_system.queue.MessageQueue(max_depth=100)
+            tracker = notification_system.tracker.EventTracker()
+            log = notification_system.log.NotificationLog()
 
-            handler = RetryHandler(config=config, queue=queue, tracker=tracker, notification_log=log)
+            handler = notification_system.retry.RetryHandler(
+                config=config,
+                queue=queue,
+                tracker=tracker,
+                notification_log=log,
+            )
 
-            request = NotificationRequest(
+            request = notification_system.models.NotificationRequest(
                 recipient_id="user-1",
                 channel=channel,
                 title="Test",
                 body="Test body content",
             )
             notification_id = f"notif-exhausted-{max_retries}"
-            task = NotificationTask(
+            task = notification_system.models.NotificationTask(
                 notification_id=notification_id,
                 request=request,
                 channel=channel,
@@ -2839,11 +3039,11 @@ class TestProperty20RetryableVsNonRetryableErrorClassification:
             )
 
             # Set up tracker with initial state so FAILED transition is valid
-            tracker.record(notification_id, channel, NotificationStatus.CREATED)
-            tracker.record(notification_id, channel, NotificationStatus.QUEUED)
-            tracker.record(notification_id, channel, NotificationStatus.SENDING)
+            tracker.record(notification_id, channel, notification_system.models.NotificationStatus.CREATED)
+            tracker.record(notification_id, channel, notification_system.models.NotificationStatus.QUEUED)
+            tracker.record(notification_id, channel, notification_system.models.NotificationStatus.SENDING)
 
-            error = DeliveryError(
+            error = notification_system.exceptions.DeliveryError(
                 notification_id=notification_id,
                 channel=channel.value,
                 reason=reason,
@@ -2854,24 +3054,20 @@ class TestProperty20RetryableVsNonRetryableErrorClassification:
 
             # The notification should be marked as FAILED
             status = tracker.get_current_status(notification_id)
-            assert status == NotificationStatus.FAILED, (
-                f"Expected FAILED when retries exhausted, got {status}"
-            )
+            assert (
+                status == notification_system.models.NotificationStatus.FAILED
+            ), f"Expected FAILED when retries exhausted, got {status}"
 
             # The queue should remain empty (no re-enqueue)
-            assert queue.depth(channel) == 0, (
-                "Exhausted retries should not re-enqueue the task"
-            )
+            assert (
+                queue.depth(channel) == 0
+            ), "Exhausted retries should not re-enqueue the task"
 
         asyncio.get_event_loop().run_until_complete(run())
 
 
 # --- Property 1: Channel routing correctness ---
 # Validates: Requirements 1.1, 2.1
-
-from notification_system.service import NotificationService
-from notification_system.contacts import ContactInfoStore
-from notification_system.models import ContactInfo
 
 
 class TestProperty1ChannelRoutingCorrectness:
@@ -2885,31 +3081,33 @@ class TestProperty1ChannelRoutingCorrectness:
     **Validates: Requirements 1.1, 2.1**
     """
 
-    @given(
+    @hypothesis.given(
         channel=channels,
         recipient_id=st.text(
             min_size=1,
             max_size=20,
-            alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="_-"),
+            alphabet=st.characters(
+                whitelist_categories=("L", "N"), whitelist_characters="_-"
+            ),
         ),
         title=st.text(min_size=1, max_size=50),
         body=st.text(min_size=1, max_size=100),
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_notification_routed_to_correct_channel_queue(
-        self, channel: Channel, recipient_id: str, title: str, body: str
+        self, channel: notification_system.models.Channel, recipient_id: str, title: str, body: str
     ):
-        """For any valid NotificationRequest with a specific channel,
-        after calling service.send(), the notification task is enqueued
-        to the queue for that channel and no other channel queues.
+        """For any valid NotificationRequest with a specific channel, after
+        calling service.send(), the notification task is enqueued to the queue
+        for that channel and no other channel queues.
 
         **Validates: Requirements 1.1, 2.1**
         """
 
         async def run():
             # Set up contacts so the user has valid contact info for the channel
-            contacts = ContactInfoStore()
-            contact = ContactInfo(
+            contacts = notification_system.contacts.ContactInfoStore()
+            contact = notification_system.models.ContactInfo(
                 user_id=recipient_id,
                 email="test@example.com",
                 phone="+15551234567",
@@ -2918,9 +3116,9 @@ class TestProperty1ChannelRoutingCorrectness:
             contacts.set(contact)
 
             # Create service with high rate limits to avoid interference
-            service = NotificationService(contacts=contacts)
+            service = notification_system.service.NotificationService(contacts=contacts)
 
-            request = NotificationRequest(
+            request = notification_system.models.NotificationRequest(
                 recipient_id=recipient_id,
                 channel=channel,
                 title=title,
@@ -2933,29 +3131,30 @@ class TestProperty1ChannelRoutingCorrectness:
 
             # Verify the task ended up in the correct channel queue
             queue = service.queue
-            assert queue.depth(channel) == 1, (
-                f"Expected 1 task in {channel} queue, got {queue.depth(channel)}"
-            )
+            assert (
+                queue.depth(channel) == 1
+            ), f"Expected 1 task in {channel} queue, got {queue.depth(channel)}"
 
             # Verify no other channel queues received the task
-            for other_channel in Channel:
+            for other_channel in notification_system.models.Channel:
                 if other_channel != channel:
                     assert queue.depth(other_channel) == 0, (
                         f"Expected 0 tasks in {other_channel} queue, "
                         f"got {queue.depth(other_channel)}"
                     )
 
-            # Verify the dequeued task has the correct channel and notification_id
+            # Verify the dequeued task has the correct channel and
+            # notification_id
             task = queue.dequeue_nowait(channel)
             assert task is not None
-            assert task.channel == channel, (
-                f"Expected task channel {channel}, got {task.channel}"
-            )
+            assert (
+                task.channel == channel
+            ), f"Expected task channel {channel}, got {task.channel}"
             assert task.notification_id == notification_id
 
         asyncio.get_event_loop().run_until_complete(run())
 
-    @given(
+    @hypothesis.given(
         channels_list=st.lists(
             channels,
             min_size=2,
@@ -2964,24 +3163,26 @@ class TestProperty1ChannelRoutingCorrectness:
         recipient_id=st.text(
             min_size=1,
             max_size=20,
-            alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="_-"),
+            alphabet=st.characters(
+                whitelist_categories=("L", "N"), whitelist_characters="_-"
+            ),
         ),
     )
-    @settings(max_examples=100)
+    @hypothesis.settings(max_examples=100)
     def test_multiple_notifications_routed_to_respective_channels(
         self, channels_list: list, recipient_id: str
     ):
         """For a sequence of notifications on various channels, each
-        notification is routed to its respective channel queue. The depth
-        of each channel queue equals the number of notifications sent to it.
+        notification is routed to its respective channel queue. The depth of
+        each channel queue equals the number of notifications sent to it.
 
         **Validates: Requirements 1.1, 2.1**
         """
 
         async def run():
             # Set up contacts with all channel endpoints
-            contacts = ContactInfoStore()
-            contact = ContactInfo(
+            contacts = notification_system.contacts.ContactInfoStore()
+            contact = notification_system.models.ContactInfo(
                 user_id=recipient_id,
                 email="test@example.com",
                 phone="+15551234567",
@@ -2990,22 +3191,25 @@ class TestProperty1ChannelRoutingCorrectness:
             contacts.set(contact)
 
             # Use high rate limits and long dedup window with unique content
-            from notification_system.config import NotificationConfig, RateLimitConfig
+            from notification_system.config import (
+                NotificationConfig,
+                RateLimitConfig,
+            )
 
-            high_limit = RateLimitConfig(max_count=10000, window_seconds=3600.0)
-            config = NotificationConfig(
-                per_channel_rate_limits={ch: high_limit for ch in Channel},
+            high_limit = notification_system.config.RateLimitConfig(max_count=10000, window_seconds=3600.0)
+            config = notification_system.config.NotificationConfig(
+                per_channel_rate_limits={ch: high_limit for ch in notification_system.models.Channel},
                 global_rate_limit=high_limit,
                 dedup_window_seconds=300.0,
             )
 
-            service = NotificationService(config=config, contacts=contacts)
+            service = notification_system.service.NotificationService(config=config, contacts=contacts)
 
             # Count expected tasks per channel
-            expected_counts: dict[Channel, int] = {ch: 0 for ch in Channel}
+            expected_counts: dict[notification_system.models.Channel, int] = {ch: 0 for ch in notification_system.models.Channel}
 
             for i, ch in enumerate(channels_list):
-                request = NotificationRequest(
+                request = notification_system.models.NotificationRequest(
                     recipient_id=recipient_id,
                     channel=ch,
                     title=f"Title {i}",
@@ -3016,7 +3220,7 @@ class TestProperty1ChannelRoutingCorrectness:
 
             # Verify each channel queue has the expected number of tasks
             queue = service.queue
-            for ch in Channel:
+            for ch in notification_system.models.Channel:
                 assert queue.depth(ch) == expected_counts[ch], (
                     f"Expected {expected_counts[ch]} tasks in {ch} queue, "
                     f"got {queue.depth(ch)}"
@@ -3028,34 +3232,33 @@ class TestProperty1ChannelRoutingCorrectness:
 # --- Property 3: Invalid recipient validation ---
 # Validates: Requirements 1.5
 
-from notification_system.contacts import ContactInfoStore
-from notification_system.exceptions import ValidationError
-from notification_system.service import NotificationService
 
 # Strategies for Property 3
 _prop3_recipient_ids = st.text(
     min_size=1,
     max_size=50,
-    alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="_-"),
+    alphabet=st.characters(
+        whitelist_categories=("L", "N"), whitelist_characters="_-"
+    ),
 )
 
 
 class TestProperty3InvalidRecipientValidation:
     """Property 3: Invalid recipient validation.
 
-    For any recipient_id that has no contact info registered for the
-    specified channel, calling service.send() raises ValidationError.
+    For any recipient_id that has no contact info registered for the specified
+    channel, calling service.send() raises ValidationError.
 
     **Validates: Requirements 1.5**
     """
 
-    @given(
+    @hypothesis.given(
         recipient_id=_prop3_recipient_ids,
         channel=channels,
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_send_raises_validation_error_for_unknown_recipient(
-        self, recipient_id: str, channel: Channel
+        self, recipient_id: str, channel: notification_system.models.Channel
     ):
         """For any user/channel combination with no registered contact info,
         send() raises ValidationError.
@@ -3065,17 +3268,17 @@ class TestProperty3InvalidRecipientValidation:
 
         async def run():
             # Set up service with an empty ContactInfoStore
-            contacts = ContactInfoStore()
-            service = NotificationService(contacts=contacts)
+            contacts = notification_system.contacts.ContactInfoStore()
+            service = notification_system.service.NotificationService(contacts=contacts)
 
-            request = NotificationRequest(
+            request = notification_system.models.NotificationRequest(
                 recipient_id=recipient_id,
                 channel=channel,
                 title="Test Title",
                 body="Test body",
             )
 
-            with pytest.raises(ValidationError) as exc_info:
+            with pytest.raises(notification_system.exceptions.ValidationError) as exc_info:
                 await service.send(request)
 
             # Verify the error references the recipient_id field
@@ -3086,17 +3289,17 @@ class TestProperty3InvalidRecipientValidation:
 
         asyncio.get_event_loop().run_until_complete(run())
 
-    @given(
+    @hypothesis.given(
         recipient_id=_prop3_recipient_ids,
         channel=channels,
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_send_raises_validation_error_when_channel_has_no_endpoint(
-        self, recipient_id: str, channel: Channel
+        self, recipient_id: str, channel: notification_system.models.Channel
     ):
         """Even if a ContactInfo entry exists for the user, if the specific
-        channel has no endpoint (e.g., no email set, no phone, no device token),
-        send() raises ValidationError.
+        channel has no endpoint (e.g., no email set, no phone, no device
+        token), send() raises ValidationError.
 
         **Validates: Requirements 1.5**
         """
@@ -3105,20 +3308,20 @@ class TestProperty3InvalidRecipientValidation:
             from notification_system.models import ContactInfo
 
             # Create a ContactInfo with NO endpoints set (all None/empty)
-            contacts = ContactInfoStore()
-            contact = ContactInfo(user_id=recipient_id)
+            contacts = notification_system.contacts.ContactInfoStore()
+            contact = notification_system.models.ContactInfo(user_id=recipient_id)
             contacts.set(contact)
 
-            service = NotificationService(contacts=contacts)
+            service = notification_system.service.NotificationService(contacts=contacts)
 
-            request = NotificationRequest(
+            request = notification_system.models.NotificationRequest(
                 recipient_id=recipient_id,
                 channel=channel,
                 title="Test Title",
                 body="Test body",
             )
 
-            with pytest.raises(ValidationError) as exc_info:
+            with pytest.raises(notification_system.exceptions.ValidationError) as exc_info:
                 await service.send(request)
 
             assert exc_info.value.field == "recipient_id"
@@ -3129,19 +3332,14 @@ class TestProperty3InvalidRecipientValidation:
 # --- Property 2: Opt-out rejection ---
 # Validates: Requirements 1.2, 1.6, 8.3
 
-from notification_system.contacts import ContactInfoStore
-from notification_system.exceptions import ValidationError
-from notification_system.models import Channel, ContactInfo, NotificationRequest
-from notification_system.queue import MessageQueue
-from notification_system.service import NotificationService
-from notification_system.settings import NotificationSettings
-
 
 # Strategies for Property 2
 _optout_user_ids = st.text(
     min_size=1,
     max_size=30,
-    alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="_-"),
+    alphabet=st.characters(
+        whitelist_categories=("L", "N"), whitelist_characters="_-"
+    ),
 )
 
 
@@ -3154,13 +3352,13 @@ def user_with_contact_for_channel(draw):
     channel = draw(channels)
 
     # Build contact info appropriate for the channel
-    if channel == Channel.EMAIL:
-        contact = ContactInfo(user_id=user_id, email=f"{user_id}@example.com")
-    elif channel == Channel.SMS:
-        contact = ContactInfo(user_id=user_id, phone="+15551234567")
+    if channel == notification_system.models.Channel.EMAIL:
+        contact = notification_system.models.ContactInfo(user_id=user_id, email=f"{user_id}@example.com")
+    elif channel == notification_system.models.Channel.SMS:
+        contact = notification_system.models.ContactInfo(user_id=user_id, phone="+15551234567")
     else:
         # IOS_PUSH or ANDROID_PUSH
-        contact = ContactInfo(user_id=user_id, device_tokens=["token_abc123"])
+        contact = notification_system.models.ContactInfo(user_id=user_id, device_tokens=["token_abc123"])
 
     return user_id, channel, contact
 
@@ -3168,17 +3366,17 @@ def user_with_contact_for_channel(draw):
 class TestProperty2OptOutRejection:
     """Property 2: Opt-out rejection.
 
-    For any user who has opted out of a channel, calling service.send()
-    for that channel raises ValidationError and the queue remains empty.
+    For any user who has opted out of a channel, calling service.send() for
+    that channel raises ValidationError and the queue remains empty.
 
     **Validates: Requirements 1.2, 1.6, 8.3**
     """
 
-    @given(data=user_with_contact_for_channel())
-    @settings(max_examples=200)
+    @hypothesis.given(data=user_with_contact_for_channel())
+    @hypothesis.settings(max_examples=200)
     def test_opted_out_user_send_raises_validation_error(self, data):
-        """When a user has opted out of a channel, sending a notification
-        on that channel raises ValidationError.
+        """When a user has opted out of a channel, sending a notification on
+        that channel raises ValidationError.
 
         **Validates: Requirements 1.2, 1.6, 8.3**
         """
@@ -3186,21 +3384,21 @@ class TestProperty2OptOutRejection:
 
         async def run():
             # Set up the service with contacts and settings
-            contacts = ContactInfoStore()
+            contacts = notification_system.contacts.ContactInfoStore()
             contacts.set(contact)
 
-            settings = NotificationSettings()
+            settings = notification_system.settings.NotificationSettings()
             settings.opt_out(user_id, channel)
 
-            queue = MessageQueue(max_depth=100)
+            queue = notification_system.queue.MessageQueue(max_depth=100)
 
-            service = NotificationService(
+            service = notification_system.service.NotificationService(
                 contacts=contacts,
                 settings=settings,
                 queue=queue,
             )
 
-            request = NotificationRequest(
+            request = notification_system.models.NotificationRequest(
                 recipient_id=user_id,
                 channel=channel,
                 title="Test notification",
@@ -3208,19 +3406,19 @@ class TestProperty2OptOutRejection:
             )
 
             # Sending to an opted-out channel must raise ValidationError
-            with pytest.raises(ValidationError):
+            with pytest.raises(notification_system.exceptions.ValidationError):
                 await service.send(request)
 
             # The queue must remain empty (nothing was enqueued)
             assert queue.depth(channel) == 0, (
-                f"Queue should be empty after opt-out rejection, "
+                "Queue should be empty after opt-out rejection, "
                 f"but depth is {queue.depth(channel)} for channel {channel}"
             )
 
         asyncio.get_event_loop().run_until_complete(run())
 
-    @given(data=user_with_contact_for_channel())
-    @settings(max_examples=200)
+    @hypothesis.given(data=user_with_contact_for_channel())
+    @hypothesis.settings(max_examples=200)
     def test_opted_out_user_queue_remains_empty(self, data):
         """After an opt-out rejection, the message queue for the channel
         remains empty, confirming no task was enqueued.
@@ -3230,21 +3428,21 @@ class TestProperty2OptOutRejection:
         user_id, channel, contact = data
 
         async def run():
-            contacts = ContactInfoStore()
+            contacts = notification_system.contacts.ContactInfoStore()
             contacts.set(contact)
 
-            settings = NotificationSettings()
+            settings = notification_system.settings.NotificationSettings()
             settings.opt_out(user_id, channel)
 
-            queue = MessageQueue(max_depth=100)
+            queue = notification_system.queue.MessageQueue(max_depth=100)
 
-            service = NotificationService(
+            service = notification_system.service.NotificationService(
                 contacts=contacts,
                 settings=settings,
                 queue=queue,
             )
 
-            request = NotificationRequest(
+            request = notification_system.models.NotificationRequest(
                 recipient_id=user_id,
                 channel=channel,
                 title="Another test",
@@ -3253,11 +3451,11 @@ class TestProperty2OptOutRejection:
 
             try:
                 await service.send(request)
-            except ValidationError:
+            except notification_system.exceptions.ValidationError:
                 pass  # Expected
 
             # Verify all channels are empty (nothing leaked to other queues)
-            for ch in Channel:
+            for ch in notification_system.models.Channel:
                 assert queue.depth(ch) == 0, (
                     f"Queue for channel {ch} should be empty, "
                     f"but depth is {queue.depth(ch)}"
@@ -3265,32 +3463,33 @@ class TestProperty2OptOutRejection:
 
         asyncio.get_event_loop().run_until_complete(run())
 
-    @given(data=user_with_contact_for_channel())
-    @settings(max_examples=200)
+    @hypothesis.given(data=user_with_contact_for_channel())
+    @hypothesis.settings(max_examples=200)
     def test_opt_out_then_opt_in_allows_send(self, data):
         """After opting out and then opting back in, send() succeeds
-        (confirming the opt-out was the cause of rejection, not something else).
+        (confirming the opt-out was the cause of rejection, not something
+        else).
 
         **Validates: Requirements 1.2, 1.6, 8.3**
         """
         user_id, channel, contact = data
 
         async def run():
-            contacts = ContactInfoStore()
+            contacts = notification_system.contacts.ContactInfoStore()
             contacts.set(contact)
 
-            settings = NotificationSettings()
+            settings = notification_system.settings.NotificationSettings()
             settings.opt_out(user_id, channel)
 
-            queue = MessageQueue(max_depth=100)
+            queue = notification_system.queue.MessageQueue(max_depth=100)
 
-            service = NotificationService(
+            service = notification_system.service.NotificationService(
                 contacts=contacts,
                 settings=settings,
                 queue=queue,
             )
 
-            request = NotificationRequest(
+            request = notification_system.models.NotificationRequest(
                 recipient_id=user_id,
                 channel=channel,
                 title="Test after re-opt-in",
@@ -3298,7 +3497,7 @@ class TestProperty2OptOutRejection:
             )
 
             # First, verify it's rejected while opted out
-            with pytest.raises(ValidationError):
+            with pytest.raises(notification_system.exceptions.ValidationError):
                 await service.send(request)
 
             assert queue.depth(channel) == 0
@@ -3320,34 +3519,30 @@ class TestProperty2OptOutRejection:
 # --- Property 4: Notification ID uniqueness ---
 # Validates: Requirements 1.8
 
-from notification_system.config import NotificationConfig, RateLimitConfig
-from notification_system.contacts import ContactInfoStore
-from notification_system.models import Channel, ContactInfo, NotificationRequest
-from notification_system.queue import MessageQueue
-from notification_system.service import NotificationService
-
 
 class TestProperty4NotificationIDUniqueness:
     """Property 4: Notification ID uniqueness.
 
-    For any N notifications sent through the service, all returned
-    notification IDs are unique (no duplicates).
+    For any N notifications sent through the service, all returned notification
+    IDs are unique (no duplicates).
 
     **Validates: Requirements 1.8**
     """
 
-    @given(
+    @hypothesis.given(
         channel=channels,
         recipient_id=st.text(
             min_size=1,
             max_size=20,
-            alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="_-"),
+            alphabet=st.characters(
+                whitelist_categories=("L", "N"), whitelist_characters="_-"
+            ),
         ),
         num_notifications=st.integers(min_value=2, max_value=20),
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_all_notification_ids_are_unique(
-        self, channel: Channel, recipient_id: str, num_notifications: int
+        self, channel: notification_system.models.Channel, recipient_id: str, num_notifications: int
     ):
         """For any N notifications sent through the service, all returned
         notification IDs are distinct (no duplicates).
@@ -3357,8 +3552,8 @@ class TestProperty4NotificationIDUniqueness:
 
         async def run():
             # Set up contacts with valid endpoints for all channels
-            contacts = ContactInfoStore()
-            contact = ContactInfo(
+            contacts = notification_system.contacts.ContactInfoStore()
+            contact = notification_system.models.ContactInfo(
                 user_id=recipient_id,
                 email=f"{recipient_id}@example.com",
                 phone="+15551234567",
@@ -3366,21 +3561,22 @@ class TestProperty4NotificationIDUniqueness:
             )
             contacts.set(contact)
 
-            # Use high rate limits and unique content to avoid dedup interference
-            high_limit = RateLimitConfig(max_count=10000, window_seconds=3600.0)
-            config = NotificationConfig(
-                per_channel_rate_limits={ch: high_limit for ch in Channel},
+            # Use high rate limits and unique content to avoid dedup
+            # interference
+            high_limit = notification_system.config.RateLimitConfig(max_count=10000, window_seconds=3600.0)
+            config = notification_system.config.NotificationConfig(
+                per_channel_rate_limits={ch: high_limit for ch in notification_system.models.Channel},
                 global_rate_limit=high_limit,
                 dedup_window_seconds=300.0,
                 queue_max_depth=1000,
             )
 
-            service = NotificationService(config=config, contacts=contacts)
+            service = notification_system.service.NotificationService(config=config, contacts=contacts)
 
             # Send N notifications with different content to avoid dedup
             ids: list[str] = []
             for i in range(num_notifications):
-                request = NotificationRequest(
+                request = notification_system.models.NotificationRequest(
                     recipient_id=recipient_id,
                     channel=channel,
                     title="Title {}".format(i),
@@ -3390,13 +3586,13 @@ class TestProperty4NotificationIDUniqueness:
                 ids.append(notification_id)
 
             # All IDs must be unique
-            assert len(ids) == len(set(ids)), (
-                "Duplicate notification IDs found: {}".format(ids)
-            )
+            assert len(ids) == len(
+                set(ids)
+            ), "Duplicate notification IDs found: {}".format(ids)
 
         asyncio.get_event_loop().run_until_complete(run())
 
-    @given(
+    @hypothesis.given(
         channels_list=st.lists(
             channels,
             min_size=2,
@@ -3405,23 +3601,25 @@ class TestProperty4NotificationIDUniqueness:
         recipient_id=st.text(
             min_size=1,
             max_size=20,
-            alphabet=st.characters(whitelist_categories=("L", "N"), whitelist_characters="_-"),
+            alphabet=st.characters(
+                whitelist_categories=("L", "N"), whitelist_characters="_-"
+            ),
         ),
     )
-    @settings(max_examples=200)
+    @hypothesis.settings(max_examples=200)
     def test_ids_unique_across_different_channels(
         self, channels_list: list, recipient_id: str
     ):
-        """Notification IDs are unique even when notifications are sent
-        across different channels for the same recipient.
+        """Notification IDs are unique even when notifications are sent across
+        different channels for the same recipient.
 
         **Validates: Requirements 1.8**
         """
 
         async def run():
             # Set up contacts with valid endpoints for all channels
-            contacts = ContactInfoStore()
-            contact = ContactInfo(
+            contacts = notification_system.contacts.ContactInfoStore()
+            contact = notification_system.models.ContactInfo(
                 user_id=recipient_id,
                 email=f"{recipient_id}@example.com",
                 phone="+15551234567",
@@ -3430,31 +3628,35 @@ class TestProperty4NotificationIDUniqueness:
             contacts.set(contact)
 
             # Use high rate limits and unique content per iteration
-            high_limit = RateLimitConfig(max_count=10000, window_seconds=3600.0)
-            config = NotificationConfig(
-                per_channel_rate_limits={ch: high_limit for ch in Channel},
+            high_limit = notification_system.config.RateLimitConfig(max_count=10000, window_seconds=3600.0)
+            config = notification_system.config.NotificationConfig(
+                per_channel_rate_limits={ch: high_limit for ch in notification_system.models.Channel},
                 global_rate_limit=high_limit,
                 dedup_window_seconds=300.0,
                 queue_max_depth=1000,
             )
 
-            service = NotificationService(config=config, contacts=contacts)
+            service = notification_system.service.NotificationService(config=config, contacts=contacts)
 
             # Send notifications across different channels
             ids: list[str] = []
             for i, ch in enumerate(channels_list):
-                request = NotificationRequest(
+                request = notification_system.models.NotificationRequest(
                     recipient_id=recipient_id,
                     channel=ch,
                     title="Title {}".format(i),
-                    body="Body {} unique content for channel {}".format(i, ch.value),
+                    body="Body {} unique content for channel {}".format(
+                        i, ch.value
+                    ),
                 )
                 notification_id = await service.send(request)
                 ids.append(notification_id)
 
             # All IDs must be unique across all channels
-            assert len(ids) == len(set(ids)), (
-                "Duplicate notification IDs found across channels: {}".format(ids)
+            assert len(ids) == len(
+                set(ids)
+            ), "Duplicate notification IDs found across channels: {}".format(
+                ids
             )
 
         asyncio.get_event_loop().run_until_complete(run())

@@ -11,16 +11,15 @@ Tests the full lifecycle of the LSM-tree storage engine including:
 import asyncio
 import time
 
+import kv_store.config
+import kv_store.storage.engine
 import pytest
-
-from kv_store.config import StorageConfig
-from kv_store.storage.engine import StorageEngine
 
 
 @pytest.fixture
 def storage_config(tmp_path):
     """Create a StorageConfig pointing to a temporary directory."""
-    return StorageConfig(
+    return kv_store.config.StorageConfig(
         data_dir=str(tmp_path / "data"),
         wal_dir=str(tmp_path / "data" / "wal"),
         sstable_dir=str(tmp_path / "data" / "sstables"),
@@ -33,7 +32,7 @@ def storage_config(tmp_path):
 @pytest.fixture
 async def engine(storage_config):
     """Create and start a StorageEngine, stopping it after the test."""
-    eng = StorageEngine(storage_config)
+    eng = kv_store.storage.engine.StorageEngine(storage_config)
     await eng.start()
     yield eng
     await eng.stop()
@@ -110,13 +109,13 @@ class TestDataPersistenceAcrossRestart:
         t = time.time()
 
         # Write data and stop
-        engine1 = StorageEngine(storage_config)
+        engine1 = kv_store.storage.engine.StorageEngine(storage_config)
         await engine1.start()
         await engine1.put("persist-key", b"persist-value", t)
         await engine1.stop()
 
         # Restart and verify
-        engine2 = StorageEngine(storage_config)
+        engine2 = kv_store.storage.engine.StorageEngine(storage_config)
         await engine2.start()
         result = await engine2.get("persist-key")
         assert result is not None
@@ -127,13 +126,13 @@ class TestDataPersistenceAcrossRestart:
         """Multiple writes before stop are all available after restart."""
         t = time.time()
 
-        engine1 = StorageEngine(storage_config)
+        engine1 = kv_store.storage.engine.StorageEngine(storage_config)
         await engine1.start()
         for i in range(10):
             await engine1.put(f"key-{i}", f"val-{i}".encode(), t + i)
         await engine1.stop()
 
-        engine2 = StorageEngine(storage_config)
+        engine2 = kv_store.storage.engine.StorageEngine(storage_config)
         await engine2.start()
         for i in range(10):
             result = await engine2.get(f"key-{i}")
@@ -145,13 +144,13 @@ class TestDataPersistenceAcrossRestart:
         """A delete (tombstone) persists across restart."""
         t = time.time()
 
-        engine1 = StorageEngine(storage_config)
+        engine1 = kv_store.storage.engine.StorageEngine(storage_config)
         await engine1.start()
         await engine1.put("del-key", b"del-value", t)
         await engine1.delete("del-key", t + 1)
         await engine1.stop()
 
-        engine2 = StorageEngine(storage_config)
+        engine2 = kv_store.storage.engine.StorageEngine(storage_config)
         await engine2.start()
         result = await engine2.get("del-key")
         assert result is not None
@@ -164,7 +163,7 @@ class TestMemtableFlushAndSSTableRead:
 
     async def test_flush_creates_sstable(self, storage_config):
         """Writing enough data triggers a flush and data is still readable."""
-        engine = StorageEngine(storage_config)
+        engine = kv_store.storage.engine.StorageEngine(storage_config)
         await engine.start()
 
         t = time.time()
@@ -176,7 +175,8 @@ class TestMemtableFlushAndSSTableRead:
             value = b"x" * 50
             await engine.put(key, value, t + i)
 
-        # Verify all data is still readable (some from SSTable, some from MemTable)
+        # Verify all data is still readable (some from SSTable, some from
+        # MemTable)
         for i in range(60):
             key = f"flush-key-{i:04d}"
             result = await engine.get(key)
@@ -187,7 +187,7 @@ class TestMemtableFlushAndSSTableRead:
 
     async def test_data_readable_after_flush_and_restart(self, storage_config):
         """Data flushed to SSTable is readable after restart without WAL."""
-        engine1 = StorageEngine(storage_config)
+        engine1 = kv_store.storage.engine.StorageEngine(storage_config)
         await engine1.start()
 
         t = time.time()
@@ -200,7 +200,7 @@ class TestMemtableFlushAndSSTableRead:
         await engine1.stop()
 
         # Restart - data should be in SSTables
-        engine2 = StorageEngine(storage_config)
+        engine2 = kv_store.storage.engine.StorageEngine(storage_config)
         await engine2.start()
 
         for i in range(60):
@@ -217,7 +217,7 @@ class TestStress:
 
     async def test_large_number_of_keys(self, storage_config):
         """Write and read back 500 keys."""
-        engine = StorageEngine(storage_config)
+        engine = kv_store.storage.engine.StorageEngine(storage_config)
         await engine.start()
 
         t = time.time()
@@ -238,7 +238,7 @@ class TestStress:
 
     async def test_overwrite_same_key_many_times(self, storage_config):
         """Overwriting the same key many times returns the latest value."""
-        engine = StorageEngine(storage_config)
+        engine = kv_store.storage.engine.StorageEngine(storage_config)
         await engine.start()
 
         t = time.time()
@@ -257,14 +257,16 @@ class TestConcurrentOperations:
 
     async def test_concurrent_puts(self, storage_config):
         """Multiple concurrent puts don't corrupt data."""
-        engine = StorageEngine(storage_config)
+        engine = kv_store.storage.engine.StorageEngine(storage_config)
         await engine.start()
 
         t = time.time()
 
         async def write_batch(prefix: str, count: int):
             for i in range(count):
-                await engine.put(f"{prefix}-{i}", f"{prefix}-val-{i}".encode(), t + i)
+                await engine.put(
+                    f"{prefix}-{i}", f"{prefix}-val-{i}".encode(), t + i
+                )
 
         # Run multiple batches concurrently
         await asyncio.gather(
@@ -284,7 +286,7 @@ class TestConcurrentOperations:
 
     async def test_concurrent_reads_and_writes(self, storage_config):
         """Concurrent reads and writes don't cause errors."""
-        engine = StorageEngine(storage_config)
+        engine = kv_store.storage.engine.StorageEngine(storage_config)
         await engine.start()
 
         t = time.time()

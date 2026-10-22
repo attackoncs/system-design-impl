@@ -1,27 +1,27 @@
 """LSM-tree storage engine orchestrating WAL, MemTable, SSTables.
 
-Write path: WAL → MemTable → (flush) → SSTable
-Read path:  MemTable → Bloom filter → SSTables (newest first)
+Write path: WAL → MemTable → (flush) → SSTable Read path:  MemTable → Bloom
+filter → SSTables (newest first)
 
-The StorageEngine is the main entry point for all local storage operations.
-It coordinates the write-ahead log for durability, the in-memory MemTable
-for fast writes, and immutable SSTables on disk for persistent storage.
+The StorageEngine is the main entry point for all local storage operations. It
+coordinates the write-ahead log for durability, the in-memory MemTable for fast
+writes, and immutable SSTables on disk for persistent storage.
 
 Covers: FR-9, FR-10
 """
 
+import asyncio
+import dataclasses
 import logging
-import os
+import pathlib
 import uuid
-from dataclasses import dataclass
-from pathlib import Path
 from typing import List, Optional
 
-from kv_store.config import StorageConfig
-from kv_store.storage.compaction import CompactionManager
-from kv_store.storage.memtable import MemTable
-from kv_store.storage.sstable import SSTable
-from kv_store.storage.wal import WriteAheadLog, WALEntry, WALEntryType
+from kv_store import config as kv_store_config
+from kv_store.storage import compaction as storage_compaction
+from kv_store.storage import memtable as storage_memtable
+from kv_store.storage import sstable as storage_sstable
+from kv_store.storage import wal as storage_wal
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ _MAX_KEY_SIZE_BYTES = 256
 _MAX_VALUE_SIZE_BYTES = 10 * 1024  # 10 KB
 
 
-@dataclass
+@dataclasses.dataclass
 class StorageResult:
     """Result of a storage operation."""
 
@@ -50,33 +50,39 @@ class StorageEngine:
     Covers: FR-9, FR-10
     """
 
-    def __init__(self, config: StorageConfig):
+    def __init__(self, config: kv_store_config.StorageConfig):
         """Initialize the storage engine.
 
         Args:
             config: Storage configuration.
         """
+        self._write_lock = asyncio.Lock()
         self._config = config
-        self._wal = WriteAheadLog(config.wal_dir)
-        self._memtable = MemTable(size_threshold_bytes=config.memtable_size_bytes)
-        self._sstables: List[SSTable] = []  # Newest first
-        self._compaction_manager = CompactionManager(
+        self._wal = storage_wal.WriteAheadLog(config.wal_dir)
+        self._memtable = storage_memtable.MemTable(
+            size_threshold_bytes=config.memtable_size_bytes
+        )
+        self._sstables: List[storage_sstable.SSTable] = []  # Newest first
+        self._compaction_manager = storage_compaction.CompactionManager(
             sstable_dir=config.sstable_dir,
             compaction_threshold=config.compaction_threshold,
         )
         self._started = False
 
     async def start(self) -> None:
-        """Start the storage engine — create directories, replay WAL, load SSTables.
+        """Start the storage engine — create directories, replay WAL, load
+        SSTables.
 
         1. Create data directories if they don't exist.
         2. Load existing SSTables from disk (sorted newest first by created_at).
         3. Replay WAL to restore MemTable state.
         """
         # Create directories
-        Path(self._config.data_dir).mkdir(parents=True, exist_ok=True)
-        Path(self._config.wal_dir).mkdir(parents=True, exist_ok=True)
-        Path(self._config.sstable_dir).mkdir(parents=True, exist_ok=True)
+        pathlib.Path(self._config.data_dir).mkdir(parents=True, exist_ok=True)
+        pathlib.Path(self._config.wal_dir).mkdir(parents=True, exist_ok=True)
+        pathlib.Path(self._config.sstable_dir).mkdir(
+            parents=True, exist_ok=True
+        )
 
         # Load existing SSTables from disk
         self._sstables = self._load_sstables()
@@ -84,31 +90,38 @@ class StorageEngine:
         # Replay WAL to restore MemTable state
         entries = await self._wal.replay()
         for entry in entries:
-            if entry.entry_type == WALEntryType.PUT:
-                self._memtable.put(entry.key, entry.value or b"", entry.timestamp)
-            elif entry.entry_type == WALEntryType.DELETE:
+            if entry.entry_type == storage_wal.WALEntryType.PUT:
+                self._memtable.put(
+                    entry.key, entry.value or b"", entry.timestamp
+                )
+            elif entry.entry_type == storage_wal.WALEntryType.DELETE:
                 self._memtable.delete(entry.key, entry.timestamp)
 
         if entries:
             logger.info(
-                "Replayed %d WAL entries to restore MemTable state", len(entries)
+                "Replayed %d WAL entries to restore MemTable state",
+                len(entries),
             )
 
         self._started = True
         logger.info(
-            "Storage engine started: %d SSTables loaded, MemTable size=%d bytes",
+            "Storage engine started: %d SSTables loaded, MemTable size=%d"
+            " bytes",
             len(self._sstables),
             self._memtable.size_bytes,
         )
 
     async def stop(self) -> None:
         """Gracefully stop — flush MemTable if non-empty, close WAL."""
-        if len(self._memtable) > 0:
-            await self._flush_memtable()
-            logger.info("Flushed MemTable to SSTable on shutdown")
 
-        self._started = False
-        logger.info("Storage engine stopped")
+        # Serialize WAL updates and flushes to prevent lost concurrent writes.
+        async with self._write_lock:
+            if len(self._memtable) > 0:
+                await self._flush_memtable()
+                logger.info("Flushed MemTable to SSTable on shutdown")
+
+            self._started = False
+            logger.info("Storage engine stopped")
 
     async def put(self, key: str, value: bytes, timestamp: float) -> None:
         """Write a key-value pair.
@@ -126,25 +139,28 @@ class StorageEngine:
         Raises:
             ValueError: If key or value exceeds size limits.
         """
-        self._validate_key(key)
-        self._validate_value(value)
 
-        # Write to WAL first for durability
-        wal_entry = WALEntry(
-            sequence_number=0,  # Assigned by WAL
-            entry_type=WALEntryType.PUT,
-            key=key,
-            value=value,
-            timestamp=timestamp,
-        )
-        await self._wal.append(wal_entry)
+        # Serialize WAL updates and flushes to prevent lost concurrent writes.
+        async with self._write_lock:
+            self._validate_key(key)
+            self._validate_value(value)
 
-        # Insert into MemTable
-        self._memtable.put(key, value, timestamp)
+            # Write to WAL first for durability
+            wal_entry = storage_wal.WALEntry(
+                sequence_number=0,  # Assigned by WAL
+                entry_type=storage_wal.WALEntryType.PUT,
+                key=key,
+                value=value,
+                timestamp=timestamp,
+            )
+            await self._wal.append(wal_entry)
 
-        # Flush if MemTable is full
-        if self._memtable.is_full():
-            await self._flush_memtable()
+            # Insert into MemTable
+            self._memtable.put(key, value, timestamp)
+
+            # Flush if MemTable is full
+            if self._memtable.is_full():
+                await self._flush_memtable()
 
     async def get(self, key: str) -> Optional[StorageResult]:
         """Read a key.
@@ -205,24 +221,27 @@ class StorageEngine:
         Raises:
             ValueError: If key exceeds size limit.
         """
-        self._validate_key(key)
 
-        # Write to WAL
-        wal_entry = WALEntry(
-            sequence_number=0,  # Assigned by WAL
-            entry_type=WALEntryType.DELETE,
-            key=key,
-            value=None,
-            timestamp=timestamp,
-        )
-        await self._wal.append(wal_entry)
+        # Serialize WAL updates and flushes to prevent lost concurrent writes.
+        async with self._write_lock:
+            self._validate_key(key)
 
-        # Insert tombstone into MemTable
-        self._memtable.delete(key, timestamp)
+            # Write to WAL
+            wal_entry = storage_wal.WALEntry(
+                sequence_number=0,  # Assigned by WAL
+                entry_type=storage_wal.WALEntryType.DELETE,
+                key=key,
+                value=None,
+                timestamp=timestamp,
+            )
+            await self._wal.append(wal_entry)
 
-        # Flush if MemTable is full
-        if self._memtable.is_full():
-            await self._flush_memtable()
+            # Insert tombstone into MemTable
+            self._memtable.delete(key, timestamp)
+
+            # Flush if MemTable is full
+            if self._memtable.is_full():
+                await self._flush_memtable()
 
     async def _flush_memtable(self) -> None:
         """Flush the current MemTable to a new SSTable and truncate WAL.
@@ -239,10 +258,12 @@ class StorageEngine:
 
         # Generate unique SSTable filename
         sstable_filename = f"sstable_L0_{uuid.uuid4().hex[:12]}.sst"
-        sstable_path = str(Path(self._config.sstable_dir) / sstable_filename)
+        sstable_path = str(
+            pathlib.Path(self._config.sstable_dir) / sstable_filename
+        )
 
         # Create SSTable from MemTable
-        new_sstable = await SSTable.create_from_memtable(
+        new_sstable = await storage_sstable.SSTable.create_from_memtable(
             self._memtable, sstable_path, level=0
         )
 
@@ -271,18 +292,20 @@ class StorageEngine:
                 self._compaction_manager.get_compaction_stats(),
             )
 
-    def _replace_compacted_sstables(self, compacted_sstable: SSTable) -> None:
+    def _replace_compacted_sstables(
+        self, compacted_sstable: storage_sstable.SSTable
+    ) -> None:
         """Replace compacted SSTables with the new merged SSTable.
 
         Removes SSTables at the level that was compacted (level - 1 of the
         output) and inserts the new compacted SSTable in the correct position.
         """
-        stats = self._compaction_manager.get_compaction_stats()
         compacted_level = compacted_sstable.metadata.level - 1
 
         # Remove SSTables that were at the compacted level
         self._sstables = [
-            sst for sst in self._sstables
+            sst
+            for sst in self._sstables
             if sst.metadata.level != compacted_level
         ]
 
@@ -298,21 +321,22 @@ class StorageEngine:
         if not inserted:
             self._sstables.append(compacted_sstable)
 
-    def _load_sstables(self) -> List[SSTable]:
+    def _load_sstables(self) -> List[storage_sstable.SSTable]:
         """Load all existing SSTable files from the sstable directory.
 
         Returns:
-            List of SSTable instances sorted by created_at descending (newest first).
+            List of SSTable instances sorted by created_at descending (newest
+            first).
         """
-        sstable_dir = Path(self._config.sstable_dir)
+        sstable_dir = pathlib.Path(self._config.sstable_dir)
         if not sstable_dir.exists():
             return []
 
-        sstables: List[SSTable] = []
+        sstables: List[storage_sstable.SSTable] = []
         for file_path in sstable_dir.iterdir():
             if file_path.suffix == ".sst":
                 try:
-                    sst = SSTable(str(file_path))
+                    sst = storage_sstable.SSTable(str(file_path))
                     sstables.append(sst)
                 except (ValueError, FileNotFoundError) as e:
                     logger.warning(

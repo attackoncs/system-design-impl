@@ -3,28 +3,27 @@
 import time
 
 import pytest
-
-from rate_limiter.algorithms.token_bucket import TokenBucketAlgorithm
-from rate_limiter.config import RateLimitRule
-from rate_limiter.storage.memory import MemoryStorage
+import rate_limiter.algorithms.token_bucket
+import rate_limiter.config
+import rate_limiter.storage.memory
 
 
 @pytest.fixture
 def algorithm():
     """Create a TokenBucketAlgorithm instance."""
-    return TokenBucketAlgorithm()
+    return rate_limiter.algorithms.token_bucket.TokenBucketAlgorithm()
 
 
 @pytest.fixture
 def storage():
     """Create a fresh MemoryStorage instance."""
-    return MemoryStorage()
+    return rate_limiter.storage.memory.MemoryStorage()
 
 
 @pytest.fixture
 def rule():
     """Create a standard rule: 5 requests per 10 seconds."""
-    return RateLimitRule(limit=5, window=10)
+    return rate_limiter.config.RateLimitRule(limit=5, window=10)
 
 
 class TestAllowWhenTokensAvailable:
@@ -82,7 +81,9 @@ class TestRefillOverTime:
     """Tests for token refill behavior over time."""
 
     def test_refill_allows_request_after_wait(self, algorithm, storage, rule):
-        """After exhausting tokens and waiting, a new request should be allowed."""
+        """After exhausting tokens and waiting, a new request should be
+        allowed.
+        """
         # Exhaust all tokens
         for _ in range(rule.limit):
             algorithm.check("user:1", rule, storage)
@@ -115,7 +116,9 @@ class TestBurstHandling:
     """Tests for burst capacity (all tokens available at once)."""
 
     def test_burst_up_to_limit(self, algorithm, storage, rule):
-        """All requests up to the limit should be allowed in rapid succession."""
+        """All requests up to the limit should be allowed in rapid
+        succession.
+        """
         results = []
         for _ in range(rule.limit):
             results.append(algorithm.check("user:1", rule, storage))
@@ -156,7 +159,9 @@ class TestResultMetadata:
         assert result.remaining == rule.limit - 3
 
     def test_reset_after_field(self, algorithm, storage, rule):
-        """reset_after should be a positive float indicating time to full bucket."""
+        """reset_after should be a positive float indicating time to full
+        bucket.
+        """
         result = algorithm.check("user:1", rule, storage)
         assert result.reset_after > 0
         assert isinstance(result.reset_after, float)

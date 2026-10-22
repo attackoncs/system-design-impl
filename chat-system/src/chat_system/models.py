@@ -1,10 +1,20 @@
 """Immutable public chat models."""
-from dataclasses import dataclass
+
+import dataclasses
 from typing import Tuple
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class ChatConfig:
+    """Validated limits for group membership, messages, and live sessions.
+
+    Attributes:
+        max_group_members: Maximum group size, including its owner (2 to 100).
+        max_message_length: Maximum number of characters in a message.
+        heartbeat_timeout: Seconds before a silent session expires.
+        session_queue_size: Maximum number of queued events per device.
+    """
+
     max_group_members: int = 100
     max_message_length: int = 99_999
     heartbeat_timeout: float = 30.0
@@ -19,8 +29,19 @@ class ChatConfig:
             raise ValueError("timeouts and queue sizes must be positive")
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class Message:
+    """An immutable persisted text message.
+
+    Attributes:
+        message_id: Monotonically allocated message identifier.
+        channel_id: Destination channel identifier.
+        sender_id: Authenticated sender identifier.
+        content: Message text.
+        created_at: Creation timestamp in epoch seconds.
+        client_message_id: Sender-provided idempotency key.
+    """
+
     message_id: int
     channel_id: str
     sender_id: str
@@ -29,8 +50,17 @@ class Message:
     client_message_id: str
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class Channel:
+    """An immutable channel membership snapshot.
+
+    Attributes:
+        channel_id: Unique channel identifier.
+        owner_id: Group creator or direct-channel creator.
+        kind: Either "direct" or "group".
+        members: Member user IDs.
+    """
+
     channel_id: str
     owner_id: str
     kind: str

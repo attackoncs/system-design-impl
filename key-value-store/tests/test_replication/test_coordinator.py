@@ -12,41 +12,31 @@ All dependencies (hash_ring, quorum_manager, grpc_client, storage_engine,
 membership, hinted_handoff) are mocked.
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+import unittest.mock
 
-from kv_store.replication.coordinator import (
-    RequestCoordinator,
-    PutResult,
-    GetResult,
-    DeleteResult,
-    QuorumNotMetError,
-)
-from kv_store.replication.vector_clock import VectorClock
-from kv_store.replication.quorum import (
-    ConsistencyLevel,
-    QuorumConfig,
-    QuorumManager,
-)
-from kv_store.config import ReplicationConfig
+import kv_store.config
+import kv_store.replication.coordinator
+import kv_store.replication.quorum
+import kv_store.replication.vector_clock
+import pytest
 
 
 @pytest.fixture
 def replication_config():
     """Default replication config: N=3, W=2, R=2."""
-    return ReplicationConfig(n_replicas=3, w_quorum=2, r_quorum=2)
+    return kv_store.config.ReplicationConfig(n_replicas=3, w_quorum=2, r_quorum=2)
 
 
 @pytest.fixture
 def quorum_manager(replication_config):
     """Real QuorumManager with default config."""
-    return QuorumManager(replication_config)
+    return kv_store.replication.quorum.QuorumManager(replication_config)
 
 
 @pytest.fixture
 def mock_hash_ring():
     """Mock hash ring that returns predictable node lists."""
-    ring = MagicMock()
+    ring = unittest.mock.MagicMock()
     ring.get_nodes.return_value = ["node-1", "node-2", "node-3"]
     return ring
 
@@ -54,26 +44,26 @@ def mock_hash_ring():
 @pytest.fixture
 def mock_grpc_client():
     """Mock gRPC client for inter-node communication."""
-    client = MagicMock()
-    client.put = AsyncMock(return_value=True)
-    client.get = AsyncMock(return_value=None)
+    client = unittest.mock.MagicMock()
+    client.put = unittest.mock.AsyncMock(return_value=True)
+    client.get = unittest.mock.AsyncMock(return_value=None)
     return client
 
 
 @pytest.fixture
 def mock_storage_engine():
     """Mock local storage engine."""
-    engine = MagicMock()
-    engine.put = AsyncMock(return_value=None)
-    engine.get = AsyncMock(return_value=None)
-    engine.delete = AsyncMock(return_value=None)
+    engine = unittest.mock.MagicMock()
+    engine.put = unittest.mock.AsyncMock(return_value=None)
+    engine.get = unittest.mock.AsyncMock(return_value=None)
+    engine.delete = unittest.mock.AsyncMock(return_value=None)
     return engine
 
 
 @pytest.fixture
 def mock_membership():
     """Mock cluster membership where all nodes are alive."""
-    membership = MagicMock()
+    membership = unittest.mock.MagicMock()
     membership.is_node_alive.return_value = True
     membership.get_alive_members.return_value = ["node-1", "node-2", "node-3"]
     return membership
@@ -82,8 +72,8 @@ def mock_membership():
 @pytest.fixture
 def mock_hinted_handoff():
     """Mock hinted handoff manager."""
-    handoff = MagicMock()
-    handoff.store_hint = MagicMock()
+    handoff = unittest.mock.MagicMock()
+    handoff.store_hint = unittest.mock.MagicMock()
     return handoff
 
 
@@ -97,7 +87,7 @@ def coordinator(
     mock_hinted_handoff,
 ):
     """Request coordinator with node-1 as the local node."""
-    return RequestCoordinator(
+    return kv_store.replication.coordinator.RequestCoordinator(
         node_id="node-1",
         hash_ring=mock_hash_ring,
         quorum_manager=quorum_manager,
@@ -119,7 +109,7 @@ class TestPut:
 
         assert result.success is True
         assert result.replicas_acknowledged == 3
-        assert isinstance(result.vector_clock, VectorClock)
+        assert isinstance(result.vector_clock, kv_store.replication.vector_clock.VectorClock)
         # Local write (node-1 is a replica)
         mock_storage_engine.put.assert_called_once()
         # Remote writes to node-2 and node-3
@@ -135,8 +125,10 @@ class TestPut:
 
     async def test_put_with_client_clock(self, coordinator):
         """Put uses client-provided vector clock as base."""
-        client_clock = VectorClock({"node-2": 3, "node-1": 1})
-        result = await coordinator.put("key1", b"value1", client_clock=client_clock)
+        client_clock = kv_store.replication.vector_clock.VectorClock({"node-2": 3, "node-1": 1})
+        result = await coordinator.put(
+            "key1", b"value1", client_clock=client_clock
+        )
 
         clock_dict = result.vector_clock.to_dict()
         assert clock_dict["node-1"] == 2  # incremented from 1
@@ -147,7 +139,10 @@ class TestPut:
     ):
         """Put succeeds when exactly W=2 nodes acknowledge."""
         # node-2 succeeds, node-3 fails
-        mock_grpc_client.put.side_effect = [True, Exception("connection failed")]
+        mock_grpc_client.put.side_effect = [
+            True,
+            Exception("connection failed"),
+        ]
 
         result = await coordinator.put("key1", b"value1")
 
@@ -166,7 +161,7 @@ class TestPut:
         ]
         mock_storage_engine.put.side_effect = Exception("disk error")
 
-        with pytest.raises(QuorumNotMetError) as exc_info:
+        with pytest.raises(kv_store.replication.coordinator.QuorumNotMetError) as exc_info:
             await coordinator.put("key1", b"value1")
 
         assert exc_info.value.required == 2
@@ -193,7 +188,7 @@ class TestPut:
         mock_grpc_client.put.side_effect = [Exception("fail"), True]
 
         result = await coordinator.put(
-            "key1", b"value1", consistency=ConsistencyLevel.ONE
+            "key1", b"value1", consistency=kv_store.replication.quorum.ConsistencyLevel.ONE
         )
 
         assert result.success is True
@@ -207,14 +202,14 @@ class TestGet:
     ):
         """Get queries replicas and returns the value with the newest clock."""
         # Local storage returns a value
-        local_result = MagicMock()
+        local_result = unittest.mock.MagicMock()
         local_result.found = True
         local_result.is_tombstone = False
         local_result.value = b"value_v1"
         mock_storage_engine.get.return_value = local_result
 
         # Remote nodes return newer value
-        newer_clock = VectorClock({"node-2": 2})
+        newer_clock = kv_store.replication.vector_clock.VectorClock({"node-2": 2})
         mock_grpc_client.get.return_value = (b"value_v2", newer_clock)
 
         result = await coordinator.get("key1")
@@ -238,13 +233,15 @@ class TestGet:
     async def test_get_conflict_detection_returns_all_versions(
         self, coordinator, mock_storage_engine, mock_grpc_client
     ):
-        """Get detects concurrent versions and returns all conflicting values."""
+        """Get detects concurrent versions and returns all conflicting
+        values.
+        """
         # Local storage has no value
         mock_storage_engine.get.return_value = None
 
         # Two remote nodes return concurrent versions (neither dominates)
-        clock_a = VectorClock({"node-1": 2, "node-2": 1})
-        clock_b = VectorClock({"node-1": 1, "node-2": 2})
+        clock_a = kv_store.replication.vector_clock.VectorClock({"node-1": 2, "node-2": 1})
+        clock_b = kv_store.replication.vector_clock.VectorClock({"node-1": 1, "node-2": 2})
         mock_grpc_client.get.side_effect = [
             (b"value_a", clock_a),
             (b"value_b", clock_b),
@@ -267,8 +264,8 @@ class TestGet:
         mock_storage_engine.get.return_value = None
 
         # node-2 has older version, node-3 has newer version
-        old_clock = VectorClock({"node-1": 1})
-        new_clock = VectorClock({"node-1": 2, "node-2": 1})
+        old_clock = kv_store.replication.vector_clock.VectorClock({"node-1": 1})
+        new_clock = kv_store.replication.vector_clock.VectorClock({"node-1": 2, "node-2": 1})
         mock_grpc_client.get.side_effect = [
             (b"old_value", old_clock),
             (b"new_value", new_clock),
@@ -293,7 +290,7 @@ class TestGet:
             Exception("connection failed"),
         ]
 
-        with pytest.raises(QuorumNotMetError) as exc_info:
+        with pytest.raises(kv_store.replication.coordinator.QuorumNotMetError) as exc_info:
             await coordinator.get("key1")
 
         assert exc_info.value.required == 2
@@ -310,7 +307,7 @@ class TestDelete:
         result = await coordinator.delete("key1")
 
         assert result.success is True
-        assert isinstance(result.vector_clock, VectorClock)
+        assert isinstance(result.vector_clock, kv_store.replication.vector_clock.VectorClock)
         # Local delete (tombstone)
         mock_storage_engine.delete.assert_called_once()
         # Remote tombstone writes
@@ -326,7 +323,7 @@ class TestDelete:
 
     async def test_delete_with_client_clock(self, coordinator):
         """Delete uses client-provided vector clock as base."""
-        client_clock = VectorClock({"node-2": 5})
+        client_clock = kv_store.replication.vector_clock.VectorClock({"node-2": 5})
         result = await coordinator.delete("key1", client_clock=client_clock)
 
         clock_dict = result.vector_clock.to_dict()
@@ -343,7 +340,7 @@ class TestDelete:
             Exception("fail"),
         ]
 
-        with pytest.raises(QuorumNotMetError):
+        with pytest.raises(kv_store.replication.coordinator.QuorumNotMetError):
             await coordinator.delete("key1")
 
 
@@ -369,7 +366,7 @@ class TestSloppyQuorum:
             "node-4",
         ]
 
-        coordinator = RequestCoordinator(
+        coordinator = kv_store.replication.coordinator.RequestCoordinator(
             node_id="node-1",
             hash_ring=mock_hash_ring,
             quorum_manager=quorum_manager,
@@ -382,7 +379,8 @@ class TestSloppyQuorum:
         result = await coordinator.put("key1", b"value1")
 
         assert result.success is True
-        # Verify that node-4 was used as substitute (gRPC called for node-2 and node-4)
+        # Verify that node-4 was used as substitute (gRPC called for node-2 and
+        # node-4)
         call_targets = [
             call.args[0] for call in mock_grpc_client.put.call_args_list
         ]
@@ -403,7 +401,7 @@ class TestSloppyQuorum:
         mock_membership.is_node_alive.side_effect = lambda nid: nid != "node-3"
         mock_membership.get_alive_members.return_value = ["node-1", "node-2"]
 
-        coordinator = RequestCoordinator(
+        coordinator = kv_store.replication.coordinator.RequestCoordinator(
             node_id="node-1",
             hash_ring=mock_hash_ring,
             quorum_manager=quorum_manager,
@@ -431,7 +429,10 @@ class TestHintedHandoff:
     ):
         """When a replica write fails, a hint is stored for later delivery."""
         # node-3 fails
-        mock_grpc_client.put.side_effect = [True, Exception("connection refused")]
+        mock_grpc_client.put.side_effect = [
+            True,
+            Exception("connection refused"),
+        ]
 
         result = await coordinator.put("key1", b"value1")
 
@@ -447,7 +448,10 @@ class TestHintedHandoff:
         self, coordinator, mock_grpc_client, mock_hinted_handoff
     ):
         """When a replica delete fails, a hint is stored."""
-        mock_grpc_client.put.side_effect = [True, Exception("connection refused")]
+        mock_grpc_client.put.side_effect = [
+            True,
+            Exception("connection refused"),
+        ]
 
         result = await coordinator.delete("key1")
 

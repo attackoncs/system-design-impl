@@ -1,32 +1,30 @@
 """Clock abstraction for millisecond time tracking."""
 
+import abc
 import time
-from abc import ABC, abstractmethod
 
 
-class Clock(ABC):
+class Clock(abc.ABC):
     """Abstract clock interface for millisecond time.
 
-    Allows injection of different clock implementations for testing
-    and for choosing between system clock and monotonic clock.
+    Allows injection of different clock implementations for testing and for
+    choosing between system clock and monotonic clock.
     """
 
-    @abstractmethod
+    @abc.abstractmethod
     def current_millis(self) -> int:
         """Return current time in milliseconds.
 
         Returns:
             Current timestamp in milliseconds since Unix epoch.
         """
-        ...
 
 
 class SystemClock(Clock):
     """System clock using time.time().
 
-    Uses the system wall clock. Subject to NTP adjustments and
-    clock drift. Suitable for most production use cases where
-    NTP is properly configured.
+    Uses the system wall clock. Subject to NTP adjustments and clock drift.
+    Suitable for most production use cases where NTP is properly configured.
     """
 
     def current_millis(self) -> int:

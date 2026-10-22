@@ -2,29 +2,28 @@
 
 from __future__ import annotations
 
-import pytest
-from fastapi import FastAPI
-from starlette.testclient import TestClient
-
-from rate_limiter.config import Algorithm, RateLimitRule, RateLimiterConfig
-from rate_limiter.core import RateLimiter
-from rate_limiter.middleware.fastapi import RateLimitConfig, RateLimitMiddleware
-
+import fastapi
+import rate_limiter.config
+import rate_limiter.core
+import rate_limiter.middleware.fastapi
+import starlette.testclient
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _create_app(rules: list[RateLimitRule], auto_headers: bool = True) -> FastAPI:
+def _create_app(
+    rules: list[rate_limiter.config.RateLimitRule], auto_headers: bool = True
+) -> fastapi.FastAPI:
     """Create a FastAPI app with rate limiting middleware configured."""
-    app = FastAPI()
+    app = fastapi.FastAPI()
 
-    config = RateLimiterConfig(rules=rules, storage_backend="memory")
-    limiter = RateLimiter(config)
+    config = rate_limiter.config.RateLimiterConfig(rules=rules, storage_backend="memory")
+    limiter = rate_limiter.core.RateLimiter(config)
 
     app.add_middleware(
-        RateLimitMiddleware,
+        rate_limiter.middleware.fastapi.RateLimitMiddleware,
         limiter=limiter,
         auto_headers=auto_headers,
     )
@@ -50,9 +49,11 @@ class TestAllowedRequestsGetHeaders:
 
     def test_response_has_rate_limit_headers(self) -> None:
         """A successful request should include all rate limit headers."""
-        rule = RateLimitRule(limit=10, window=60, algorithm=Algorithm.TOKEN_BUCKET)
+        rule = rate_limiter.config.RateLimitRule(
+            limit=10, window=60, algorithm=rate_limiter.config.Algorithm.TOKEN_BUCKET
+        )
         app = _create_app([rule])
-        client = TestClient(app)
+        client = starlette.testclient.TestClient(app)
 
         response = client.get("/hello")
 
@@ -62,10 +63,14 @@ class TestAllowedRequestsGetHeaders:
         assert "x-ratelimit-reset" in response.headers
 
     def test_rate_limit_header_values_are_correct(self) -> None:
-        """Header values should reflect the rule's limit and remaining count."""
-        rule = RateLimitRule(limit=5, window=60, algorithm=Algorithm.TOKEN_BUCKET)
+        """Header values should reflect the rule's limit and remaining
+        count.
+        """
+        rule = rate_limiter.config.RateLimitRule(
+            limit=5, window=60, algorithm=rate_limiter.config.Algorithm.TOKEN_BUCKET
+        )
         app = _create_app([rule])
-        client = TestClient(app)
+        client = starlette.testclient.TestClient(app)
 
         response = client.get("/hello")
 
@@ -76,9 +81,11 @@ class TestAllowedRequestsGetHeaders:
 
     def test_remaining_decreases_with_each_request(self) -> None:
         """Each allowed request should decrement the remaining count."""
-        rule = RateLimitRule(limit=5, window=60, algorithm=Algorithm.TOKEN_BUCKET)
+        rule = rate_limiter.config.RateLimitRule(
+            limit=5, window=60, algorithm=rate_limiter.config.Algorithm.TOKEN_BUCKET
+        )
         app = _create_app([rule])
-        client = TestClient(app)
+        client = starlette.testclient.TestClient(app)
 
         r1 = client.get("/hello")
         r2 = client.get("/hello")
@@ -89,10 +96,14 @@ class TestAllowedRequestsGetHeaders:
         assert int(r3.headers["x-ratelimit-remaining"]) == 2
 
     def test_no_headers_when_auto_headers_disabled(self) -> None:
-        """When auto_headers=False, rate limit headers are not added to allowed responses."""
-        rule = RateLimitRule(limit=10, window=60, algorithm=Algorithm.TOKEN_BUCKET)
+        """When auto_headers=False, rate limit headers are not added to allowed
+        responses.
+        """
+        rule = rate_limiter.config.RateLimitRule(
+            limit=10, window=60, algorithm=rate_limiter.config.Algorithm.TOKEN_BUCKET
+        )
         app = _create_app([rule], auto_headers=False)
-        client = TestClient(app)
+        client = starlette.testclient.TestClient(app)
 
         response = client.get("/hello")
 
@@ -112,9 +123,11 @@ class TestDeniedRequestsGet429:
 
     def test_returns_429_when_limit_exceeded(self) -> None:
         """After exhausting the limit, the next request gets 429."""
-        rule = RateLimitRule(limit=2, window=60, algorithm=Algorithm.TOKEN_BUCKET)
+        rule = rate_limiter.config.RateLimitRule(
+            limit=2, window=60, algorithm=rate_limiter.config.Algorithm.TOKEN_BUCKET
+        )
         app = _create_app([rule])
-        client = TestClient(app)
+        client = starlette.testclient.TestClient(app)
 
         # Exhaust the limit
         client.get("/hello")
@@ -126,9 +139,11 @@ class TestDeniedRequestsGet429:
 
     def test_429_response_has_json_body(self) -> None:
         """429 response should include a JSON error body."""
-        rule = RateLimitRule(limit=1, window=60, algorithm=Algorithm.TOKEN_BUCKET)
+        rule = rate_limiter.config.RateLimitRule(
+            limit=1, window=60, algorithm=rate_limiter.config.Algorithm.TOKEN_BUCKET
+        )
         app = _create_app([rule])
-        client = TestClient(app)
+        client = starlette.testclient.TestClient(app)
 
         client.get("/hello")
         response = client.get("/hello")
@@ -140,10 +155,14 @@ class TestDeniedRequestsGet429:
         assert "retry_after" in body
 
     def test_429_response_has_rate_limit_headers(self) -> None:
-        """429 response should include X-RateLimit-* and Retry-After headers."""
-        rule = RateLimitRule(limit=1, window=60, algorithm=Algorithm.TOKEN_BUCKET)
+        """429 response should include X-RateLimit-* and Retry-After
+        headers.
+        """
+        rule = rate_limiter.config.RateLimitRule(
+            limit=1, window=60, algorithm=rate_limiter.config.Algorithm.TOKEN_BUCKET
+        )
         app = _create_app([rule])
-        client = TestClient(app)
+        client = starlette.testclient.TestClient(app)
 
         client.get("/hello")
         response = client.get("/hello")
@@ -156,9 +175,11 @@ class TestDeniedRequestsGet429:
 
     def test_429_headers_have_correct_values(self) -> None:
         """429 headers should reflect the exhausted state."""
-        rule = RateLimitRule(limit=1, window=60, algorithm=Algorithm.TOKEN_BUCKET)
+        rule = rate_limiter.config.RateLimitRule(
+            limit=1, window=60, algorithm=rate_limiter.config.Algorithm.TOKEN_BUCKET
+        )
         app = _create_app([rule])
-        client = TestClient(app)
+        client = starlette.testclient.TestClient(app)
 
         client.get("/hello")
         response = client.get("/hello")
@@ -181,10 +202,14 @@ class TestMultipleRulesApplied:
 
     def test_strict_rule_denies_before_lenient_rule(self) -> None:
         """A strict rule should deny even if a lenient rule would allow."""
-        strict_rule = RateLimitRule(limit=2, window=60, algorithm=Algorithm.TOKEN_BUCKET)
-        lenient_rule = RateLimitRule(limit=100, window=3600, algorithm=Algorithm.TOKEN_BUCKET)
+        strict_rule = rate_limiter.config.RateLimitRule(
+            limit=2, window=60, algorithm=rate_limiter.config.Algorithm.TOKEN_BUCKET
+        )
+        lenient_rule = rate_limiter.config.RateLimitRule(
+            limit=100, window=3600, algorithm=rate_limiter.config.Algorithm.TOKEN_BUCKET
+        )
         app = _create_app([strict_rule, lenient_rule])
-        client = TestClient(app)
+        client = starlette.testclient.TestClient(app)
 
         # First two requests allowed
         r1 = client.get("/hello")
@@ -197,11 +222,17 @@ class TestMultipleRulesApplied:
         assert r3.status_code == 429
 
     def test_lowest_remaining_shown_when_all_allowed(self) -> None:
-        """When all rules allow, the response shows the lowest remaining count."""
-        rule_a = RateLimitRule(limit=3, window=60, algorithm=Algorithm.TOKEN_BUCKET)
-        rule_b = RateLimitRule(limit=100, window=3600, algorithm=Algorithm.TOKEN_BUCKET)
+        """When all rules allow, the response shows the lowest remaining
+        count.
+        """
+        rule_a = rate_limiter.config.RateLimitRule(
+            limit=3, window=60, algorithm=rate_limiter.config.Algorithm.TOKEN_BUCKET
+        )
+        rule_b = rate_limiter.config.RateLimitRule(
+            limit=100, window=3600, algorithm=rate_limiter.config.Algorithm.TOKEN_BUCKET
+        )
         app = _create_app([rule_a, rule_b])
-        client = TestClient(app)
+        client = starlette.testclient.TestClient(app)
 
         response = client.get("/hello")
 
@@ -219,10 +250,14 @@ class TestIndependentRateLimits:
     """Different clients/endpoints get independent rate limit counters."""
 
     def test_different_ips_have_independent_limits(self) -> None:
-        """Requests from different IPs should have separate rate limit counters."""
-        rule = RateLimitRule(limit=1, window=60, algorithm=Algorithm.TOKEN_BUCKET)
+        """Requests from different IPs should have separate rate limit
+        counters.
+        """
+        rule = rate_limiter.config.RateLimitRule(
+            limit=1, window=60, algorithm=rate_limiter.config.Algorithm.TOKEN_BUCKET
+        )
         app = _create_app([rule])
-        client = TestClient(app)
+        client = starlette.testclient.TestClient(app)
 
         # First IP exhausts its limit
         r1 = client.get("/hello", headers={"X-Forwarded-For": "10.0.0.1"})
@@ -245,8 +280,10 @@ class TestRateLimitConfigHelper:
     """Test the RateLimitConfig convenience class."""
 
     def test_add_rule_and_get_config(self) -> None:
-        """RateLimitConfig.add_rule() creates rules and get_config() returns config."""
-        rate_config = RateLimitConfig()
+        """RateLimitConfig.add_rule() creates rules and get_config() returns
+        config.
+        """
+        rate_config = rate_limiter.middleware.fastapi.RateLimitConfig()
         rate_config.add_rule(limit=100, window=60, key_type="ip")
 
         config = rate_config.get_config()
@@ -256,13 +293,15 @@ class TestRateLimitConfigHelper:
 
     def test_middleware_works_with_rate_limit_config(self) -> None:
         """RateLimitConfig integrates correctly with the middleware."""
-        app = FastAPI()
+        app = fastapi.FastAPI()
 
-        rate_config = RateLimitConfig()
-        rate_config.add_rule(limit=2, window=60, algorithm="token_bucket", key_type="ip")
+        rate_config = rate_limiter.middleware.fastapi.RateLimitConfig()
+        rate_config.add_rule(
+            limit=2, window=60, algorithm="token_bucket", key_type="ip"
+        )
 
         app.add_middleware(
-            RateLimitMiddleware,
+            rate_limiter.middleware.fastapi.RateLimitMiddleware,
             config=rate_config.get_config(),
         )
 
@@ -270,7 +309,7 @@ class TestRateLimitConfigHelper:
         def test_endpoint():
             return {"ok": True}
 
-        client = TestClient(app)
+        client = starlette.testclient.TestClient(app)
 
         r1 = client.get("/test")
         r2 = client.get("/test")

@@ -1,26 +1,28 @@
 """Contact information store for the notification system.
 
-Manages user contact information including email addresses, phone numbers,
-and device tokens. Supports multiple device tokens per user for push
-notification channels.
+Manages user contact information including email addresses, phone numbers, and
+device tokens. Supports multiple device tokens per user for push notification
+channels.
 """
 
 from typing import Optional
 
-from notification_system.models import Channel, ContactInfo
+import notification_system.models
 
 
 class ContactInfoStore:
     """In-memory store for user contact information.
 
-    Manages email addresses, phone numbers, and device tokens.
-    Supports multiple device tokens per user for push channels.
+    Manages email addresses, phone numbers, and device tokens. Supports
+    multiple device tokens per user for push channels.
     """
 
     def __init__(self) -> None:
-        self._contacts: dict[str, ContactInfo] = {}
+        self._contacts: dict[str, notification_system.models.ContactInfo] = {}
 
-    def get(self, user_id: str) -> Optional[ContactInfo]:
+    def get(
+        self, user_id: str
+    ) -> Optional[notification_system.models.ContactInfo]:
         """Retrieve contact info for a user.
 
         Args:
@@ -31,7 +33,7 @@ class ContactInfoStore:
         """
         return self._contacts.get(user_id)
 
-    def set(self, contact: ContactInfo) -> None:
+    def set(self, contact: notification_system.models.ContactInfo) -> None:
         """Store or update contact info for a user.
 
         Args:
@@ -59,7 +61,7 @@ class ContactInfoStore:
         """
         contact = self._contacts.get(user_id)
         if contact is None:
-            contact = ContactInfo(user_id=user_id)
+            contact = notification_system.models.ContactInfo(user_id=user_id)
             self._contacts[user_id] = contact
         if token not in contact.device_tokens:
             contact.device_tokens.append(token)
@@ -77,7 +79,9 @@ class ContactInfoStore:
         if contact and token in contact.device_tokens:
             contact.device_tokens.remove(token)
 
-    def resolve_endpoint(self, user_id: str, channel: Channel) -> Optional[str]:
+    def resolve_endpoint(
+        self, user_id: str, channel: notification_system.models.Channel
+    ) -> Optional[str]:
         """Resolve the delivery endpoint for a user and channel.
 
         Args:
@@ -92,10 +96,13 @@ class ContactInfoStore:
         if contact is None:
             return None
 
-        if channel == Channel.EMAIL:
+        if channel == notification_system.models.Channel.EMAIL:
             return contact.email
-        elif channel == Channel.SMS:
+        elif channel == notification_system.models.Channel.SMS:
             return contact.phone
-        elif channel in (Channel.IOS_PUSH, Channel.ANDROID_PUSH):
+        elif channel in (
+            notification_system.models.Channel.IOS_PUSH,
+            notification_system.models.Channel.ANDROID_PUSH,
+        ):
             return contact.device_tokens[0] if contact.device_tokens else None
         return None

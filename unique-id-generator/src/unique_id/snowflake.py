@@ -5,23 +5,23 @@ from __future__ import annotations
 import threading
 from typing import Optional
 
-from unique_id.clock import Clock, SystemClock
-from unique_id.config import SnowflakeConfig
-from unique_id.exceptions import ClockMovedBackwardsError
+import unique_id.clock
+import unique_id.config
+import unique_id.exceptions
 
 
 class SnowflakeGenerator:
     """Core Snowflake ID generator.
 
     Generates 64-bit unique, time-sortable IDs using the Twitter Snowflake
-    algorithm. Thread-safe via a threading lock protecting the sequence
-    number and last timestamp state.
+    algorithm. Thread-safe via a threading lock protecting the sequence number
+    and last timestamp state.
     """
 
     def __init__(
         self,
-        config: Optional[SnowflakeConfig] = None,
-        clock: Optional[Clock] = None,
+        config: Optional[unique_id.config.SnowflakeConfig] = None,
+        clock: Optional[unique_id.clock.Clock] = None,
     ):
         """Initialize the Snowflake generator.
 
@@ -29,14 +29,14 @@ class SnowflakeGenerator:
             config: Generator configuration. Uses defaults if None.
             clock: Clock implementation. Uses SystemClock if None.
         """
-        self._config = config or SnowflakeConfig()
-        self._clock = clock or SystemClock()
+        self._config = config or unique_id.config.SnowflakeConfig()
+        self._clock = clock or unique_id.clock.SystemClock()
         self._sequence = 0
         self._last_timestamp = -1
         self._lock = threading.Lock()
 
     @property
-    def config(self) -> SnowflakeConfig:
+    def config(self) -> unique_id.config.SnowflakeConfig:
         """Get the generator configuration."""
         return self._config
 
@@ -56,10 +56,14 @@ class SnowflakeGenerator:
             timestamp = self._current_millis()
 
             if timestamp < self._last_timestamp:
-                raise ClockMovedBackwardsError(self._last_timestamp, timestamp)
+                raise unique_id.exceptions.ClockMovedBackwardsError(
+                    self._last_timestamp, timestamp
+                )
 
             if timestamp == self._last_timestamp:
-                self._sequence = (self._sequence + 1) & self._config.max_sequence
+                self._sequence = (
+                    self._sequence + 1
+                ) & self._config.max_sequence
                 if self._sequence == 0:
                     # Sequence overflow — wait for next millisecond
                     timestamp = self._wait_next_millis(self._last_timestamp)
@@ -103,10 +107,14 @@ class SnowflakeGenerator:
                 timestamp = self._current_millis()
 
                 if timestamp < self._last_timestamp:
-                    raise ClockMovedBackwardsError(self._last_timestamp, timestamp)
+                    raise unique_id.exceptions.ClockMovedBackwardsError(
+                        self._last_timestamp, timestamp
+                    )
 
                 if timestamp == self._last_timestamp:
-                    self._sequence = (self._sequence + 1) & self._config.max_sequence
+                    self._sequence = (
+                        self._sequence + 1
+                    ) & self._config.max_sequence
                     if self._sequence == 0:
                         timestamp = self._wait_next_millis(self._last_timestamp)
                 else:
@@ -117,7 +125,10 @@ class SnowflakeGenerator:
                 ts_offset = timestamp - self._config.epoch_ms
                 id_value = (
                     (ts_offset << self._config.timestamp_shift)
-                    | (self._config.datacenter_id << self._config.datacenter_shift)
+                    | (
+                        self._config.datacenter_id
+                        << self._config.datacenter_shift
+                    )
                     | (self._config.machine_id << self._config.machine_shift)
                     | self._sequence
                 )

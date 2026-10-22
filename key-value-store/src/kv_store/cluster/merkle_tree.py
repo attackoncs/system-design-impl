@@ -1,9 +1,9 @@
 """Merkle tree and anti-entropy manager for data synchronization.
 
 The Merkle tree provides efficient detection of data differences between
-replicas. Each key is hashed into a bucket, and bucket hashes are combined
-into a tree structure. Comparing root hashes quickly identifies whether
-two replicas are in sync; comparing bucket hashes pinpoints which keys differ.
+replicas. Each key is hashed into a bucket, and bucket hashes are combined into
+a tree structure. Comparing root hashes quickly identifies whether two replicas
+are in sync; comparing bucket hashes pinpoints which keys differ.
 
 The AntiEntropyManager periodically compares Merkle trees with replica peers
 and triggers synchronization for differing key ranges.
@@ -12,12 +12,13 @@ and triggers synchronization for differing key ranges.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import hashlib
-from dataclasses import dataclass, field
-from typing import Callable, Awaitable, Optional
+import logging
+from typing import Awaitable, Callable, Optional
 
 
-@dataclass
+@dataclasses.dataclass
 class MerkleNode:
     """A node in the Merkle tree.
 
@@ -30,7 +31,7 @@ class MerkleNode:
     bucket_id: int = -1
 
 
-@dataclass
+@dataclasses.dataclass
 class SyncDiff:
     """Represents a difference found between two Merkle trees.
 
@@ -44,7 +45,7 @@ class SyncDiff:
     bucket_id: int
     local_hash: str
     remote_hash: str
-    keys: list[str] = field(default_factory=list)
+    keys: list[str] = dataclasses.field(default_factory=list)
 
 
 # Type alias for the sync function.
@@ -131,7 +132,9 @@ class MerkleTree:
             IndexError: If bucket_id is out of range.
         """
         if bucket_id < 0 or bucket_id >= self._bucket_count:
-            raise IndexError(f"bucket_id {bucket_id} out of range [0, {self._bucket_count})")
+            raise IndexError(
+                f"bucket_id {bucket_id} out of range [0, {self._bucket_count})"
+            )
         return self._bucket_hashes[bucket_id]
 
     def get_bucket_hashes(self) -> dict[int, str]:
@@ -146,7 +149,7 @@ class MerkleTree:
         """Compare this tree's bucket hashes with another tree's hashes.
 
         Args:
-            other_bucket_hashes: Dict mapping bucket_id to hash from the remote tree.
+            other_bucket_hashes: Remote hashes indexed by bucket ID.
 
         Returns:
             List of SyncDiff for buckets that differ.
@@ -284,7 +287,11 @@ class AntiEntropyManager:
                 await self._sync_round()
             except asyncio.CancelledError:
                 break
-            except Exception:
+            # Isolate this operation; record failures before continuing.
+            except Exception:  # pylint: disable=broad-exception-caught
+                logging.getLogger(__name__).exception(
+                    "Failure isolated in %s", "_sync_loop"
+                )
                 pass
             await asyncio.sleep(self._sync_interval)
 
@@ -297,7 +304,11 @@ class AntiEntropyManager:
         for peer_id in peers:
             try:
                 await self.sync_with_peer(peer_id)
-            except Exception:
+            # Isolate this operation; record failures before continuing.
+            except Exception:  # pylint: disable=broad-exception-caught
+                logging.getLogger(__name__).exception(
+                    "Failure isolated in %s", "_sync_round"
+                )
                 pass
 
     async def sync_with_peer(self, peer_node_id: str) -> list[SyncDiff]:
@@ -315,6 +326,8 @@ class AntiEntropyManager:
         # In a real implementation, we would exchange hashes with the peer
         # via gRPC. For now, this method is a placeholder that can be
         # called with pre-fetched remote hashes.
+        # Remote hashes arrive through sync_with_remote_hashes.
+        del peer_node_id
         return []
 
     async def sync_with_remote_hashes(

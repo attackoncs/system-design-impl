@@ -1,15 +1,47 @@
 """Chapter 13 chat system public API."""
-from .discovery import Server, ServiceDiscovery
-from .models import AuthenticationError, Channel, ChatConfig, ChatError, Message
-from .service import ChatService, RecordingNotifier, Session, TokenAuthenticator
-from .store import MessageStore, SQLiteMessageStore
-from .distributed import DistributedChatService
-from .redis_backend import RedisBackend
-from .client import ReconnectingChatClient
-from .push import HTTPWebhookNotifier, PushWorker, RedisRecordingNotifier
 
-__all__ = ["AuthenticationError", "Channel", "ChatConfig", "ChatError", "Message",
-           "ChatService", "RecordingNotifier", "Session", "TokenAuthenticator",
-           "MessageStore", "SQLiteMessageStore", "Server", "ServiceDiscovery",
-           "DistributedChatService", "RedisBackend", "ReconnectingChatClient",
-           "HTTPWebhookNotifier", "PushWorker", "RedisRecordingNotifier"]
+from chat_system.client import ReconnectingChatClient
+from chat_system.discovery import Server, ServiceDiscovery
+from chat_system.distributed import DistributedChatService
+from chat_system.models import (
+    AuthenticationError,
+    Channel,
+    ChatConfig,
+    ChatError,
+    Message,
+)
+from chat_system.push import (
+    HTTPWebhookNotifier,
+    PushWorker,
+    RedisRecordingNotifier,
+)
+from chat_system.redis_backend import RedisBackend
+from chat_system.service import (
+    ChatService,
+    RecordingNotifier,
+    Session,
+    TokenAuthenticator,
+)
+from chat_system.store import MessageStore, SQLiteMessageStore
+
+__all__ = [
+    "AuthenticationError",
+    "Channel",
+    "ChatConfig",
+    "ChatError",
+    "Message",
+    "ChatService",
+    "RecordingNotifier",
+    "Session",
+    "TokenAuthenticator",
+    "MessageStore",
+    "SQLiteMessageStore",
+    "Server",
+    "ServiceDiscovery",
+    "DistributedChatService",
+    "RedisBackend",
+    "ReconnectingChatClient",
+    "HTTPWebhookNotifier",
+    "PushWorker",
+    "RedisRecordingNotifier",
+]

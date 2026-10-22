@@ -2,57 +2,57 @@
 
 import uuid
 
-from unique_id.strategies import IDGenerator, UUIDGenerator, TimestampRandomGenerator
+import unique_id.strategies
 
 
 class TestUUIDGenerator:
     """Test UUID v4 generator."""
 
     def test_generate_returns_valid_uuid_string(self):
-        gen = UUIDGenerator()
+        gen = unique_id.strategies.UUIDGenerator()
         result = gen.generate()
         # Should be a valid UUID v4 string
         parsed = uuid.UUID(result)
         assert parsed.version == 4
 
     def test_generate_batch_returns_correct_count(self):
-        gen = UUIDGenerator()
+        gen = unique_id.strategies.UUIDGenerator()
         results = gen.generate_batch(10)
         assert len(results) == 10
 
     def test_generate_batch_all_unique(self):
-        gen = UUIDGenerator()
+        gen = unique_id.strategies.UUIDGenerator()
         results = gen.generate_batch(10)
         assert len(set(results)) == 10
 
     def test_implements_id_generator_interface(self):
-        gen = UUIDGenerator()
-        assert isinstance(gen, IDGenerator)
+        gen = unique_id.strategies.UUIDGenerator()
+        assert isinstance(gen, unique_id.strategies.IDGenerator)
 
 
 class TestTimestampRandomGenerator:
     """Test timestamp-random generator."""
 
     def test_generate_returns_positive_integer(self):
-        gen = TimestampRandomGenerator()
+        gen = unique_id.strategies.TimestampRandomGenerator()
         result = gen.generate()
         assert isinstance(result, int)
         assert result > 0
 
     def test_generate_fits_in_64_bits(self):
-        gen = TimestampRandomGenerator()
+        gen = unique_id.strategies.TimestampRandomGenerator()
         result = gen.generate()
         assert result.bit_length() <= 64
 
     def test_generate_batch_returns_correct_count(self):
-        gen = TimestampRandomGenerator()
+        gen = unique_id.strategies.TimestampRandomGenerator()
         results = gen.generate_batch(10)
         assert len(results) == 10
 
     def test_timestamp_component_increases_over_time(self):
         import time
 
-        gen = TimestampRandomGenerator()
+        gen = unique_id.strategies.TimestampRandomGenerator()
         id1 = gen.generate()
         time.sleep(0.01)  # 10ms
         id2 = gen.generate()
@@ -62,5 +62,5 @@ class TestTimestampRandomGenerator:
         assert ts2 >= ts1
 
     def test_implements_id_generator_interface(self):
-        gen = TimestampRandomGenerator()
-        assert isinstance(gen, IDGenerator)
+        gen = unique_id.strategies.TimestampRandomGenerator()
+        assert isinstance(gen, unique_id.strategies.IDGenerator)

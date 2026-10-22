@@ -6,14 +6,14 @@ from typing import Any
 
 import redis
 
-from .base import BaseStorage
+from rate_limiter.storage import base as storage_base
 
 
-class RedisStorage(BaseStorage):
+class RedisStorage(storage_base.BaseStorage):
     """Redis-backed storage using redis-py.
 
-    Uses pipelines for multi-step operations and Lua script
-    evaluation for atomic execute_atomic calls.
+    Uses pipelines for multi-step operations and Lua script evaluation for
+    atomic execute_atomic calls.
     """
 
     def __init__(self, redis_url: str = "redis://localhost:6379") -> None:
@@ -23,7 +23,8 @@ class RedisStorage(BaseStorage):
             redis_url: Redis connection URL. Defaults to localhost:6379.
         """
         self._client: redis.Redis = redis.Redis.from_url(
-            redis_url, decode_responses=False,
+            redis_url,
+            decode_responses=False,
             socket_connect_timeout=2,
             socket_timeout=2,
         )
@@ -57,7 +58,9 @@ class RedisStorage(BaseStorage):
         else:
             self._client.set(key, value)
 
-    def increment(self, key: str, amount: int = 1, ttl: int | None = None) -> int:
+    def increment(
+        self, key: str, amount: int = 1, ttl: int | None = None
+    ) -> int:
         """Atomically increment a counter using a pipeline.
 
         If the key does not exist, Redis initializes it to 0 before

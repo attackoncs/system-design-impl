@@ -1,22 +1,23 @@
 """Gossip protocol for cluster membership and failure detection.
 
-Implements a SWIM-style gossip protocol where each node periodically
-sends its membership table to a random subset of peers. Failure detection
-uses heartbeat counters and configurable timeouts to mark nodes as
-SUSPECTED and eventually DOWN.
+Implements a SWIM-style gossip protocol where each node periodically sends its
+membership table to a random subset of peers. Failure detection uses heartbeat
+counters and configurable timeouts to mark nodes as SUSPECTED and eventually
+DOWN.
 """
 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import enum
+import logging
 import random
 import time
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Callable, Awaitable, Optional
+from typing import Awaitable, Callable, Optional
 
 
-class NodeStatus(Enum):
+class NodeStatus(enum.Enum):
     """Status of a node in the cluster."""
 
     ALIVE = "alive"
@@ -24,7 +25,7 @@ class NodeStatus(Enum):
     DOWN = "down"
 
 
-@dataclass
+@dataclasses.dataclass
 class MemberInfo:
     """Information about a cluster member."""
 
@@ -32,7 +33,7 @@ class MemberInfo:
     address: str
     heartbeat_counter: int = 0
     status: NodeStatus = NodeStatus.ALIVE
-    last_updated: float = field(default_factory=time.time)
+    last_updated: float = dataclasses.field(default_factory=time.time)
 
 
 # Type alias for the gossip send function.
@@ -115,14 +116,20 @@ class GossipProtocol:
             self._task = None
 
     async def _gossip_loop(self) -> None:
-        """Background loop that runs gossip rounds at the configured interval."""
+        """Background loop that runs gossip rounds at the configured
+        interval.
+        """
         while self._running:
             try:
                 await self._gossip_round()
             except asyncio.CancelledError:
                 break
-            except Exception:
+            # Isolate this operation; record failures before continuing.
+            except Exception:  # pylint: disable=broad-exception-caught
                 # Log and continue on unexpected errors
+                logging.getLogger(__name__).exception(
+                    "Failure isolated in %s", "_gossip_loop"
+                )
                 pass
             await asyncio.sleep(self._gossip_interval)
 
@@ -149,8 +156,12 @@ class GossipProtocol:
             for peer_id in peers:
                 try:
                     await self._gossip_func(peer_id, membership_list)
-                except Exception:
+                # Isolate this operation; record failures before continuing.
+                except Exception:  # pylint: disable=broad-exception-caught
                     # Peer unreachable, will be detected by timeout
+                    logging.getLogger(__name__).exception(
+                        "Failure isolated in %s", "_gossip_round"
+                    )
                     pass
 
         # Check for timed-out nodes
@@ -184,9 +195,15 @@ class GossipProtocol:
 
             elapsed = now - info.last_updated
 
-            if info.status == NodeStatus.ALIVE and elapsed > self._failure_timeout:
+            if (
+                info.status == NodeStatus.ALIVE
+                and elapsed > self._failure_timeout
+            ):
                 info.status = NodeStatus.SUSPECTED
-            elif info.status == NodeStatus.SUSPECTED and elapsed > 2 * self._failure_timeout:
+            elif (
+                info.status == NodeStatus.SUSPECTED
+                and elapsed > 2 * self._failure_timeout
+            ):
                 info.status = NodeStatus.DOWN
 
     def merge_membership(self, remote_members: list[MemberInfo]) -> None:
@@ -219,7 +236,8 @@ class GossipProtocol:
                 local.heartbeat_counter = remote.heartbeat_counter
                 local.address = remote.address
                 local.last_updated = now
-                # If we had marked it suspected/down but it's still heartbeating,
+                # If we had marked it suspected/down but it's still
+                # heartbeating,
                 # bring it back to alive
                 if local.status != NodeStatus.ALIVE:
                     local.status = NodeStatus.ALIVE

@@ -12,19 +12,15 @@ Uses Hypothesis strategies for generating random keys, values, and operations.
 
 import asyncio
 import time
-from pathlib import Path
 
-import pytest
-from hypothesis import given, settings, assume, HealthCheck
+import hypothesis
+import kv_store.config
+import kv_store.replication.quorum
+import kv_store.replication.vector_clock
+import kv_store.storage.bloom_filter
+import kv_store.storage.engine
+import kv_store.storage.memtable
 from hypothesis import strategies as st
-
-from kv_store.replication.vector_clock import VectorClock
-from kv_store.replication.quorum import QuorumConfig, ConsistencyLevel
-from kv_store.storage.bloom_filter import BloomFilter
-from kv_store.storage.memtable import MemTable
-from kv_store.config import StorageConfig
-from kv_store.storage.engine import StorageEngine
-
 
 # --- Strategies ---
 
@@ -46,7 +42,9 @@ node_id_strategy = st.text(
 )
 
 # Timestamps: positive floats
-timestamp_strategy = st.floats(min_value=1.0, max_value=1e12, allow_nan=False, allow_infinity=False)
+timestamp_strategy = st.floats(
+    min_value=1.0, max_value=1e12, allow_nan=False, allow_infinity=False
+)
 
 
 # --- Vector Clock Properties ---
@@ -58,17 +56,23 @@ class TestVectorClockProperties:
     **Validates: Requirements FR-5.1, FR-5.2, FR-5.3, FR-5.4, FR-5.5**
     """
 
-    @given(
-        entries=st.dictionaries(node_id_strategy, st.integers(min_value=0, max_value=100), min_size=0, max_size=5),
+    @hypothesis.given(
+        entries=st.dictionaries(
+            node_id_strategy,
+            st.integers(min_value=0, max_value=100),
+            min_size=0,
+            max_size=5,
+        ),
         node_id=node_id_strategy,
     )
-    @settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow])
+    @hypothesis.settings(max_examples=200, suppress_health_check=[hypothesis.HealthCheck.too_slow])
     def test_increment_produces_dominating_clock(self, entries, node_id):
-        """Property: increment always produces a clock that dominates the original.
+        """Property: increment always produces a clock that dominates the
+        original.
 
         **Validates: Requirements FR-5.2**
         """
-        clock = VectorClock(entries=entries, max_entries=10)
+        clock = kv_store.replication.vector_clock.VectorClock(entries=entries, max_entries=10)
         incremented = clock.increment(node_id)
 
         # The incremented clock should dominate the original
@@ -77,67 +81,104 @@ class TestVectorClockProperties:
         if len(entries) < 10:
             assert incremented.dominates(clock)
 
-    @given(
-        entries_a=st.dictionaries(node_id_strategy, st.integers(min_value=0, max_value=100), min_size=0, max_size=5),
-        entries_b=st.dictionaries(node_id_strategy, st.integers(min_value=0, max_value=100), min_size=0, max_size=5),
+    @hypothesis.given(
+        entries_a=st.dictionaries(
+            node_id_strategy,
+            st.integers(min_value=0, max_value=100),
+            min_size=0,
+            max_size=5,
+        ),
+        entries_b=st.dictionaries(
+            node_id_strategy,
+            st.integers(min_value=0, max_value=100),
+            min_size=0,
+            max_size=5,
+        ),
     )
-    @settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow])
+    @hypothesis.settings(max_examples=200, suppress_health_check=[hypothesis.HealthCheck.too_slow])
     def test_merge_is_commutative(self, entries_a, entries_b):
         """Property: merge(a, b) == merge(b, a).
 
         **Validates: Requirements FR-5.3**
         """
-        clock_a = VectorClock(entries=entries_a, max_entries=20)
-        clock_b = VectorClock(entries=entries_b, max_entries=20)
+        clock_a = kv_store.replication.vector_clock.VectorClock(entries=entries_a, max_entries=20)
+        clock_b = kv_store.replication.vector_clock.VectorClock(entries=entries_b, max_entries=20)
 
         merged_ab = clock_a.merge(clock_b)
         merged_ba = clock_b.merge(clock_a)
 
         assert merged_ab == merged_ba
 
-    @given(
-        entries=st.dictionaries(node_id_strategy, st.integers(min_value=0, max_value=100), min_size=0, max_size=5),
+    @hypothesis.given(
+        entries=st.dictionaries(
+            node_id_strategy,
+            st.integers(min_value=0, max_value=100),
+            min_size=0,
+            max_size=5,
+        ),
     )
-    @settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow])
+    @hypothesis.settings(max_examples=200, suppress_health_check=[hypothesis.HealthCheck.too_slow])
     def test_merge_is_idempotent(self, entries):
         """Property: merge(a, a) == a.
 
         **Validates: Requirements FR-5.3**
         """
-        clock = VectorClock(entries=entries, max_entries=20)
+        clock = kv_store.replication.vector_clock.VectorClock(entries=entries, max_entries=20)
         merged = clock.merge(clock)
         assert merged == clock
 
-    @given(
-        entries_a=st.dictionaries(node_id_strategy, st.integers(min_value=1, max_value=100), min_size=1, max_size=5),
-        entries_b=st.dictionaries(node_id_strategy, st.integers(min_value=0, max_value=50), min_size=0, max_size=5),
+    @hypothesis.given(
+        entries_a=st.dictionaries(
+            node_id_strategy,
+            st.integers(min_value=1, max_value=100),
+            min_size=1,
+            max_size=5,
+        ),
+        entries_b=st.dictionaries(
+            node_id_strategy,
+            st.integers(min_value=0, max_value=50),
+            min_size=0,
+            max_size=5,
+        ),
     )
-    @settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow])
+    @hypothesis.settings(max_examples=200, suppress_health_check=[hypothesis.HealthCheck.too_slow])
     def test_dominates_implies_not_dominated(self, entries_a, entries_b):
         """Property: if a dominates b, then b does not dominate a.
 
         **Validates: Requirements FR-5.3, FR-5.4**
         """
-        clock_a = VectorClock(entries=entries_a, max_entries=20)
-        clock_b = VectorClock(entries=entries_b, max_entries=20)
+        clock_a = kv_store.replication.vector_clock.VectorClock(entries=entries_a, max_entries=20)
+        clock_b = kv_store.replication.vector_clock.VectorClock(entries=entries_b, max_entries=20)
 
         if clock_a.dominates(clock_b):
             assert not clock_b.dominates(clock_a)
 
-    @given(
-        entries_a=st.dictionaries(node_id_strategy, st.integers(min_value=0, max_value=100), min_size=0, max_size=5),
-        entries_b=st.dictionaries(node_id_strategy, st.integers(min_value=0, max_value=100), min_size=0, max_size=5),
+    @hypothesis.given(
+        entries_a=st.dictionaries(
+            node_id_strategy,
+            st.integers(min_value=0, max_value=100),
+            min_size=0,
+            max_size=5,
+        ),
+        entries_b=st.dictionaries(
+            node_id_strategy,
+            st.integers(min_value=0, max_value=100),
+            min_size=0,
+            max_size=5,
+        ),
     )
-    @settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow])
+    @hypothesis.settings(max_examples=200, suppress_health_check=[hypothesis.HealthCheck.too_slow])
     def test_conflicts_with_is_symmetric(self, entries_a, entries_b):
         """Property: conflicts_with(a, b) == conflicts_with(b, a).
 
         **Validates: Requirements FR-5.3, FR-5.5**
         """
-        clock_a = VectorClock(entries=entries_a, max_entries=20)
-        clock_b = VectorClock(entries=entries_b, max_entries=20)
+        clock_a = kv_store.replication.vector_clock.VectorClock(entries=entries_a, max_entries=20)
+        clock_b = kv_store.replication.vector_clock.VectorClock(entries=entries_b, max_entries=20)
 
-        assert clock_a.conflicts_with(clock_b) == clock_b.conflicts_with(clock_a)
+        assert clock_a.conflicts_with(clock_b) == clock_b.conflicts_with(
+            clock_a
+        )
 
 
 # --- Bloom Filter Properties ---
@@ -149,16 +190,18 @@ class TestBloomFilterProperties:
     **Validates: Requirements FR-10.2, FR-10.4**
     """
 
-    @given(
+    @hypothesis.given(
         keys=st.lists(key_strategy, min_size=1, max_size=100, unique=True),
     )
-    @settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow])
+    @hypothesis.settings(max_examples=100, suppress_health_check=[hypothesis.HealthCheck.too_slow])
     def test_no_false_negatives(self, keys):
         """Property: added items are always found (no false negatives).
 
         **Validates: Requirements FR-10.2**
         """
-        bf = BloomFilter(expected_items=max(len(keys), 1), false_positive_rate=0.01)
+        bf = kv_store.storage.bloom_filter.BloomFilter(
+            expected_items=max(len(keys), 1), false_positive_rate=0.01
+        )
 
         for key in keys:
             bf.add(key)
@@ -166,10 +209,10 @@ class TestBloomFilterProperties:
         for key in keys:
             assert bf.might_contain(key), f"False negative for key: {key}"
 
-    @given(
+    @hypothesis.given(
         data=st.data(),
     )
-    @settings(max_examples=20, suppress_health_check=[HealthCheck.too_slow])
+    @hypothesis.settings(max_examples=20, suppress_health_check=[hypothesis.HealthCheck.too_slow])
     def test_false_positive_rate_within_bounds(self, data):
         """Property: false positive rate is within 2x the expected rate.
 
@@ -178,7 +221,7 @@ class TestBloomFilterProperties:
         n_items = 1000
         fp_rate = 0.05  # Use 5% for statistical stability
 
-        bf = BloomFilter(expected_items=n_items, false_positive_rate=fp_rate)
+        bf = kv_store.storage.bloom_filter.BloomFilter(expected_items=n_items, false_positive_rate=fp_rate)
 
         # Add n_items keys
         added_keys = set()
@@ -198,7 +241,8 @@ class TestBloomFilterProperties:
         observed_rate = false_positives / test_count
         # Allow up to 2x the expected rate
         assert observed_rate <= fp_rate * 2, (
-            f"False positive rate {observed_rate:.4f} exceeds 2x expected {fp_rate}"
+            f"False positive rate {observed_rate:.4f} exceeds 2x expected"
+            f" {fp_rate}"
         )
 
 
@@ -211,18 +255,18 @@ class TestMemTableProperties:
     **Validates: Requirements FR-9.2, FR-10.1**
     """
 
-    @given(
+    @hypothesis.given(
         key=key_strategy,
         value=value_strategy,
         timestamp=timestamp_strategy,
     )
-    @settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow])
+    @hypothesis.settings(max_examples=200, suppress_health_check=[hypothesis.HealthCheck.too_slow])
     def test_get_after_put_returns_put_value(self, key, value, timestamp):
         """Property: get after put returns the put value.
 
         **Validates: Requirements FR-9.2, FR-10.1**
         """
-        mt = MemTable(size_threshold_bytes=10 * 1024 * 1024)
+        mt = kv_store.storage.memtable.MemTable(size_threshold_bytes=10 * 1024 * 1024)
         mt.put(key, value, timestamp)
 
         result = mt.get(key)
@@ -231,20 +275,20 @@ class TestMemTableProperties:
         assert result.key == key
         assert result.is_tombstone is False
 
-    @given(
+    @hypothesis.given(
         items=st.lists(
             st.tuples(key_strategy, value_strategy, timestamp_strategy),
             min_size=1,
             max_size=50,
         ),
     )
-    @settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow])
+    @hypothesis.settings(max_examples=100, suppress_health_check=[hypothesis.HealthCheck.too_slow])
     def test_entries_sorted_is_always_sorted(self, items):
         """Property: entries_sorted always returns entries in sorted key order.
 
         **Validates: Requirements FR-9.2**
         """
-        mt = MemTable(size_threshold_bytes=10 * 1024 * 1024)
+        mt = kv_store.storage.memtable.MemTable(size_threshold_bytes=10 * 1024 * 1024)
 
         for key, value, ts in items:
             mt.put(key, value, ts)
@@ -253,21 +297,21 @@ class TestMemTableProperties:
         keys = [e.key for e in entries]
         assert keys == sorted(keys)
 
-    @given(
+    @hypothesis.given(
         key=key_strategy,
         value=value_strategy,
         t1=timestamp_strategy,
         t2=timestamp_strategy,
     )
-    @settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow])
+    @hypothesis.settings(max_examples=200, suppress_health_check=[hypothesis.HealthCheck.too_slow])
     def test_delete_creates_tombstone(self, key, value, t1, t2):
         """Property: delete creates a retrievable tombstone.
 
         **Validates: Requirements FR-9.2**
         """
-        assume(t2 > t1)  # Delete must be after put
+        hypothesis.assume(t2 > t1)  # Delete must be after put
 
-        mt = MemTable(size_threshold_bytes=10 * 1024 * 1024)
+        mt = kv_store.storage.memtable.MemTable(size_threshold_bytes=10 * 1024 * 1024)
         mt.put(key, value, t1)
         mt.delete(key, t2)
 
@@ -286,22 +330,26 @@ class TestStorageEngineProperties:
     **Validates: Requirements FR-9, FR-10**
     """
 
-    @given(
+    @hypothesis.given(
         key=key_strategy,
         value=value_strategy,
     )
-    @settings(max_examples=50, suppress_health_check=[HealthCheck.too_slow], deadline=None)
+    @hypothesis.settings(
+        max_examples=50,
+        suppress_health_check=[hypothesis.HealthCheck.too_slow],
+        deadline=None,
+    )
     def test_put_then_get_returns_same_value(self, key, value):
         """Property: put then get returns the same value (roundtrip).
 
         **Validates: Requirements FR-9, FR-10**
         """
-        import tempfile
         import shutil
+        import tempfile
 
         tmp_dir = tempfile.mkdtemp()
         try:
-            config = StorageConfig(
+            config = kv_store.config.StorageConfig(
                 data_dir=f"{tmp_dir}/data",
                 wal_dir=f"{tmp_dir}/data/wal",
                 sstable_dir=f"{tmp_dir}/data/sstables",
@@ -309,7 +357,7 @@ class TestStorageEngineProperties:
             )
 
             async def run():
-                engine = StorageEngine(config)
+                engine = kv_store.storage.engine.StorageEngine(config)
                 await engine.start()
                 try:
                     await engine.put(key, value, time.time())
@@ -325,22 +373,26 @@ class TestStorageEngineProperties:
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    @given(
+    @hypothesis.given(
         key=key_strategy,
         value=value_strategy,
     )
-    @settings(max_examples=50, suppress_health_check=[HealthCheck.too_slow], deadline=None)
+    @hypothesis.settings(
+        max_examples=50,
+        suppress_health_check=[hypothesis.HealthCheck.too_slow],
+        deadline=None,
+    )
     def test_delete_then_get_returns_tombstone_or_not_found(self, key, value):
         """Property: delete then get returns tombstone or not found.
 
         **Validates: Requirements FR-9, FR-10**
         """
-        import tempfile
         import shutil
+        import tempfile
 
         tmp_dir = tempfile.mkdtemp()
         try:
-            config = StorageConfig(
+            config = kv_store.config.StorageConfig(
                 data_dir=f"{tmp_dir}/data",
                 wal_dir=f"{tmp_dir}/data/wal",
                 sstable_dir=f"{tmp_dir}/data/sstables",
@@ -348,7 +400,7 @@ class TestStorageEngineProperties:
             )
 
             async def run():
-                engine = StorageEngine(config)
+                engine = kv_store.storage.engine.StorageEngine(config)
                 await engine.start()
                 try:
                     t = time.time()
@@ -375,40 +427,40 @@ class TestQuorumProperties:
     **Validates: Requirements FR-4.1, FR-4.2, FR-4.4**
     """
 
-    @given(
+    @hypothesis.given(
         n=st.integers(min_value=1, max_value=11),
         w=st.integers(min_value=1, max_value=11),
         r=st.integers(min_value=1, max_value=11),
     )
-    @settings(max_examples=500, suppress_health_check=[HealthCheck.too_slow])
+    @hypothesis.settings(max_examples=500, suppress_health_check=[hypothesis.HealthCheck.too_slow])
     def test_w_plus_r_greater_than_n_implies_strong_consistency(self, n, w, r):
         """Property: W + R > N implies strong consistency.
 
         **Validates: Requirements FR-4.4**
         """
-        assume(w <= n)
-        assume(r <= n)
+        hypothesis.assume(w <= n)
+        hypothesis.assume(r <= n)
 
-        config = QuorumConfig(n=n, w=w, r=r)
+        config = kv_store.replication.quorum.QuorumConfig(n=n, w=w, r=r)
 
         if w + r > n:
             assert config.is_strongly_consistent() is True
         else:
             assert config.is_strongly_consistent() is False
 
-    @given(
+    @hypothesis.given(
         n=st.integers(min_value=1, max_value=7),
         w=st.integers(min_value=1, max_value=7),
         acks=st.integers(min_value=0, max_value=7),
     )
-    @settings(max_examples=500, suppress_health_check=[HealthCheck.too_slow])
+    @hypothesis.settings(max_examples=500, suppress_health_check=[hypothesis.HealthCheck.too_slow])
     def test_write_succeeds_iff_acks_gte_w(self, n, w, acks):
         """Property: write succeeds if and only if >= W acks received.
 
         **Validates: Requirements FR-4.2**
         """
-        assume(w <= n)
-        assume(acks <= n)
+        hypothesis.assume(w <= n)
+        hypothesis.assume(acks <= n)
 
         # Simulate: a write succeeds iff acks >= w
         success = acks >= w

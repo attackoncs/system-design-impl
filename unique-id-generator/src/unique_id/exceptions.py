@@ -23,7 +23,7 @@ class ClockMovedBackwardsError(UniqueIDError):
         super().__init__(
             f"Clock moved backwards by {self.drift_ms}ms. "
             f"Last timestamp: {last_timestamp}, current: {current_timestamp}. "
-            f"Refusing to generate ID to avoid duplicates."
+            "Refusing to generate ID to avoid duplicates."
         )
 
 

@@ -1,10 +1,16 @@
+"""Domain errors raised by the news feed service."""
+
+
 class NewsFeedError(Exception):
     """Base exception for all news feed system errors."""
+
     pass
 
 
 class ValidationError(NewsFeedError):
-    """Raised when a feed request is invalid (empty content, missing fields)."""
+    """Raised when a feed request is invalid (empty content, missing
+    fields).
+    """
 
     def __init__(self, message: str, field: str = "") -> None:
         self.field = field
@@ -14,7 +20,9 @@ class ValidationError(NewsFeedError):
 class AuthenticationError(NewsFeedError):
     """Raised when an auth token is invalid or missing."""
 
-    def __init__(self, message: str = "Invalid or missing authentication token") -> None:
+    def __init__(
+        self, message: str = "Invalid or missing authentication token"
+    ) -> None:
         super().__init__(message)
 
 

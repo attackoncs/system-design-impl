@@ -1,18 +1,19 @@
 """Hinted handoff manager for handling temporarily unavailable nodes.
 
-When a write cannot be delivered to its intended replica (because the node
-is down), the hint is stored locally. A background task periodically
-attempts to deliver stored hints to recovered nodes.
+When a write cannot be delivered to its intended replica (because the node is
+down), the hint is stored locally. A background task periodically attempts to
+deliver stored hints to recovered nodes.
 """
 
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
-from typing import Callable, Awaitable, Optional
+import dataclasses
+import logging
+from typing import Awaitable, Callable, Optional
 
 
-@dataclass
+@dataclasses.dataclass
 class HintedData:
     """Data stored as a hint for a temporarily unavailable node.
 
@@ -121,7 +122,8 @@ class HintedHandoffManager:
             target_node_id: The node to deliver hints to.
 
         Returns:
-            True if delivery succeeded (or no hints to deliver), False otherwise.
+            True if delivery succeeded (or no hints to deliver), False
+            otherwise.
         """
         hints = self._hints.get(target_node_id)
         if not hints:
@@ -136,17 +138,27 @@ class HintedHandoffManager:
                 # Remove delivered hints
                 del self._hints[target_node_id]
             return success
-        except Exception:
+        # Isolate this operation; record failures before continuing.
+        except Exception:  # pylint: disable=broad-exception-caught
+            logging.getLogger(__name__).exception(
+                "Failure isolated in %s", "deliver_hints"
+            )
             return False
 
     async def _handoff_loop(self) -> None:
-        """Background loop that attempts to deliver hints to recovered nodes."""
+        """Background loop that attempts to deliver hints to recovered
+        nodes.
+        """
         while self._running:
             try:
                 await self._attempt_deliveries()
             except asyncio.CancelledError:
                 break
-            except Exception:
+            # Isolate this operation; record failures before continuing.
+            except Exception:  # pylint: disable=broad-exception-caught
+                logging.getLogger(__name__).exception(
+                    "Failure isolated in %s", "_handoff_loop"
+                )
                 pass
             await asyncio.sleep(self._handoff_interval)
 

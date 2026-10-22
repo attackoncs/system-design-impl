@@ -1,11 +1,10 @@
 """Tests for cluster membership management."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+import unittest.mock
 
+import kv_store.cluster.gossip
+import kv_store.cluster.membership
 import pytest
-
-from kv_store.cluster.gossip import GossipProtocol, MemberInfo, NodeStatus
-from kv_store.cluster.membership import ClusterMembership
 
 
 class FakeHashRing:
@@ -33,13 +32,13 @@ class FakeHashRing:
 @pytest.fixture
 def gossip():
     """Create a GossipProtocol instance."""
-    return GossipProtocol(
+    return kv_store.cluster.gossip.GossipProtocol(
         node_id="node-1",
         address="localhost:5001",
         gossip_interval=1.0,
         gossip_fanout=2,
         failure_timeout=5.0,
-        gossip_func=AsyncMock(),
+        gossip_func=unittest.mock.AsyncMock(),
     )
 
 
@@ -52,7 +51,7 @@ def hash_ring():
 @pytest.fixture
 def membership(gossip, hash_ring):
     """Create a ClusterMembership instance."""
-    return ClusterMembership(
+    return kv_store.cluster.membership.ClusterMembership(
         node_id="node-1",
         address="localhost:5001",
         gossip=gossip,
@@ -71,7 +70,9 @@ class TestJoinCluster:
 
     async def test_join_starts_gossip(self, membership, gossip):
         """Joining should start the gossip protocol."""
-        with patch.object(gossip, "start", new_callable=AsyncMock) as mock_start:
+        with unittest.mock.patch.object(
+            gossip, "start", new_callable=unittest.mock.AsyncMock
+        ) as mock_start:
             await membership.join_cluster()
             mock_start.assert_called_once()
 
@@ -92,7 +93,9 @@ class TestJoinCluster:
 class TestLeaveCluster:
     """Tests for leaving the cluster."""
 
-    async def test_leave_removes_node_from_hash_ring(self, membership, hash_ring):
+    async def test_leave_removes_node_from_hash_ring(
+        self, membership, hash_ring
+    ):
         """Leaving should remove this node from the hash ring."""
         await membership.join_cluster()
         assert "node-1" in hash_ring.nodes
@@ -102,7 +105,7 @@ class TestLeaveCluster:
     async def test_leave_stops_gossip(self, membership, gossip):
         """Leaving should stop the gossip protocol."""
         await membership.join_cluster()
-        with patch.object(gossip, "stop", new_callable=AsyncMock) as mock_stop:
+        with unittest.mock.patch.object(gossip, "stop", new_callable=unittest.mock.AsyncMock) as mock_stop:
             await membership.leave_cluster()
             mock_stop.assert_called_once()
 
@@ -139,7 +142,7 @@ class TestGetAliveMembers:
         await membership.join_cluster()
         gossip.add_seed_node("node-2", "localhost:5002")
         gossip.add_seed_node("node-3", "localhost:5003")
-        gossip._members["node-3"].status = NodeStatus.SUSPECTED
+        gossip._members["node-3"].status = kv_store.cluster.gossip.NodeStatus.SUSPECTED
 
         alive = membership.get_alive_members()
         alive_ids = [m.node_id for m in alive]
@@ -191,7 +194,7 @@ class TestIsNodeAlive:
     async def test_is_node_alive_false_suspected(self, membership, gossip):
         """Should return False for suspected nodes."""
         gossip.add_seed_node("node-2", "localhost:5002")
-        gossip._members["node-2"].status = NodeStatus.SUSPECTED
+        gossip._members["node-2"].status = kv_store.cluster.gossip.NodeStatus.SUSPECTED
         assert membership.is_node_alive("node-2") is False
 
     async def test_is_node_alive_unknown(self, membership):

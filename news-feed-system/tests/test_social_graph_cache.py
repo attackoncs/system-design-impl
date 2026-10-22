@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
+import news_feed_system.social_graph
+import news_feed_system.social_graph_cache
 import pytest
 
-from news_feed_system.social_graph import InMemorySocialGraph, SocialGraph
-from news_feed_system.social_graph_cache import CachedSocialGraph
 
-
-class SpyingSocialGraph(SocialGraph):
+class SpyingSocialGraph(news_feed_system.social_graph.SocialGraph):
     """A social graph wrapper that counts backend calls for testing."""
 
-    def __init__(self, backend: InMemorySocialGraph) -> None:
+    def __init__(self, backend: news_feed_system.social_graph.InMemorySocialGraph) -> None:
         self._backend = backend
         self.get_followers_calls = 0
         self.get_following_calls = 0
@@ -44,7 +43,7 @@ class SpyingSocialGraph(SocialGraph):
 @pytest.fixture
 def backend():
     """Create a fresh InMemorySocialGraph backend."""
-    return InMemorySocialGraph()
+    return news_feed_system.social_graph.InMemorySocialGraph()
 
 
 @pytest.fixture
@@ -61,7 +60,9 @@ def clock():
     def _clock():
         return current_time[0]
 
-    _clock.advance = lambda seconds: current_time.__setitem__(0, current_time[0] + seconds)
+    _clock.advance = lambda seconds: current_time.__setitem__(
+        0, current_time[0] + seconds
+    )
     _clock.set = lambda t: current_time.__setitem__(0, t)
     return _clock
 
@@ -69,7 +70,7 @@ def clock():
 @pytest.fixture
 def cached_graph(spy, clock):
     """Create a CachedSocialGraph with controllable clock and 60s TTL."""
-    return CachedSocialGraph(backend=spy, ttl_seconds=60.0, clock=clock)
+    return news_feed_system.social_graph_cache.CachedSocialGraph(backend=spy, ttl_seconds=60.0, clock=clock)
 
 
 class TestCacheHitReturnsWithoutBackendCall:
@@ -103,7 +104,9 @@ class TestCacheHitReturnsWithoutBackendCall:
         assert spy.get_following_calls == 1  # No additional backend call
         assert result2 == result1
 
-    async def test_separate_caches_for_follower_and_following(self, cached_graph, spy, backend):
+    async def test_separate_caches_for_follower_and_following(
+        self, cached_graph, spy, backend
+    ):
         """Follower and following caches are independent."""
         await backend.add_follow("alice", "bob")
 
@@ -120,7 +123,9 @@ class TestCacheHitReturnsWithoutBackendCall:
         assert spy.get_followers_calls == 1
         assert spy.get_following_calls == 1
 
-    async def test_different_users_cached_independently(self, cached_graph, spy, backend):
+    async def test_different_users_cached_independently(
+        self, cached_graph, spy, backend
+    ):
         """Cache entries for different users are independent."""
         await backend.add_follow("alice", "bob")
         await backend.add_follow("charlie", "dave")
@@ -138,7 +143,9 @@ class TestCacheHitReturnsWithoutBackendCall:
 class TestCacheInvalidationOnMutations:
     """Test that cache entries are invalidated when relationships change."""
 
-    async def test_add_follow_invalidates_followee_follower_cache(self, cached_graph, spy, backend):
+    async def test_add_follow_invalidates_followee_follower_cache(
+        self, cached_graph, spy, backend
+    ):
         """add_follow invalidates the followee's follower cache."""
         await backend.add_follow("alice", "bob")
 
@@ -154,7 +161,9 @@ class TestCacheInvalidationOnMutations:
         assert spy.get_followers_calls == 2
         assert set(result) == {"alice", "charlie"}
 
-    async def test_add_follow_invalidates_follower_following_cache(self, cached_graph, spy, backend):
+    async def test_add_follow_invalidates_follower_following_cache(
+        self, cached_graph, spy, backend
+    ):
         """add_follow invalidates the follower's following cache."""
         await backend.add_follow("alice", "bob")
 
@@ -170,7 +179,9 @@ class TestCacheInvalidationOnMutations:
         assert spy.get_following_calls == 2
         assert set(result) == {"bob", "charlie"}
 
-    async def test_remove_follow_invalidates_followee_follower_cache(self, cached_graph, spy, backend):
+    async def test_remove_follow_invalidates_followee_follower_cache(
+        self, cached_graph, spy, backend
+    ):
         """remove_follow invalidates the followee's follower cache."""
         await backend.add_follow("alice", "bob")
         await backend.add_follow("charlie", "bob")
@@ -187,7 +198,9 @@ class TestCacheInvalidationOnMutations:
         assert spy.get_followers_calls == 2
         assert result == ["charlie"]
 
-    async def test_remove_follow_invalidates_follower_following_cache(self, cached_graph, spy, backend):
+    async def test_remove_follow_invalidates_follower_following_cache(
+        self, cached_graph, spy, backend
+    ):
         """remove_follow invalidates the follower's following cache."""
         await backend.add_follow("alice", "bob")
         await backend.add_follow("alice", "charlie")
@@ -204,8 +217,12 @@ class TestCacheInvalidationOnMutations:
         assert spy.get_following_calls == 2
         assert result == ["charlie"]
 
-    async def test_manual_invalidate_clears_both_caches(self, cached_graph, spy, backend):
-        """invalidate() clears both follower and following caches for a user."""
+    async def test_manual_invalidate_clears_both_caches(
+        self, cached_graph, spy, backend
+    ):
+        """Invalidate() clears both follower and following caches for a
+        user.
+        """
         await backend.add_follow("alice", "bob")
 
         # Populate both caches for bob
@@ -223,7 +240,9 @@ class TestCacheInvalidationOnMutations:
         assert spy.get_followers_calls == 2
         assert spy.get_following_calls == 2
 
-    async def test_mutation_does_not_invalidate_unrelated_users(self, cached_graph, spy, backend):
+    async def test_mutation_does_not_invalidate_unrelated_users(
+        self, cached_graph, spy, backend
+    ):
         """Mutations only invalidate affected users' caches."""
         await backend.add_follow("alice", "bob")
         await backend.add_follow("charlie", "dave")
@@ -248,8 +267,12 @@ class TestCacheInvalidationOnMutations:
 class TestTTLExpirationTriggersBackendRefresh:
     """Test that expired cache entries trigger a backend refresh."""
 
-    async def test_follower_cache_expires_after_ttl(self, cached_graph, spy, backend, clock):
-        """Follower cache entry expires after TTL and refreshes from backend."""
+    async def test_follower_cache_expires_after_ttl(
+        self, cached_graph, spy, backend, clock
+    ):
+        """Follower cache entry expires after TTL and refreshes from
+        backend.
+        """
         await backend.add_follow("alice", "bob")
 
         # Populate cache at time 0
@@ -266,8 +289,12 @@ class TestTTLExpirationTriggersBackendRefresh:
         await cached_graph.get_followers("bob")
         assert spy.get_followers_calls == 2
 
-    async def test_following_cache_expires_after_ttl(self, cached_graph, spy, backend, clock):
-        """Following cache entry expires after TTL and refreshes from backend."""
+    async def test_following_cache_expires_after_ttl(
+        self, cached_graph, spy, backend, clock
+    ):
+        """Following cache entry expires after TTL and refreshes from
+        backend.
+        """
         await backend.add_follow("alice", "bob")
 
         # Populate cache at time 0
@@ -284,7 +311,9 @@ class TestTTLExpirationTriggersBackendRefresh:
         await cached_graph.get_following("alice")
         assert spy.get_following_calls == 2
 
-    async def test_expired_cache_returns_fresh_data(self, cached_graph, spy, backend, clock):
+    async def test_expired_cache_returns_fresh_data(
+        self, cached_graph, spy, backend, clock
+    ):
         """After TTL expiration, fresh data from backend is returned."""
         await backend.add_follow("alice", "bob")
 
@@ -305,7 +334,9 @@ class TestTTLExpirationTriggersBackendRefresh:
         result3 = await cached_graph.get_followers("bob")
         assert set(result3) == {"alice", "charlie"}  # Fresh
 
-    async def test_ttl_refresh_recaches_with_new_expiry(self, cached_graph, spy, backend, clock):
+    async def test_ttl_refresh_recaches_with_new_expiry(
+        self, cached_graph, spy, backend, clock
+    ):
         """After TTL refresh, the new entry has a fresh TTL."""
         await backend.add_follow("alice", "bob")
 
@@ -332,7 +363,9 @@ class TestTTLExpirationTriggersBackendRefresh:
 class TestCachedSocialGraphDelegation:
     """Test that non-cached methods delegate properly to backend."""
 
-    async def test_get_follower_count_delegates(self, cached_graph, spy, backend):
+    async def test_get_follower_count_delegates(
+        self, cached_graph, spy, backend
+    ):
         """get_follower_count delegates to backend."""
         await backend.add_follow("alice", "bob")
         await backend.add_follow("charlie", "bob")
