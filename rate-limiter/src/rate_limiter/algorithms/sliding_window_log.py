@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 from typing import Any
 
 from rate_limiter import config as rate_limiter_config
@@ -187,7 +188,7 @@ class SlidingWindowLogAlgorithm(algorithms_base.BaseAlgorithm):
         now = time.time()
 
         # Generate unique request ID for this request
-        request_id = f"{now}:{id(self)}"
+        request_id = uuid.uuid4().hex
 
         # Include rule parameters in the key to ensure different rules are
         # isolated
@@ -201,16 +202,4 @@ class SlidingWindowLogAlgorithm(algorithms_base.BaseAlgorithm):
             LUA_SCRIPT, _memory_sliding_window_log_script, keys, args
         )
 
-        allowed = bool(result[0])
-        remaining = int(result[1])
-        limit = int(result[2])
-        reset_after = float(result[3])
-        retry_after = float(result[4]) if not allowed else None
-
-        return algorithms_base.RateLimitResult(
-            allowed=allowed,
-            remaining=remaining,
-            limit=limit,
-            reset_after=reset_after,
-            retry_after=retry_after,
-        )
+        return algorithms_base.RateLimitResult.from_storage(result)

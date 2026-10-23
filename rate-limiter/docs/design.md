@@ -258,7 +258,7 @@ from typing import Callable, Optional
 
 def rate_limit(
     limit: int,
-    window: float,
+    window: int,
     algorithm: str = "token_bucket",
     key_func: Optional[Callable] = None,
     limiter: Optional["RateLimiter"] = None,
@@ -351,3 +351,11 @@ def composite_key(*extractors: Callable) -> Callable:
 - **Invalid configuration**: Raise `ValueError` at initialization time with descriptive message.
 - **Missing key resolver**: Fall back to IP-based key resolution.
 - **Plain string request context**: When `check_request` receives a plain string instead of a request object, it uses the string directly as the rate limit key.
+
+## Implemented engineering contracts (2026-10-23)
+
+The code now validates positive integer limits/windows during rule construction. Sliding-log Redis members are per-request UUIDs, independent of timestamp resolution. `RateLimitResult.from_storage` centralizes the five-field Lua/Python result format, including numeric decoding of the allowed flag.
+
+Generic decorators construct their rule once. Async functions retain async wrappers: key resolution happens before `asyncio.to_thread`, synchronous storage checks run on the default executor, and only allowed requests invoke/await the original function. Cancellation does not undo quota consumption. A denial dict is not an HTTP Response; framework adapters own HTTP status conversion. Multiple-rule checks are sequential charges, not a transactional reservation.
+
+205 tests passed in the deep review, including same-tick concurrent admission on memory and fakeredis Lua. See the root DEEP_REVIEW_PROGRESS.md and chapter README for limitations and reproducible commands. Earlier design sketches illustrate interfaces; these implemented contracts govern numeric validation and async behavior.

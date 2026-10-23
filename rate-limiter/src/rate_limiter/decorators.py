@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import functools
+import inspect
 from typing import Any, Callable, Optional
 
 from rate_limiter import config as rate_limiter_config
@@ -106,50 +108,53 @@ def rate_limit(
             f" {', '.join(a.value for a in rate_limiter_config.Algorithm)}"
         ) from error
 
-    # Create a limiter if not provided
+    # Validate and construct once, including when a caller supplies the backend.
+    rule = rate_limiter_config.RateLimitRule(
+        limit=limit, window=window, algorithm=algo, key_func=key_func
+    )
     if limiter is None:
-        rule = rate_limiter_config.RateLimitRule(
-            limit=limit, window=window, algorithm=algo
+        limiter = rate_limiter_core.RateLimiter(
+            rate_limiter_config.RateLimiterConfig(rules=[rule])
         )
-        config = rate_limiter_config.RateLimiterConfig(rules=[rule])
-        limiter = rate_limiter_core.RateLimiter(config)
 
     def decorator(func: Callable) -> Callable:
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs) -> Any:
-            # Determine the key for rate limiting
+        def resolve_key(args, kwargs):
             if key_func is not None:
-                # Use custom key function
-                key = key_func(*args, **kwargs)
-            else:
-                # Try to extract from request context
-                # For Flask/FastAPI, the first argument is often the request
-                request_context = args[0] if args else kwargs.get("request", None)
-                if request_context is not None:
-                    key = rate_limiter_keys.ip_key(request_context)
-                else:
-                    # Fallback to function name
-                    key = f"func:{func.__name__}"
+                return key_func(*args, **kwargs)
+            context = args[0] if args else kwargs.get("request")
+            if context is not None:
+                return rate_limiter_keys.ip_key(context)
+            return f"func:{func.__name__}"
 
-            # Check rate limit using the limiter's config
-            rule = rate_limiter_config.RateLimitRule(
-                limit=limit, window=window, algorithm=algo, key_func=key_func
-            )
-            result = limiter.check(key, rule)
+        def denied(result):
+            if raise_exception:
+                raise RateLimitExceededException(
+                    limit=result.limit,
+                    remaining=result.remaining,
+                    reset_after=result.reset_after,
+                    retry_after=result.retry_after,
+                )
+            return _rate_limit_response(result)
 
+        if inspect.iscoroutinefunction(func):
+
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                # Resolve request-bound keys on the event loop; only synchronous
+                # storage work moves into the executor (with context propagation).
+                key = resolve_key(args, kwargs)
+                result = await asyncio.to_thread(limiter.check, key, rule)
+                if not result.allowed:
+                    return denied(result)
+                return await func(*args, **kwargs)
+
+            return async_wrapper
+
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            result = limiter.check(resolve_key(args, kwargs), rule)
             if not result.allowed:
-                if raise_exception:
-                    raise RateLimitExceededException(
-                        limit=result.limit,
-                        remaining=result.remaining,
-                        reset_after=result.reset_after,
-                        retry_after=result.retry_after,
-                    )
-                else:
-                    # Return a 429 response (for web frameworks)
-                    return _rate_limit_response(result)
-
-            # Call the original function
+                return denied(result)
             return func(*args, **kwargs)
 
         return wrapper

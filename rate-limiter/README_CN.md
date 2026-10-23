@@ -386,7 +386,7 @@ config = RateLimiterConfig(
 
 ```bash
 pip install -e ".[dev]"
-pytest                          # 全部 180 个测试
+pytest                          # 全部测试（本轮 205 项通过）
 pytest tests/test_algorithms/   # 算法测试
 pytest tests/test_storage/      # 存储测试
 pytest tests/test_middleware/    # 中间件测试
@@ -408,3 +408,13 @@ FastAPI 在线程池执行同步检查；Flask 装饰器按路由保留限流器
 两种适配器共用 `middleware/configuration.py` 中的规则配置。
 
 验证结果和剩余限制见[仓库工程检查报告](../ENGINEERING_REVIEW.md)。
+
+### 第 05 章深入审查更新
+
+- `RateLimitRule` 构造时要求 `limit`、`window` 为正整数（不接受 bool、浮点或字符串），`algorithm` 为 `Algorithm` 枚举，`key_func` 为可调用对象或 None。配置错误直接抛 `ValueError`，不会等到请求时被 fail-open 掩盖。规则对象不应在请求处理中原地修改。
+- 滑动日志为每次检查生成独立 UUID 成员；并发请求时间戳相同也会分别计数。五种算法通过 `RateLimitResult.from_storage` 共用 Lua/内存结果解码。
+- 通用 `@rate_limit` 保留异步函数身份，异步包装器用 `asyncio.to_thread` 执行同步存储检查，成功后 await 原函数。自定义 key_func 在调用线程/事件循环上执行，应保持快速；同步函数仍同步检查。
+- 通用装饰器的 `raise_exception=False` 返回包含 status_code/content/headers 的普通字典，不会自动转换为框架的 HTTP 429 Response；需要真实 HTTP 状态时使用对应中间件或显式转换。
+- 默认执行器限制活跃工作线程，但不提供请求准入或无限负载保护；取消等待不能撤回已开始的存储操作，配额可能已消耗。多条规则逐条扣减，不是跨规则事务。内存过期键主要在访问时回收，未访问的历史键仍可能占用内存。
+
+验证：205 项测试通过，包括同一时间戳 100 次并发检查仅允许 7 次（内存及 fakeredis Lua）、事件循环响应性、异步拒绝不调用业务函数及输入校验。fakeredis 不等同于真实 Redis 集群/跨机压测；保留 1 条 Starlette/httpx 弃用警告。详见[逐项目记录](../DEEP_REVIEW_PROGRESS.md)。

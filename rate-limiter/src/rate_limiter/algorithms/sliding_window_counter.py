@@ -203,16 +203,4 @@ class SlidingWindowCounterAlgorithm(algorithms_base.BaseAlgorithm):
             LUA_SCRIPT, _memory_sliding_window_counter_script, keys, args
         )
 
-        allowed = bool(result[0])
-        remaining = int(result[1])
-        limit = int(result[2])
-        reset_after = float(result[3])
-        retry_after = float(result[4]) if not allowed else None
-
-        return algorithms_base.RateLimitResult(
-            allowed=allowed,
-            remaining=remaining,
-            limit=limit,
-            reset_after=reset_after,
-            retry_after=retry_after,
-        )
+        return algorithms_base.RateLimitResult.from_storage(result)

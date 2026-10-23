@@ -27,6 +27,18 @@ class RateLimitResult:
     reset_after: float
     retry_after: float | None
 
+    @classmethod
+    def from_storage(cls, values) -> "RateLimitResult":
+        """Decode the five-field result shared by Lua and memory callbacks."""
+        allowed = bool(int(values[0]))
+        return cls(
+            allowed=allowed,
+            remaining=int(values[1]),
+            limit=int(values[2]),
+            reset_after=float(values[3]),
+            retry_after=None if allowed else float(values[4]),
+        )
+
 
 class BaseAlgorithm(abc.ABC):
     """Abstract base class for rate limiting algorithms.

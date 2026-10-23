@@ -336,7 +336,7 @@ Redis adds one network round-trip per check (single Lua script evaluation).
 
 ```bash
 pip install -e ".[dev]"
-pytest                          # All 180 tests
+pytest                          # Full suite (205 passed in this review)
 pytest tests/test_algorithms/   # Algorithm tests
 pytest tests/test_storage/      # Storage tests
 pytest tests/test_middleware/    # Middleware tests
@@ -361,3 +361,13 @@ configuration in `middleware/configuration.py`.
 
 See [the repository review](../ENGINEERING_REVIEW.md) for regression results and
 remaining resource/performance limits.
+
+### Chapter 05 deep review
+
+Rules validate positive integer `limit`/`window` (excluding bool), an `Algorithm` enum and an optional callable key resolver at construction. Do not mutate rules in flight. Sliding-log requests use UUID members so equal timestamps never collapse into one Redis sorted-set entry. All five algorithms share `RateLimitResult.from_storage` decoding.
+
+The generic decorator preserves coroutine functions and offloads synchronous checks using `asyncio.to_thread`; key resolution stays on the caller/event-loop thread. Synchronous decorated functions remain synchronous. With `raise_exception=False`, the generic decorator returns a plain response-description dict, not a framework HTTP response: use middleware or explicitly convert it for an actual HTTP 429.
+
+Executor worker limits are not request admission control. Cancellation cannot roll back a started storage operation; multiple rules are charged separately, not transactionally. Memory TTL expiration is mainly lazy and untouched expired keys may remain allocated. These changes do not establish higher production throughput.
+
+Validation: 205 passed, one existing Starlette/httpx warning. New regressions include 100 equal-timestamp concurrent checks admitting exactly 7 requests on memory/fakeredis Lua, responsive async wrappers, denied-handler isolation and rule validation. Real Redis cluster performance was not measured. See [per-project progress](../DEEP_REVIEW_PROGRESS.md).

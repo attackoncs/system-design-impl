@@ -39,6 +39,16 @@ class RateLimitRule:
     path_pattern: Optional[str] = None
     name: Optional[str] = None
 
+    def __post_init__(self) -> None:
+        for name in ("limit", "window"):
+            value = getattr(self, name)
+            if type(value) is not int or value <= 0:
+                raise ValueError(f"{name} must be a positive integer")
+        if not isinstance(self.algorithm, Algorithm):
+            raise ValueError("algorithm must be an Algorithm enum member")
+        if self.key_func is not None and not callable(self.key_func):
+            raise ValueError("key_func must be callable")
+
 
 @dataclasses.dataclass
 class RateLimiterConfig:
