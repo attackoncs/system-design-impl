@@ -37,6 +37,12 @@ class SnowflakeConfig:
             InvalidConfigError: If bit allocation is invalid or IDs exceed
                 capacity.
         """
+        for field in dataclasses.fields(self):
+            if type(getattr(self, field.name)) is not int:
+                raise unique_id.exceptions.InvalidConfigError(
+                    f"{field.name} must be an integer"
+                )
+
         # Validate all bit fields are positive
         if self.timestamp_bits <= 0:
             raise unique_id.exceptions.InvalidConfigError(

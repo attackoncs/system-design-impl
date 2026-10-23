@@ -1,5 +1,7 @@
 # 唯一 ID 生成器
 
+> 第 08 章核对与本轮变更见[审查记录](docs/chapter08-review.md)：新增有界序列等待和配置类型校验；说明节点身份、重启及吞吐边界。
+
 基于 Twitter Snowflake 算法的 Python 实现，生成 64 位唯一、时间可排序的 ID，适用于分布式系统。
 
 > English documentation: [README.md](./README.md)

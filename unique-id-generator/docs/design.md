@@ -1,5 +1,7 @@
 # Design: Unique ID Generator
 
+> 第 08 章核对与本轮变更见[审查记录](chapter08-review.md)：新增有界序列等待和配置类型校验；说明节点身份、重启及吞吐边界。
+
 ## Architecture Overview
 
 The unique ID generator follows a simple layered architecture with a core Snowflake generator, configurable bit layout, clock abstraction for monotonic time tracking, and an ID parser for decomposition. Alternative strategies provide fallback options.

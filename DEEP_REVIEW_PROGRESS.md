@@ -11,7 +11,7 @@
 | 05 | [Rate Limiter](rate-limiter/) | 完成：205 项测试通过 |
 | 06 | [Consistent Hashing](consistent-hashing/) | 完成：原书核对，108 项测试通过 |
 | 07 | [Key-Value Store](key-value-store/) | 进行中：383 项测试通过；原书剩余项见章节审查记录 |
-| 08 | [Unique ID Generator](unique-id-generator/) | 待逐项深入审查 |
+| 08 | [Unique ID Generator](unique-id-generator/) | 完成：原书核对，94 项测试通过 |
 | 09 | [URL Shortener](url-shortener/) | 待逐项深入审查 |
 | 10 | [Web Crawler](web-crawler/) | 待逐项深入审查 |
 | 11 | [Notification System](notification-system/) | 待逐项深入审查 |
@@ -84,3 +84,9 @@
 详细证据与兼容性见 [第 07 章审查记录](key-value-store/docs/chapter07-review.md)。自动扩缩容/安全下线、Merkle 网络逐层遍历与大差异分页等尚未完成，因此不增加已完成项目数，也不把章节标记为全部实现。
 
 第 07 章本轮验证：完整测试 **383 passed（34.75 秒）**，Ruff E9/F 和 `git diff --check` 通过；未做吞吐压测，未提交或推送。
+
+## 第 08 章：分布式唯一 ID
+
+对照原书最终 Snowflake 方案，补充配置的严格整数校验、序列耗尽时的让出 CPU 与单调时间截止期限、等待中的回拨拒绝。超时和回拨不提交序列状态。新增配置错误、超时恢复、回拨和多线程共享实例回归；完整测试 **94 passed**，Ruff E9/F 通过。
+
+本机单线程 100,000 次 generate 耗时 0.4861 秒，100,000 个 ID 无重复，约 205,710 ID/s；这是当前机器一次测量，未证明生产环境持续容量。中英文 README 和设计文档关联 [章节核对记录](unique-id-generator/docs/chapter08-review.md)，明确重启身份隔离、批量部分失败、时钟同步及高可用部署边界。

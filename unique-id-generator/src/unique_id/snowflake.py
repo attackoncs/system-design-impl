@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import threading
+import time
+import math
 from typing import Optional
 
 import unique_id.clock
@@ -22,6 +24,8 @@ class SnowflakeGenerator:
         self,
         config: Optional[unique_id.config.SnowflakeConfig] = None,
         clock: Optional[unique_id.clock.Clock] = None,
+        *,
+        overflow_timeout_seconds: float = 1.0,
     ):
         """Initialize the Snowflake generator.
 
@@ -29,6 +33,14 @@ class SnowflakeGenerator:
             config: Generator configuration. Uses defaults if None.
             clock: Clock implementation. Uses SystemClock if None.
         """
+        if (
+            isinstance(overflow_timeout_seconds, bool)
+            or not isinstance(overflow_timeout_seconds, (int, float))
+            or not math.isfinite(overflow_timeout_seconds)
+            or overflow_timeout_seconds < 0
+        ):
+            raise ValueError("overflow_timeout_seconds must be finite and nonnegative")
+        self._overflow_timeout = overflow_timeout_seconds
         self._config = config or unique_id.config.SnowflakeConfig()
         self._clock = clock or unique_id.clock.SystemClock()
         self._sequence = 0
@@ -101,7 +113,7 @@ class SnowflakeGenerator:
             return [self._generate_locked() for _ in range(count)]
 
     def _wait_next_millis(self, last_timestamp: int) -> int:
-        """Spin-wait until the clock advances past the given timestamp.
+        """Wait with a monotonic deadline until the clock advances.
 
         Called when sequence overflows within a millisecond.
 
@@ -111,10 +123,21 @@ class SnowflakeGenerator:
         Returns:
             The new (advanced) timestamp in milliseconds.
         """
-        timestamp = self._current_millis()
-        while timestamp <= last_timestamp:
+        deadline = time.monotonic() + self._overflow_timeout
+        while True:
             timestamp = self._current_millis()
-        return timestamp
+            if timestamp < last_timestamp:
+                raise unique_id.exceptions.ClockMovedBackwardsError(
+                    last_timestamp, timestamp
+                )
+            if timestamp > last_timestamp:
+                return timestamp
+            if time.monotonic() >= deadline:
+                raise unique_id.exceptions.SequenceOverflowError(
+                    last_timestamp, self._config.max_sequence
+                )
+            # Yield the CPU while retaining exclusive ownership of generator state.
+            time.sleep(0.0001)
 
     def _current_millis(self) -> int:
         """Get current time in milliseconds from the configured clock."""
