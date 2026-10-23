@@ -1,6 +1,7 @@
 """Storage interfaces and in-memory URL mapping implementations."""
 
 import abc
+import threading
 from typing import Optional
 
 import url_shortener.models
@@ -12,6 +13,19 @@ class StorageBackend(abc.ABC):
     Any storage backend can be used with any hash strategy, keeping the storage
     layer stateless with respect to code generation.
     """
+
+    def get_or_create(self, long_url, factory):
+        """Return a mapping, creating it if absent.
+
+        Concurrent backends must override this with one atomic transaction;
+        this fallback preserves compatibility with sequential custom backends.
+        """
+        existing = self.get_by_long_url(long_url)
+        if existing is not None:
+            return existing
+        mapping = factory()
+        self.save(mapping)
+        return mapping
 
     @abc.abstractmethod
     def save(self, mapping: url_shortener.models.URLMapping) -> None:
@@ -66,26 +80,36 @@ class InMemoryStorage(StorageBackend):
     """
 
     def __init__(self) -> None:
+        self._lock = threading.RLock()
         self._by_short_code: dict[str, url_shortener.models.URLMapping] = {}
         self._by_long_url: dict[str, url_shortener.models.URLMapping] = {}
 
+    def get_or_create(self, long_url, factory):
+        """Serialize read/generate/save across clients sharing this backend."""
+        with self._lock:
+            return super().get_or_create(long_url, factory)
+
     def save(self, mapping: url_shortener.models.URLMapping) -> None:
         """Save mapping with bidirectional indexing."""
-        self._by_short_code[mapping.short_code] = mapping
-        self._by_long_url[mapping.long_url] = mapping
+        with self._lock:
+            self._by_short_code[mapping.short_code] = mapping
+            self._by_long_url[mapping.long_url] = mapping
 
     def get_by_short_code(
         self, short_code: str
     ) -> Optional[url_shortener.models.URLMapping]:
         """O(1) lookup by short code."""
-        return self._by_short_code.get(short_code)
+        with self._lock:
+            return self._by_short_code.get(short_code)
 
     def get_by_long_url(
         self, long_url: str
     ) -> Optional[url_shortener.models.URLMapping]:
         """O(1) lookup by long URL."""
-        return self._by_long_url.get(long_url)
+        with self._lock:
+            return self._by_long_url.get(long_url)
 
     def exists(self, short_code: str) -> bool:
         """O(1) existence check."""
-        return short_code in self._by_short_code
+        with self._lock:
+            return short_code in self._by_short_code

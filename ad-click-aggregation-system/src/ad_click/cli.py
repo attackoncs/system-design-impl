@@ -20,14 +20,20 @@ def load_config(path):
     if len({config[r + "_token"] for r in ("write", "read", "internal", "admin")}) != 4:
         raise ValueError("role credentials must be distinct")
     integer(config["partitions"], "partitions", 1, 64)
-    if len(config["worker_urls"]) != config["partitions"] or len(set(config["worker_urls"])) != config["partitions"]:
+    if (
+        len(config["worker_urls"]) != config["partitions"]
+        or len(set(config["worker_urls"])) != config["partitions"]
+    ):
         raise ValueError("one distinct worker URL required per partition")
     return config
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("role", choices=["ingress", "worker", "api", "ingest-file", "reconcile", "rebuild"])
+    parser.add_argument(
+        "role",
+        choices=["ingress", "worker", "api", "ingest-file", "reconcile", "rebuild"],
+    )
     parser.add_argument("--config", required=True)
     parser.add_argument("--root", default=".runtime")
     parser.add_argument("--host", default="127.0.0.1")
@@ -35,7 +41,10 @@ def main():
     parser.add_argument("--partition", type=int, default=0)
     parser.add_argument("--source")
     parser.add_argument("--checkpoint")
-    parser.add_argument("--output", help="new database path for rebuild; never overwrites an existing file")
+    parser.add_argument(
+        "--output",
+        help="new database path for rebuild; never overwrites an existing file",
+    )
     args = parser.parse_args()
     config = load_config(args.config)
     root = Path(args.root)
@@ -64,10 +73,18 @@ def main():
     loop = None
     store = None
     if args.role == "ingress":
-        store = EventLog(root / "raw.sqlite", config["partitions"], config.get("max_events", 1_000_000))
+        store = EventLog(
+            root / "raw.sqlite",
+            config["partitions"],
+            config.get("max_events", 1_000_000),
+        )
     if args.role == "worker":
         integer(args.partition, "partition", 0, config["partitions"] - 1)
-        store = Aggregator(root / f"worker-{args.partition}.sqlite", args.partition, config.get("lateness", 120))
+        store = Aggregator(
+            root / f"worker-{args.partition}.sqlite",
+            args.partition,
+            config.get("lateness", 120),
+        )
         loop = WorkerLoop(config, store)
         threading.Thread(target=loop.run, daemon=True).start()
     instance = server(args.role, config, store, args.host, args.port, loop)

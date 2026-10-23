@@ -139,9 +139,7 @@ class VectorClock:
         return dict(self._entries)
 
     @classmethod
-    def from_dict(
-        cls, data: dict[str, int], max_entries: int = 10
-    ) -> "VectorClock":
+    def from_dict(cls, data: dict[str, int], max_entries: int = 10) -> "VectorClock":
         """Deserialize from a dictionary.
 
         Args:

@@ -27,12 +27,18 @@ def digest(value):
 
 def identifier(value):
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", value):
-        raise ValueError("IDs must contain 1..80 ASCII letters, digits, underscores or hyphens")
+        raise ValueError(
+            "IDs must contain 1..80 ASCII letters, digits, underscores or hyphens"
+        )
     return value
 
 
 def integer(value, name, low, high):
-    if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not low <= value <= high
+    ):
         raise ValueError(f"{name} must be an integer in [{low},{high}]")
     return value
 
@@ -45,12 +51,18 @@ def text(value, name, maximum=1000):
 
 def stay(start, end, now, future=True):
     first, last = date.fromisoformat(start), date.fromisoformat(end)
-    if first.isoformat() != start or last.isoformat() != end or not 1 <= (last-first).days <= 30:
-        raise ValueError("stay must contain 1..30 nights with canonical YYYY-MM-DD dates")
+    if (
+        first.isoformat() != start
+        or last.isoformat() != end
+        or not 1 <= (last - first).days <= 30
+    ):
+        raise ValueError(
+            "stay must contain 1..30 nights with canonical YYYY-MM-DD dates"
+        )
     today = datetime.fromtimestamp(now, timezone.utc).date()
     if future and (first < today or last > today + timedelta(days=730)):
         raise ValueError("stay must be within the next 730 UTC calendar days")
-    return [(first + timedelta(days=i)).isoformat() for i in range((last-first).days)]
+    return [(first + timedelta(days=i)).isoformat() for i in range((last - first).days)]
 
 
 def shard_for(hotel_id, count):
@@ -81,10 +93,10 @@ class Database:
     @contextmanager
     def transaction(self, write=False):
         db = sqlite3.connect(self.path, timeout=15, isolation_level=None)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA foreign_keys=ON")
-        db.execute("PRAGMA synchronous=FULL")
         try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA foreign_keys=ON")
+            db.execute("PRAGMA synchronous=FULL")
             db.execute("BEGIN IMMEDIATE" if write else "BEGIN")
             yield db
             db.commit()
@@ -111,15 +123,22 @@ class Cache:
 
     def put(self, key, value):
         with self.lock:
-            self.values[key] = (self.clock()+self.ttl, dumps(value))
+            self.values[key] = (self.clock() + self.ttl, dumps(value))
             self.values.move_to_end(key)
             while len(self.values) > self.limit:
                 self.values.popitem(last=False)
 
 
 def http_json(url, token, body=None, method=None, timeout=5):
-    request = Request(url, data=None if body is None else dumps(body).encode(), method=method,
-                      headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
+    request = Request(
+        url,
+        data=None if body is None else dumps(body).encode(),
+        method=method,
+        headers={
+            "Authorization": "Bearer " + token,
+            "Content-Type": "application/json",
+        },
+    )
     with urlopen(request, timeout=timeout) as response:
         raw = response.read(4 * 1024 * 1024 + 1)
         if len(raw) > 4 * 1024 * 1024:

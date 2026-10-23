@@ -32,11 +32,7 @@ class TokenAuthenticator:
 
     def authenticate(self, token):
         """Return the token owner, or raise AuthenticationError if invalid."""
-        if (
-            not isinstance(token, str)
-            or not token.isascii()
-            or len(token) > 256
-        ):
+        if not isinstance(token, str) or not token.isascii() or len(token) > 256:
             raise chat_system.models.AuthenticationError("invalid token")
         for known, user in self._tokens.items():
             if hmac.compare_digest(token, known):
@@ -86,16 +82,10 @@ class ChatService:
         clock: Callable[[], float] = time.monotonic,
     ):
         self.store = (
-            store
-            if store is not None
-            else chat_system.store.SQLiteMessageStore()
+            store if store is not None else chat_system.store.SQLiteMessageStore()
         )
-        self.auth = (
-            authenticator if authenticator is not None else TokenAuthenticator()
-        )
-        self.notifier = (
-            notifier if notifier is not None else RecordingNotifier()
-        )
+        self.auth = authenticator if authenticator is not None else TokenAuthenticator()
+        self.notifier = notifier if notifier is not None else RecordingNotifier()
         self.config = config or chat_system.models.ChatConfig()
         self.clock = clock
         self._sessions: Dict[tuple, Session] = {}
@@ -140,8 +130,7 @@ class ChatService:
         self.expire_sessions()
         if (
             session.closed
-            or self._sessions.get((session.user_id, session.device_id))
-            is not session
+            or self._sessions.get((session.user_id, session.device_id)) is not session
         ):
             raise chat_system.models.AuthenticationError("session closed")
         if self.auth.authenticate(session.token) != session.user_id:
@@ -165,9 +154,7 @@ class ChatService:
         self._subscriptions.pop(session, None)
         while not session.queue.empty():
             session.queue.get_nowait()
-        session.queue.put_nowait(
-            {"type": "closed", "reason": "reconnect and sync"}
-        )
+        session.queue.put_nowait({"type": "closed", "reason": "reconnect and sync"})
 
     def disconnect(self, session):
         """Close a session and publish offline presence when appropriate.
@@ -252,9 +239,7 @@ class ChatService:
             An existing or newly created two-member Channel.
         """
         self.validate_session(session)
-        return self.store.create_channel(
-            session.user_id, [recipient], "direct", 2
-        )
+        return self.store.create_channel(session.user_id, [recipient], "direct", 2)
 
     def create_group(self, session, members):
         """Create a group owned by the authenticated session user.
@@ -348,9 +333,7 @@ class ChatService:
             except Exception as error:  # pylint: disable=broad-exception-caught
                 # Persistence and sender acknowledgement must survive push
                 # provider failure.
-                logging.getLogger(__name__).exception(
-                    "Failure isolated in %s", "send"
-                )
+                logging.getLogger(__name__).exception("Failure isolated in %s", "send")
                 self.notification_failures.append(
                     (user, message.message_id, type(error).__name__)
                 )

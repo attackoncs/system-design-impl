@@ -46,47 +46,32 @@ def main():
         if args.command == "record":
             print(
                 json.dumps(
-                    {
-                        "created": store.record(
-                            args.event_id, args.query, args.at
-                        )
-                    }
+                    {"created": store.record(args.event_id, args.query, args.at)}
                 )
             )
         elif args.command == "build":
             end = time.time() if args.end is None else args.end
-            start = (
-                max(0, end - 7 * 86400) if args.start is None else args.start
-            )
+            start = max(0, end - 7 * 86400) if args.start is None else args.start
             print(json.dumps({"version": store.build(start, end, args.shards)}))
         elif args.command in ("block", "unblock"):
             print(
                 json.dumps(
-                    {
-                        "revision": store.block(
-                            args.query, args.command == "block"
-                        )
-                    }
+                    {"revision": store.block(args.query, args.command == "block")}
                 )
             )
         elif args.command == "query":
             print(
                 json.dumps(
-                    search_autocomplete.service.Autocomplete(store).suggest(
-                        args.prefix
-                    )
+                    search_autocomplete.service.Autocomplete(store).suggest(args.prefix)
                 )
             )
         else:
             if args.command == "coordinator":
                 with open(args.replicas, encoding="utf-8") as stream:
                     replicas = {
-                        int(key): value
-                        for key, value in json.load(stream).items()
+                        int(key): value for key, value in json.load(stream).items()
                     }
-                coordinator = search_autocomplete.http.Coordinator(
-                    store, replicas
-                )
+                coordinator = search_autocomplete.http.Coordinator(store, replicas)
                 service = coordinator
             else:
                 service = search_autocomplete.service.Autocomplete(store)

@@ -50,13 +50,9 @@ class CrawlerConfig:
     def __post_init__(self) -> None:
         """Validate configuration values."""
         if self.max_pages <= 0:
-            raise ValueError(
-                f"max_pages must be positive, got {self.max_pages}"
-            )
+            raise ValueError(f"max_pages must be positive, got {self.max_pages}")
         if self.max_depth <= 0:
-            raise ValueError(
-                f"max_depth must be positive, got {self.max_depth}"
-            )
+            raise ValueError(f"max_depth must be positive, got {self.max_depth}")
         if self.max_concurrent <= 0:
             raise ValueError(
                 f"max_concurrent must be positive, got {self.max_concurrent}"
@@ -75,6 +71,5 @@ class CrawlerConfig:
             )
         if self.robots_cache_ttl <= 0:
             raise ValueError(
-                "robots_cache_ttl must be positive, got"
-                f" {self.robots_cache_ttl}"
+                f"robots_cache_ttl must be positive, got {self.robots_cache_ttl}"
             )

@@ -15,12 +15,8 @@ def playlist_links(data, resource, grant):
     """Rewrite playlist URIs into authenticated media URLs using grant."""
 
     def link(uri):
-        name = posixpath.normpath(
-            posixpath.join(posixpath.dirname(resource), uri)
-        )
-        return "/media?" + urllib.parse.urlencode(
-            {"grant": grant, "resource": name}
-        )
+        name = posixpath.normpath(posixpath.join(posixpath.dirname(resource), uri))
+        return "/media?" + urllib.parse.urlencode({"grant": grant, "resource": name})
 
     lines = []
     for line in data.decode("utf-8").splitlines():
@@ -119,6 +115,9 @@ def server(service, host="127.0.0.1", port=0):
     """
 
     class Handler(http.server.BaseHTTPRequestHandler):
+        # Apply before parsing headers, including clients that send no request.
+        timeout = 10.0
+
         """An HTTP request handler bound to the enclosing service instance."""
 
         def send_response(self, *args, **kwargs):
@@ -170,22 +169,16 @@ def server(service, host="127.0.0.1", port=0):
                 path = service.asset(grant, resource)
                 size = path.stat().st_size
                 if resource.endswith(".m3u8"):
-                    data = playlist_links(
-                        service.read_small(path), resource, grant
-                    )
+                    data = playlist_links(service.read_small(path), resource, grant)
                     self.send_response(200)
-                    self.send_header(
-                        "Content-Type", "application/vnd.apple.mpegurl"
-                    )
+                    self.send_header("Content-Type", "application/vnd.apple.mpegurl")
                     self.send_header("Cache-Control", "private, no-store")
                     self.send_header("Content-Length", str(len(data)))
                     self.end_headers()
                     self.wfile.write(data)
                     return
                 try:
-                    first, last, partial = byte_range(
-                        self.headers.get("Range"), size
-                    )
+                    first, last, partial = byte_range(self.headers.get("Range"), size)
                 except ValueError:
                     self.send_response(416)
                     self.send_header("Content-Range", f"bytes */{size}")
@@ -205,9 +198,7 @@ def server(service, host="127.0.0.1", port=0):
                 self.send_header("Accept-Ranges", "bytes")
                 self.send_header("Content-Length", str(last - first + 1))
                 if partial:
-                    self.send_header(
-                        "Content-Range", f"bytes {first}-{last}/{size}"
-                    )
+                    self.send_header("Content-Range", f"bytes {first}-{last}/{size}")
                 self.end_headers()
                 if size <= min(1024**2, service.cache_bytes):
                     self.wfile.write(service.read_small(path)[first : last + 1])
@@ -271,9 +262,7 @@ def server(service, host="127.0.0.1", port=0):
                 service.remove(self.token(), param("video"))
                 return self.respond(200, {"removed": True})
             if self.command == "GET" and target.path == "/videos":
-                return self.respond(
-                    200, service.status(self.token(), param("video"))
-                )
+                return self.respond(200, service.status(self.token(), param("video")))
             self.respond(404, {"error": "not found"})
 
         def handle_method(self):

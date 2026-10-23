@@ -3,7 +3,7 @@
 import unittest
 import unittest.mock
 
-import src.rate_limiter.keys
+import rate_limiter.keys
 
 
 class TestKeyResolution(unittest.TestCase):
@@ -17,7 +17,7 @@ class TestKeyResolution(unittest.TestCase):
         request.client = unittest.mock.Mock()
         request.client.host = "127.0.0.1"
 
-        result = src.rate_limiter.keys.ip_key(request)
+        result = rate_limiter.keys.ip_key(request)
         self.assertEqual(result, "192.168.1.100")
 
     def test_ip_key_fastapi_no_proxy(self):
@@ -27,7 +27,7 @@ class TestKeyResolution(unittest.TestCase):
         request.client = unittest.mock.Mock()
         request.client.host = "203.0.113.10"
 
-        result = src.rate_limiter.keys.ip_key(request)
+        result = rate_limiter.keys.ip_key(request)
         self.assertEqual(result, "203.0.113.10")
 
     def test_ip_key_flask(self):
@@ -37,7 +37,7 @@ class TestKeyResolution(unittest.TestCase):
         request.headers = {"X-Forwarded-For": "192.168.1.100"}
         request.remote_addr = "10.0.0.1"
 
-        result = src.rate_limiter.keys.ip_key(request)
+        result = rate_limiter.keys.ip_key(request)
         self.assertEqual(result, "192.168.1.100")
 
     def test_ip_key_flask_no_proxy(self):
@@ -46,7 +46,7 @@ class TestKeyResolution(unittest.TestCase):
         request.headers = {}
         request.remote_addr = "203.0.113.10"
 
-        result = src.rate_limiter.keys.ip_key(request)
+        result = rate_limiter.keys.ip_key(request)
         self.assertEqual(result, "203.0.113.10")
 
     def test_ip_key_multiple_proxies(self):
@@ -56,7 +56,7 @@ class TestKeyResolution(unittest.TestCase):
             "X-Forwarded-For": "192.168.1.100, 10.0.0.1, 172.16.0.1"
         }
 
-        result = src.rate_limiter.keys.ip_key(request)
+        result = rate_limiter.keys.ip_key(request)
         self.assertEqual(result, "192.168.1.100")
 
     def test_ip_key_fallback(self):
@@ -64,7 +64,7 @@ class TestKeyResolution(unittest.TestCase):
         request = unittest.mock.Mock()
         request.headers = {}
 
-        result = src.rate_limiter.keys.ip_key(request)
+        result = rate_limiter.keys.ip_key(request)
         self.assertEqual(result, "127.0.0.1")
 
     def test_user_id_key_fastapi_authenticated(self):
@@ -73,7 +73,7 @@ class TestKeyResolution(unittest.TestCase):
         request.user = unittest.mock.Mock()
         request.user.id = 12345
 
-        result = src.rate_limiter.keys.user_id_key(request)
+        result = rate_limiter.keys.user_id_key(request)
         self.assertEqual(result, "12345")
 
     def test_user_id_key_flask_login(self):
@@ -83,7 +83,7 @@ class TestKeyResolution(unittest.TestCase):
         request.user.is_authenticated = True
         request.user.id = 67890
 
-        result = src.rate_limiter.keys.user_id_key(request)
+        result = rate_limiter.keys.user_id_key(request)
         self.assertEqual(result, "67890")
 
     def test_user_id_key_jwt(self):
@@ -93,7 +93,7 @@ class TestKeyResolution(unittest.TestCase):
             "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
         }
 
-        result = src.rate_limiter.keys.user_id_key(request)
+        result = rate_limiter.keys.user_id_key(request)
         self.assertTrue(result.startswith("jwt:"))
 
     def test_user_id_key_api_key(self):
@@ -101,7 +101,7 @@ class TestKeyResolution(unittest.TestCase):
         request = unittest.mock.Mock()
         request.headers = {"X-API-Key": "secret-api-key-123"}
 
-        result = src.rate_limiter.keys.user_id_key(request)
+        result = rate_limiter.keys.user_id_key(request)
         self.assertTrue(result.startswith("api_key:"))
 
     def test_user_id_key_fallback_to_ip(self):
@@ -111,7 +111,7 @@ class TestKeyResolution(unittest.TestCase):
         request.client = unittest.mock.Mock()
         request.client.host = "203.0.113.10"
 
-        result = src.rate_limiter.keys.user_id_key(request)
+        result = rate_limiter.keys.user_id_key(request)
         self.assertTrue(result.startswith("anonymous:"))
         self.assertIn("203.0.113.10", result)
 
@@ -120,7 +120,7 @@ class TestKeyResolution(unittest.TestCase):
         request = unittest.mock.Mock()
         request.path = "/api/v1/users"
 
-        result = src.rate_limiter.keys.path_key(request)
+        result = rate_limiter.keys.path_key(request)
         self.assertEqual(result, "/api/v1/users")
 
     def test_path_key_flask(self):
@@ -129,7 +129,7 @@ class TestKeyResolution(unittest.TestCase):
         request.url = "http://example.com/api/v1/users?param=value"
         request.path = None  # Ensure path attribute is not present
 
-        result = src.rate_limiter.keys.path_key(request)
+        result = rate_limiter.keys.path_key(request)
         self.assertEqual(result, "/api/v1/users?param=value")
 
     def test_method_key_fastapi(self):
@@ -137,7 +137,7 @@ class TestKeyResolution(unittest.TestCase):
         request = unittest.mock.Mock()
         request.method = "POST"
 
-        result = src.rate_limiter.keys.method_key(request)
+        result = rate_limiter.keys.method_key(request)
         self.assertEqual(result, "POST")
 
     def test_method_key_flask(self):
@@ -146,12 +146,12 @@ class TestKeyResolution(unittest.TestCase):
         request.request_method = "GET"
         request.method = None  # Ensure method attribute is not present
 
-        result = src.rate_limiter.keys.method_key(request)
+        result = rate_limiter.keys.method_key(request)
         self.assertEqual(result, "GET")
 
     def test_header_key(self):
         """Test header extraction key function."""
-        tenant_key = src.rate_limiter.keys.header_key("X-Tenant-ID")
+        tenant_key = rate_limiter.keys.header_key("X-Tenant-ID")
 
         request = unittest.mock.Mock()
         request.headers = {"X-Tenant-ID": "tenant-123"}
@@ -161,7 +161,7 @@ class TestKeyResolution(unittest.TestCase):
 
     def test_header_key_missing(self):
         """Test header extraction when header is missing."""
-        version_key = src.rate_limiter.keys.header_key("X-API-Version")
+        version_key = rate_limiter.keys.header_key("X-API-Version")
 
         request = unittest.mock.Mock()
         request.headers = {}
@@ -171,7 +171,7 @@ class TestKeyResolution(unittest.TestCase):
 
     def test_header_key_case_insensitive(self):
         """Test header extraction with case insensitive matching."""
-        version_key = src.rate_limiter.keys.header_key("X-API-Version")
+        version_key = rate_limiter.keys.header_key("X-API-Version")
 
         request = unittest.mock.Mock()
         request.headers = {"x-api-version": "v2"}
@@ -188,7 +188,7 @@ class TestKeyResolution(unittest.TestCase):
         def simple_user(request):
             return "user123"
 
-        composite = src.rate_limiter.keys.composite_key(simple_ip, simple_user)
+        composite = rate_limiter.keys.composite_key(simple_ip, simple_user)
 
         request = unittest.mock.Mock()
         result = composite(request)
@@ -204,7 +204,7 @@ class TestKeyResolution(unittest.TestCase):
         def failing_func(request):
             raise Exception("Failed")
 
-        composite = src.rate_limiter.keys.composite_key(working_func, failing_func)
+        composite = rate_limiter.keys.composite_key(working_func, failing_func)
 
         request = unittest.mock.Mock()
         result = composite(request)
@@ -218,7 +218,7 @@ class TestKeyResolution(unittest.TestCase):
         request.client = unittest.mock.Mock()
         request.client.host = "203.0.113.10"
 
-        key_func = src.rate_limiter.keys.rate_limit_key(ip=True)
+        key_func = rate_limiter.keys.rate_limit_key(ip=True)
         result = key_func(request)
 
         self.assertEqual(result, "203.0.113.10")
@@ -231,7 +231,7 @@ class TestKeyResolution(unittest.TestCase):
         request.client.host = "203.0.113.10"
         request.path = "/api/users"
 
-        key_func = src.rate_limiter.keys.rate_limit_key(ip=True, path=True)
+        key_func = rate_limiter.keys.rate_limit_key(ip=True, path=True)
         result = key_func(request)
 
         self.assertEqual(result, "203.0.113.10:/api/users")
@@ -254,14 +254,14 @@ class TestKeyResolution(unittest.TestCase):
         request.headers = HeadersDict({})  # Provide proper headers dict
 
         # ip=True is the default, so user=True + method=True includes IP
-        key_func = src.rate_limiter.keys.rate_limit_key(user=True, method=True)
+        key_func = rate_limiter.keys.rate_limit_key(user=True, method=True)
         result = key_func(request)
 
         # Result should be ip:user_id:method
         self.assertEqual(result, "203.0.113.10:12345:POST")
 
         # Test with ip=False to get only user and method
-        key_func_no_ip = src.rate_limiter.keys.rate_limit_key(ip=False, user=True, method=True)
+        key_func_no_ip = rate_limiter.keys.rate_limit_key(ip=False, user=True, method=True)
         result_no_ip = key_func_no_ip(request)
         self.assertEqual(result_no_ip, "12345:POST")
 
@@ -276,7 +276,7 @@ class TestKeyResolution(unittest.TestCase):
         request.client.host = "203.0.113.10"
         request.headers = {}  # Add headers to avoid ip_key error
 
-        key_func = src.rate_limiter.keys.rate_limit_key(ip=True, custom_funcs=[custom_func])
+        key_func = rate_limiter.keys.rate_limit_key(ip=True, custom_funcs=[custom_func])
         result = key_func(request)
 
         self.assertEqual(result, "203.0.113.10:custom_value")
@@ -292,7 +292,7 @@ class TestKeyResolution(unittest.TestCase):
         request.path = "/api/users"
         request.method = "POST"
 
-        key_func = src.rate_limiter.keys.rate_limit_key(ip=True, user=True, path=True, method=True)
+        key_func = rate_limiter.keys.rate_limit_key(ip=True, user=True, path=True, method=True)
         result = key_func(request)
 
         expected = "203.0.113.10:12345:/api/users:POST"
@@ -305,7 +305,7 @@ class TestKeyResolution(unittest.TestCase):
         request.client = unittest.mock.Mock()
         request.client.host = "203.0.113.10"
 
-        key_func = src.rate_limiter.keys.rate_limit_key()  # No options specified
+        key_func = rate_limiter.keys.rate_limit_key()  # No options specified
         result = key_func(request)
 
         self.assertEqual(result, "203.0.113.10")
@@ -332,9 +332,9 @@ class TestKeyResolution(unittest.TestCase):
 
         # Different key strategies
         # Note: ip=True is the default, so we need ip=False to test user-only
-        ip_only = src.rate_limiter.keys.rate_limit_key(ip=True)(api_request)
-        user_only = src.rate_limiter.keys.rate_limit_key(ip=False, user=True)(api_request)
-        endpoint_specific = src.rate_limiter.keys.rate_limit_key(ip=True, path=True)(api_request)
+        ip_only = rate_limiter.keys.rate_limit_key(ip=True)(api_request)
+        user_only = rate_limiter.keys.rate_limit_key(ip=False, user=True)(api_request)
+        endpoint_specific = rate_limiter.keys.rate_limit_key(ip=True, path=True)(api_request)
 
         self.assertEqual(ip_only, "203.0.113.10")
         self.assertTrue(user_only.startswith("jwt:"))
@@ -350,7 +350,7 @@ class TestKeyResolution(unittest.TestCase):
         web_request.method = "GET"
 
         # ip=True is default, so we need ip=False to get only user and path
-        user_session_key = src.rate_limiter.keys.rate_limit_key(ip=False, user=True, path=True)(
+        user_session_key = rate_limiter.keys.rate_limit_key(ip=False, user=True, path=True)(
             web_request
         )
         self.assertEqual(user_session_key, "98765:/dashboard")

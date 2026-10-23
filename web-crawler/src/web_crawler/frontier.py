@@ -21,9 +21,7 @@ class URLFrontier:
     def __init__(self, per_host_delay: float = 1.0) -> None:
         self._per_host_delay = per_host_delay
         # Front queue: min-heap ordered by (priority_value, counter, entry)
-        self._front_queue: list[
-            tuple[int, int, web_crawler.models.FrontierEntry]
-        ] = []
+        self._front_queue: list[tuple[int, int, web_crawler.models.FrontierEntry]] = []
         self._counter = 0  # Tie-breaker for heap stability
         # Back queues: host -> deque of entries waiting for politeness
         self._back_queues: dict[

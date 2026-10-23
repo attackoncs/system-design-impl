@@ -260,3 +260,23 @@ async def test_worker_pool_concurrent_processing() -> None:
         1 for i in range(num_tasks) if cache.get_count(f"user_{i}") == 1
     )
     assert processed == num_tasks
+
+@pytest.mark.asyncio
+async def test_pool_restart_consumes_new_tasks():
+    queue = news_feed_system.queue.MessageQueue()
+    cache = news_feed_system.news_feed_cache.NewsFeedCache()
+    pool = news_feed_system.worker.WorkerPool(queue, cache, num_workers=2)
+    await pool.start()
+    await pool.stop()
+    await pool.start()
+    try:
+        await queue.enqueue(news_feed_system.models.FanoutTask(
+            post_id='restart', author_id='author', target_user_ids=['reader']
+        ))
+        async def wait_delivery():
+            while cache.get_count('reader') == 0:
+                await asyncio.sleep(0.005)
+        await asyncio.wait_for(wait_delivery(), 1)
+        assert cache.get_entries('reader')[0].post_id == 'restart'
+    finally:
+        await pool.stop()

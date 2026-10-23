@@ -24,9 +24,7 @@ class Deduplicator:
     Automatically expires old entries on access.
     """
 
-    def __init__(
-        self, window_seconds: float = 300.0, clock: callable = None
-    ) -> None:
+    def __init__(self, window_seconds: float = 300.0, clock: callable = None) -> None:
         self._window_seconds = window_seconds
         self._clock = clock or time.monotonic
         # dedup_key -> (notification_id, expiry_timestamp)
@@ -104,17 +102,13 @@ class Deduplicator:
         key = self.compute_key(recipient_id, channel, content)
         original_id = self.check(key)
         if original_id is not None:
-            raise notification_system.exceptions.DuplicateNotificationError(
-                original_id
-            )
+            raise notification_system.exceptions.DuplicateNotificationError(original_id)
         self.record(key, notification_id)
 
     def _expire_old_entries(self) -> None:
         """Remove all expired entries."""
         now = self._clock()
-        expired_keys = [
-            k for k, (_, expiry) in self._entries.items() if now >= expiry
-        ]
+        expired_keys = [k for k, (_, expiry) in self._entries.items() if now >= expiry]
         for k in expired_keys:
             del self._entries[k]
 

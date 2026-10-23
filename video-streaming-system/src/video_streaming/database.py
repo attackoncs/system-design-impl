@@ -43,13 +43,9 @@ class Result:
     def __init__(self, cursor):
         self.rowcount = cursor.rowcount
         names = (
-            [column.name for column in cursor.description]
-            if cursor.description
-            else []
+            [column.name for column in cursor.description] if cursor.description else []
         )
-        self.rows = (
-            [Row(row, names) for row in cursor.fetchall()] if names else []
-        )
+        self.rows = [Row(row, names) for row in cursor.fetchall()] if names else []
 
     def fetchone(self):
         return self.rows.pop(0) if self.rows else None
@@ -119,9 +115,9 @@ class Postgres:
 
     def _ensure(self):
         if self.connection is not None and not self.connection.closed:
-            readonly = self.connection.execute(
-                "SHOW transaction_read_only"
-            ).fetchone()[0]
+            readonly = self.connection.execute("SHOW transaction_read_only").fetchone()[
+                0
+            ]
             if readonly == "on":
                 self._discard()
         if self.connection is None or self.connection.closed:
@@ -144,9 +140,7 @@ class Postgres:
         try:
             self._ensure()
             self.connection.execute("BEGIN")
-            self.connection.execute(
-                "SELECT pg_advisory_xact_lock(%s)", (self.LOCK,)
-            )
+            self.connection.execute("SELECT pg_advisory_xact_lock(%s)", (self.LOCK,))
             self.active = True
             return self
         except self.driver.Error:
@@ -193,9 +187,7 @@ class Postgres:
         # bound.
         ignore = sql.startswith("INSERT OR IGNORE ")
         sql = sql.replace("INSERT OR IGNORE ", "INSERT ").replace("?", "%s")
-        sql = sql.replace(
-            "ORDER BY priority DESC,rowid", "ORDER BY priority DESC,id"
-        )
+        sql = sql.replace("ORDER BY priority DESC,rowid", "ORDER BY priority DESC,id")
         if ignore:
             sql += " ON CONFLICT DO NOTHING"
         try:

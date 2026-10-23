@@ -58,9 +58,7 @@ class RedisStorage(storage_base.BaseStorage):
         else:
             self._client.set(key, value)
 
-    def increment(
-        self, key: str, amount: int = 1, ttl: int | None = None
-    ) -> int:
+    def increment(self, key: str, amount: int = 1, ttl: int | None = None) -> int:
         """Atomically increment a counter using a pipeline.
 
         If the key does not exist, Redis initializes it to 0 before
@@ -82,9 +80,7 @@ class RedisStorage(storage_base.BaseStorage):
         # First result is the new value from INCRBY
         return int(results[0])
 
-    def execute_atomic(
-        self, script: str, keys: list[str], args: list[str]
-    ) -> Any:
+    def execute_atomic(self, script: str, keys: list[str], args: list[str]) -> Any:
         """Execute a Lua script atomically on Redis.
 
         Args:

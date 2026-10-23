@@ -79,9 +79,7 @@ class Store:
                 if old[0] != query or (not automatic_time and old[1] != at):
                     raise ValueError("conflicting event ID")
                 return False
-            self.db.execute(
-                "INSERT INTO events VALUES(?,?,?)", (event_id, query, at)
-            )
+            self.db.execute("INSERT INTO events VALUES(?,?,?)", (event_id, query, at))
             return True
 
     def view(self):
@@ -95,8 +93,7 @@ class Store:
                 self.db.execute("BEGIN")
                 values = dict(self.db.execute("SELECT key,value FROM meta"))
                 blocked = frozenset(
-                    row[0]
-                    for row in self.db.execute("SELECT query FROM blocked")
+                    row[0] for row in self.db.execute("SELECT query FROM blocked")
                 )
             return values["active"], values["revision"], blocked
 
@@ -113,9 +110,7 @@ class Store:
             )
             changed = self.db.execute(command, (query,)).rowcount
             if changed:
-                self.db.execute(
-                    "UPDATE meta SET value=value+1 WHERE key='revision'"
-                )
+                self.db.execute("UPDATE meta SET value=value+1 WHERE key='revision'")
         return self.view()[1]
 
     def build(self, start, end, shards=1):
@@ -175,9 +170,7 @@ class Store:
             self.db.execute(
                 "INSERT INTO snapshots VALUES(?,?)", (version, json.dumps(data))
             )
-            self.db.execute(
-                "UPDATE meta SET value=? WHERE key='active'", (version,)
-            )
+            self.db.execute("UPDATE meta SET value=? WHERE key='active'", (version,))
             return version
 
     def snapshot(self, version=None):

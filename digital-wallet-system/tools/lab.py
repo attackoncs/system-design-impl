@@ -103,7 +103,16 @@ class Lab:
     def __exit__(self,*args):
         for role in list(self.processes):
             self.stop(role)
-        self.temp.cleanup()
+        # Windows can retain a recently closed file handle briefly. Retry only
+        # that transient error, on this lab's own TemporaryDirectory.
+        for attempt in range(10):
+            try:
+                self.temp.cleanup()
+                break
+            except PermissionError:
+                if attempt == 9:
+                    raise
+                time.sleep(0.1)
 
     def call(self,path,body=None,role="coordinator",auth="alice"):
         token=self.config["owners"].get(auth,self.config.get(auth+"_token"))

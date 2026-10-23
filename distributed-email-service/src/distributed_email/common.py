@@ -28,19 +28,23 @@ def identifier(value):
 
 
 def integer(value, name, low=0, high=2**53):
-    if isinstance(value, bool) or not isinstance(value, int) or not low<=value<=high:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not low <= value <= high
+    ):
         raise ValueError(f"invalid {name}")
     return value
 
 
 def text(value, name, maximum):
-    if not isinstance(value, str) or len(value)>maximum or "\x00" in value:
+    if not isinstance(value, str) or len(value) > maximum or "\x00" in value:
         raise ValueError(f"invalid {name}")
     return value
 
 
 def shard_for(user, shards):
-    return int(digest(identifier(user))[:16], 16)%shards
+    return int(digest(identifier(user))[:16], 16) % shards
 
 
 def terms(value):
@@ -64,9 +68,9 @@ class Database:
     @contextmanager
     def transaction(self, write=False):
         db = sqlite3.connect(self.path, timeout=15, isolation_level=None)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA synchronous=FULL")
         try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA synchronous=FULL")
             db.execute("BEGIN IMMEDIATE" if write else "BEGIN")
             yield db
             db.commit()
@@ -78,10 +82,17 @@ class Database:
 
 
 def http_json(url, token, body=None, method=None, timeout=5):
-    request = Request(url, data=None if body is None else dumps(body).encode(), method=method,
-                      headers={"Authorization": "Bearer "+token, "Content-Type": "application/json"})
+    request = Request(
+        url,
+        data=None if body is None else dumps(body).encode(),
+        method=method,
+        headers={
+            "Authorization": "Bearer " + token,
+            "Content-Type": "application/json",
+        },
+    )
     with urlopen(request, timeout=timeout) as response:
-        raw = response.read(20*1024*1024+1)
-        if len(raw)>20*1024*1024:
+        raw = response.read(20 * 1024 * 1024 + 1)
+        if len(raw) > 20 * 1024 * 1024:
             raise Error(413, "response exceeds 20 MiB")
         return json.loads(raw)

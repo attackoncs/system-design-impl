@@ -27,9 +27,7 @@ class RedisRecordingNotifier:
         await self.backend.redis.hsetnx(
             self.backend.key("push_deliveries"),
             idempotency_key,
-            json.dumps(
-                {"user_id": user, "message": dataclasses.asdict(message)}
-            ),
+            json.dumps({"user_id": user, "message": dataclasses.asdict(message)}),
         )
 
 
@@ -58,9 +56,7 @@ class HTTPWebhookNotifier:
             request = urllib.request.Request(
                 self.url, data=body, headers=headers, method="POST"
             )
-            with urllib.request.urlopen(
-                request, timeout=self.timeout
-            ) as response:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 if not 200 <= response.status < 300:
                     raise RuntimeError("push provider rejected delivery")
 
@@ -138,12 +134,7 @@ class PushWorker:
                 await self._complete(entry_id)
                 return
             message = await self.backend.get_message(fields["message_id"])
-            identity = (
-                self.backend.prefix
-                + fields["user"]
-                + ":"
-                + fields["message_id"]
-            )
+            identity = self.backend.prefix + fields["user"] + ":" + fields["message_id"]
             try:
                 await asyncio.wait_for(
                     self.notifier.deliver(fields["user"], message, identity), 10
@@ -216,8 +207,6 @@ class PushWorker:
             except Exception:  # pylint: disable=broad-exception-caught
                 # Broker/provider recovery is retried; pending entries remain in
                 # Redis.
-                logging.getLogger(__name__).exception(
-                    "Failure isolated in %s", "run"
-                )
+                logging.getLogger(__name__).exception("Failure isolated in %s", "run")
                 await asyncio.sleep(1)
             await asyncio.sleep(interval)

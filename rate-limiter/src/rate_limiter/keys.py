@@ -34,11 +34,7 @@ def ip_key(request: Any) -> str:
 
     # Check if request has headers attribute and it's a dict-like object
     headers = getattr(request, "headers", None)
-    if (
-        headers is not None
-        and hasattr(headers, "get")
-        and callable(headers.get)
-    ):
+    if headers is not None and hasattr(headers, "get") and callable(headers.get):
         forwarded_for = headers.get("X-Forwarded-For")
         if not forwarded_for:
             forwarded_for = headers.get("x-forwarded-for")
@@ -91,14 +87,8 @@ def user_id_key(request: Any) -> str:
 
     # JWT in Authorization header
     headers = getattr(request, "headers", None)
-    if (
-        headers is not None
-        and hasattr(headers, "get")
-        and callable(headers.get)
-    ):
-        auth_header = headers.get("Authorization") or headers.get(
-            "authorization"
-        )
+    if headers is not None and hasattr(headers, "get") and callable(headers.get):
+        auth_header = headers.get("Authorization") or headers.get("authorization")
         if (
             auth_header
             and isinstance(auth_header, str)
@@ -110,11 +100,7 @@ def user_id_key(request: Any) -> str:
             return f"jwt:{hash(token) % 1000000}"  # Simple hash for demo
 
     # API key in header
-    if (
-        headers is not None
-        and hasattr(headers, "get")
-        and callable(headers.get)
-    ):
+    if headers is not None and hasattr(headers, "get") and callable(headers.get):
         api_key = headers.get("X-API-Key") or headers.get("x-api-key")
         if api_key and isinstance(api_key, str):
             return f"api_key:{hash(api_key) % 1000000}"

@@ -59,9 +59,7 @@ class PostService:
         self._fanout_service = fanout_service
         self._notification_service = notification_service
 
-    async def publish(
-        self, request: news_feed_system.models.FeedRequest
-    ) -> str:
+    async def publish(self, request: news_feed_system.models.FeedRequest) -> str:
         """Publish a post from a feed request.
 
         Executes the full publishing pipeline:

@@ -68,9 +68,7 @@ class FFmpegMedia:
             subprocess.TimeoutExpired: FFmpeg exceeds the configured time limit.
         """
         options = (
-            {"creationflags": subprocess.CREATE_NO_WINDOW}
-            if os.name == "nt"
-            else {}
+            {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
         )
         result = subprocess.run(
             [
@@ -98,8 +96,7 @@ class FFmpegMedia:
         """
         del folder  # Inspection produces no files.
         self.run(
-            self.input(source)
-            + ["-map", "0:v:0", "-frames:v", "1", "-f", "null", "-"],
+            self.input(source) + ["-map", "0:v:0", "-frames:v", "1", "-f", "null", "-"],
             fatal=True,
         )
         return {"adapter": "ffmpeg"}

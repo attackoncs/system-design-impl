@@ -35,9 +35,7 @@ class QueueFullError(NotificationError):
 class RateLimitExceededError(NotificationError):
     """Raised when a notification exceeds the rate limit for a recipient."""
 
-    def __init__(
-        self, user_id: str, channel: str, limit: int, window: float
-    ) -> None:
+    def __init__(self, user_id: str, channel: str, limit: int, window: float) -> None:
         self.user_id = user_id
         self.channel = channel
         self.limit = limit

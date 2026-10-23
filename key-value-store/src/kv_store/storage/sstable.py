@@ -357,9 +357,7 @@ class SSTable:
         max_footer_size = min(file_size, 52 + 65536)  # keys up to ~32KB each
 
         found = False
-        for footer_size_candidate in range(
-            min_footer_size, max_footer_size + 1
-        ):
+        for footer_size_candidate in range(min_footer_size, max_footer_size + 1):
             footer_start = file_size - footer_size_candidate
             if footer_start < 0:
                 break
@@ -368,15 +366,12 @@ class SSTable:
             if footer_start + 24 > file_size:
                 continue
 
-            data_block_size, index_block_size, bloom_filter_size = (
-                struct.unpack_from("<QQQ", data, footer_start)
+            data_block_size, index_block_size, bloom_filter_size = struct.unpack_from(
+                "<QQQ", data, footer_start
             )
 
             # Check if the three block sizes sum to footer_start
-            if (
-                data_block_size + index_block_size + bloom_filter_size
-                == footer_start
-            ):
+            if data_block_size + index_block_size + bloom_filter_size == footer_start:
                 # Validate further: parse the rest of the footer
                 try:
                     self._parse_footer_at(
@@ -532,9 +527,7 @@ class SSTable:
         # Build the data block, sparse index, and bloom filter
         data_block = bytearray()
         index_entries: List[Tuple[str, int]] = []
-        bloom = storage_bloom_filter.BloomFilter(
-            expected_items=max(len(entries), 1)
-        )
+        bloom = storage_bloom_filter.BloomFilter(expected_items=max(len(entries), 1))
         created_at = time.time()
 
         for i, (key, value, timestamp, is_tombstone) in enumerate(entries):
@@ -590,10 +583,7 @@ class SSTable:
 
         # Combine all blocks
         file_data = (
-            bytes(data_block)
-            + bytes(index_block)
-            + bytes(bloom_data)
-            + bytes(footer)
+            bytes(data_block) + bytes(index_block) + bytes(bloom_data) + bytes(footer)
         )
 
         # Write to disk using asyncio.to_thread

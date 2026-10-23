@@ -76,10 +76,7 @@ class SnowflakeConfig:
             )
 
         # Validate datacenter_id fits in allocated bits
-        if (
-            self.datacenter_id < 0
-            or self.datacenter_id > self.max_datacenter_id
-        ):
+        if self.datacenter_id < 0 or self.datacenter_id > self.max_datacenter_id:
             raise unique_id.exceptions.InvalidConfigError(
                 f"datacenter_id must be in [0, {self.max_datacenter_id}], "
                 f"got {self.datacenter_id}"

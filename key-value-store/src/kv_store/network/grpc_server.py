@@ -130,9 +130,7 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
             )
         # Isolate this operation; record failures before continuing.
         except Exception as e:  # pylint: disable=broad-exception-caught
-            logging.getLogger(__name__).exception(
-                "Failure isolated in %s", "Put"
-            )
+            logging.getLogger(__name__).exception("Failure isolated in %s", "Put")
             logger.error("Put RPC failed: %s", e)
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
@@ -149,7 +147,6 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
             GetResponse with value, vector clock, and conflict information.
         """
         try:
-
             consistency = None
             if request.consistency_level:
                 try:
@@ -188,9 +185,7 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
             return response
         # Isolate this operation; record failures before continuing.
         except Exception as e:  # pylint: disable=broad-exception-caught
-            logging.getLogger(__name__).exception(
-                "Failure isolated in %s", "Get"
-            )
+            logging.getLogger(__name__).exception("Failure isolated in %s", "Get")
             logger.error("Get RPC failed: %s", e)
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
@@ -232,9 +227,7 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
             )
         # Isolate this operation; record failures before continuing.
         except Exception as e:  # pylint: disable=broad-exception-caught
-            logging.getLogger(__name__).exception(
-                "Failure isolated in %s", "Delete"
-            )
+            logging.getLogger(__name__).exception("Failure isolated in %s", "Delete")
             logger.error("Delete RPC failed: %s", e)
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
@@ -255,9 +248,7 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
         """
         try:
             if request.is_tombstone:
-                await self._storage_engine.delete(
-                    request.key, request.timestamp
-                )
+                await self._storage_engine.delete(request.key, request.timestamp)
             else:
                 await self._storage_engine.put(
                     request.key, request.value, request.timestamp
@@ -265,9 +256,7 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
             return kvstore_pb2.ReplicateResponse(success=True)
         # Isolate this operation; record failures before continuing.
         except Exception as e:  # pylint: disable=broad-exception-caught
-            logging.getLogger(__name__).exception(
-                "Failure isolated in %s", "Replicate"
-            )
+            logging.getLogger(__name__).exception("Failure isolated in %s", "Replicate")
             logger.error("Replicate RPC failed: %s", e)
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
@@ -287,7 +276,6 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
             GossipMessage with local membership list.
         """
         try:
-
             # Convert proto members to cluster_gossip.MemberInfo
             remote_members = []
             for member_proto in request.members:
@@ -347,9 +335,7 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
         """
         try:
             if request.is_tombstone:
-                await self._storage_engine.delete(
-                    request.key, request.timestamp
-                )
+                await self._storage_engine.delete(request.key, request.timestamp)
             else:
                 await self._storage_engine.put(
                     request.key, request.value, request.timestamp
@@ -381,9 +367,7 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
         """
         try:
             # Convert proto bucket hashes to dict
-            remote_hashes = {
-                int(k): v for k, v in request.bucket_hashes.items()
-            }
+            remote_hashes = {int(k): v for k, v in request.bucket_hashes.items()}
 
             # Compare with local tree
             diffs = self._merkle_tree.compare(remote_hashes)
@@ -481,9 +465,7 @@ class GRPCServer:
             gossip_protocol=self._gossip_protocol,
             merkle_tree=self._merkle_tree,
         )
-        kvstore_pb2_grpc.add_KVStoreServiceServicer_to_server(
-            servicer, self._server
-        )
+        kvstore_pb2_grpc.add_KVStoreServiceServicer_to_server(servicer, self._server)
 
         bind_address = f"{self._host}:{self._port}"
         self._server.add_insecure_port(bind_address)

@@ -70,9 +70,7 @@ class CompactionManager:
         self._tombstone_grace_seconds = tombstone_grace_seconds
         self._last_stats = CompactionStats()
 
-    async def maybe_compact(
-        self, sstables: List["SSTable"]
-    ) -> Optional["SSTable"]:
+    async def maybe_compact(self, sstables: List["SSTable"]) -> Optional["SSTable"]:
         """Check if compaction is needed and perform it if so.
 
         Groups SSTables by level and checks if any level exceeds the threshold.
@@ -180,9 +178,7 @@ class CompactionManager:
             entry = next(it, None)
             if entry is not None:
                 # heap item: (key, -timestamp, sstable_idx, entry, iterator)
-                heapq.heappush(
-                    heap, (entry.key, -entry.timestamp, idx, entry, it)
-                )
+                heapq.heappush(heap, (entry.key, -entry.timestamp, idx, entry, it))
 
         # Merge entries, resolving duplicates
         merged: List[Tuple[str, Optional[bytes], float, bool]] = []
@@ -220,9 +216,7 @@ class CompactionManager:
                     tombstones_removed += 1
                     continue
 
-            merged.append(
-                (entry.key, entry.value, entry.timestamp, entry.is_tombstone)
-            )
+            merged.append((entry.key, entry.value, entry.timestamp, entry.is_tombstone))
 
         self._last_tombstones_removed = tombstones_removed
         return merged
@@ -263,9 +257,7 @@ class CompactionManager:
 
         data_block = bytearray()
         index_entries: List[Tuple[str, int]] = []
-        bloom = storage_bloom_filter.BloomFilter(
-            expected_items=max(len(entries), 1)
-        )
+        bloom = storage_bloom_filter.BloomFilter(expected_items=max(len(entries), 1))
         created_at = time.time()
 
         for i, (key, value, timestamp, is_tombstone) in enumerate(entries):
@@ -321,10 +313,7 @@ class CompactionManager:
 
         # Combine all blocks
         file_data = (
-            bytes(data_block)
-            + bytes(index_block)
-            + bytes(bloom_data)
-            + bytes(footer)
+            bytes(data_block) + bytes(index_block) + bytes(bloom_data) + bytes(footer)
         )
 
         # Write to disk

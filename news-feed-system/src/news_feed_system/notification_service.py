@@ -33,9 +33,7 @@ class NotificationService:
         """
         self._social_graph = social_graph
         # user_id -> list of (author_id, post_id) notification tuples
-        self._notifications: Dict[str, List[tuple]] = collections.defaultdict(
-            list
-        )
+        self._notifications: Dict[str, List[tuple]] = collections.defaultdict(list)
 
     async def notify_followers(self, author_id: str, post_id: str) -> None:
         """Record a notification for every follower of *author_id*.

@@ -95,9 +95,7 @@ class GRPCClient:
                 ("grpc.max_send_message_length", self._max_message_size),
                 ("grpc.max_receive_message_length", self._max_message_size),
             ]
-            self._channels[target] = grpc.aio.insecure_channel(
-                target, options=options
-            )
+            self._channels[target] = grpc.aio.insecure_channel(target, options=options)
         return self._channels[target]
 
     def _get_stub(self, target: str) -> kvstore_pb2_grpc.KVStoreServiceStub:
@@ -304,18 +302,14 @@ class GRPCClient:
 
             request = kvstore_pb2.HintedHandoffRequest(
                 target_node_id=(
-                    hint.target_node_id
-                    if hasattr(hint, "target_node_id")
-                    else ""
+                    hint.target_node_id if hasattr(hint, "target_node_id") else ""
                 ),
                 key=hint.key,
                 value=hint.value if hint.value else b"",
                 vector_clock=vc_proto,
                 timestamp=hint.timestamp if hasattr(hint, "timestamp") else 0.0,
                 is_tombstone=(
-                    hint.is_tombstone
-                    if hasattr(hint, "is_tombstone")
-                    else False
+                    hint.is_tombstone if hasattr(hint, "is_tombstone") else False
                 ),
             )
             response = await stub.HintedHandoff(request, timeout=self._timeout)

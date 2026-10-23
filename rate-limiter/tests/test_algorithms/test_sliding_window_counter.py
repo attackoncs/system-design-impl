@@ -4,9 +4,9 @@ import time
 import unittest
 import unittest.mock
 
-import src.rate_limiter.algorithms.sliding_window_counter
-import src.rate_limiter.config
-import src.rate_limiter.storage.memory
+import rate_limiter.algorithms.sliding_window_counter
+import rate_limiter.config
+import rate_limiter.storage.memory
 
 
 class TestSlidingWindowCounterAlgorithm(unittest.TestCase):
@@ -14,10 +14,10 @@ class TestSlidingWindowCounterAlgorithm(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.algorithm = src.rate_limiter.algorithms.sliding_window_counter.SlidingWindowCounterAlgorithm()
-        self.storage = src.rate_limiter.storage.memory.MemoryStorage()
-        self.rule = src.rate_limiter.config.RateLimitRule(
-            limit=5, window=60, algorithm=src.rate_limiter.config.Algorithm.SLIDING_WINDOW_COUNTER
+        self.algorithm = rate_limiter.algorithms.sliding_window_counter.SlidingWindowCounterAlgorithm()
+        self.storage = rate_limiter.storage.memory.MemoryStorage()
+        self.rule = rate_limiter.config.RateLimitRule(
+            limit=5, window=60, algorithm=rate_limiter.config.Algorithm.SLIDING_WINDOW_COUNTER
         )
         self.key = "test_key"
 
@@ -192,11 +192,11 @@ class TestSlidingWindowCounterAlgorithm(unittest.TestCase):
 
     def test_different_rules_are_isolated(self):
         """Test that different rules affect the same key independently."""
-        rule1 = src.rate_limiter.config.RateLimitRule(
-            limit=3, window=60, algorithm=src.rate_limiter.config.Algorithm.SLIDING_WINDOW_COUNTER
+        rule1 = rate_limiter.config.RateLimitRule(
+            limit=3, window=60, algorithm=rate_limiter.config.Algorithm.SLIDING_WINDOW_COUNTER
         )
-        rule2 = src.rate_limiter.config.RateLimitRule(
-            limit=5, window=60, algorithm=src.rate_limiter.config.Algorithm.SLIDING_WINDOW_COUNTER
+        rule2 = rate_limiter.config.RateLimitRule(
+            limit=5, window=60, algorithm=rate_limiter.config.Algorithm.SLIDING_WINDOW_COUNTER
         )
 
         # Use up rule1

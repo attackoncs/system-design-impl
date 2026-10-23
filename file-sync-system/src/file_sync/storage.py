@@ -1,4 +1,5 @@
 """Compressed, authenticated encrypted blocks; explicit local cold-tier demo."""
+
 import hashlib
 import hmac
 import os
@@ -22,7 +23,7 @@ class ArchivedBlock(OSError):
 
 
 class BlockStore:
-    def __init__(self, root, master, block_size=4 * 1024 ** 2):
+    def __init__(self, root, master, block_size=4 * 1024**2):
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.cold = self.root / "cold"
@@ -34,7 +35,9 @@ class BlockStore:
             raise ValueError("invalid namespace")
         if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise ValueError("invalid digest")
-        return hmac.new(self.master, (space + digest).encode(), hashlib.sha256).hexdigest()
+        return hmac.new(
+            self.master, (space + digest).encode(), hashlib.sha256
+        ).hexdigest()
 
     def path(self, key):
         if not re.fullmatch(r"[0-9a-f]{64}", key):
@@ -42,7 +45,12 @@ class BlockStore:
         return self.root / key
 
     def cipher(self, space):
-        key = HKDF(algorithm=hashes.SHA256(), length=32, salt=bytes.fromhex(space), info=b"file-sync-blocks-v1").derive(self.master)
+        key = HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=bytes.fromhex(space),
+            info=b"file-sync-blocks-v1",
+        ).derive(self.master)
         return AESGCM(key)
 
     @staticmethod
@@ -50,11 +58,21 @@ class BlockStore:
         return f"{space}:{digest}:{size}".encode()
 
     def put(self, space, digest, data):
-        if not isinstance(data, bytes) or not 0 < len(data) <= self.block_size or hashlib.sha256(data).hexdigest() != digest:
+        if (
+            not isinstance(data, bytes)
+            or not 0 < len(data) <= self.block_size
+            or hashlib.sha256(data).hexdigest() != digest
+        ):
             raise ValueError("block size/checksum mismatch")
         key = self.key(space, digest)
         nonce = os.urandom(12)
-        encoded = b"FS1" + nonce + self.cipher(space).encrypt(nonce, zlib.compress(data), self.aad(space, digest, len(data)))
+        encoded = (
+            b"FS1"
+            + nonce
+            + self.cipher(space).encrypt(
+                nonce, zlib.compress(data), self.aad(space, digest, len(data))
+            )
+        )
         temporary = self.root / (uuid.uuid4().hex + ".tmp")
         try:
             with temporary.open("wb") as stream:
@@ -77,11 +95,18 @@ class BlockStore:
         try:
             if encoded[:3] != b"FS1":
                 raise ValueError()
-            compressed = self.cipher(space).decrypt(encoded[3:15], encoded[15:], self.aad(space, digest, size))
+            compressed = self.cipher(space).decrypt(
+                encoded[3:15], encoded[15:], self.aad(space, digest, size)
+            )
             decoder = zlib.decompressobj()
             data = decoder.decompress(compressed, self.block_size + 1)
-            if (len(data) != size or not decoder.eof or decoder.unused_data or decoder.unconsumed_tail
-                    or hashlib.sha256(data).hexdigest() != digest):
+            if (
+                len(data) != size
+                or not decoder.eof
+                or decoder.unused_data
+                or decoder.unconsumed_tail
+                or hashlib.sha256(data).hexdigest() != digest
+            ):
                 raise ValueError()
             return data
         except (ValueError, InvalidTag, zlib.error):

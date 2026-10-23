@@ -81,7 +81,7 @@ def _memory_sliding_window_log_script(
     Args:
         keys: [log_key]
         args: [limit, window, current_time, request_id]
-        storage: The MemoryStorage instance (use _get_raw/_set_raw).
+        storage: The MemoryStorage instance (use get_unlocked/set_unlocked).
 
     Returns:
         A list: [allowed (1 or 0), remaining (int), limit (int), reset_after
@@ -112,9 +112,7 @@ def _memory_sliding_window_log_script(
 
     # Remove expired entries (older than window)
     cutoff = now - window
-    current_entries = [
-        (ts, entry_id) for ts, entry_id in log_entries if ts > cutoff
-    ]
+    current_entries = [(ts, entry_id) for ts, entry_id in log_entries if ts > cutoff]
 
     # Check if we can add this request
     if len(current_entries) < limit:
@@ -122,9 +120,7 @@ def _memory_sliding_window_log_script(
         current_entries.append((now, request_id))
 
         # Store updated log
-        log_str = ";".join(
-            [f"{ts},{entry_id}" for ts, entry_id in current_entries]
-        )
+        log_str = ";".join([f"{ts},{entry_id}" for ts, entry_id in current_entries])
         ttl = window + 1
         storage.set_unlocked(log_key, log_str, ttl)
 
@@ -149,9 +145,7 @@ def _memory_sliding_window_log_script(
             retry_after = window
 
         # Store log (even if denied, to maintain TTL)
-        log_str = ";".join(
-            [f"{ts},{entry_id}" for ts, entry_id in current_entries]
-        )
+        log_str = ";".join([f"{ts},{entry_id}" for ts, entry_id in current_entries])
         ttl = window + 1
         storage.set_unlocked(log_key, log_str, ttl)
 
@@ -203,15 +197,9 @@ class SlidingWindowLogAlgorithm(algorithms_base.BaseAlgorithm):
         keys = [log_key]
         args = [str(rule.limit), str(rule.window), str(now), request_id]
 
-        # Detect storage type and use appropriate script
-        if hasattr(storage, "_get_raw"):
-            # In-memory backend: use callable
-            result = storage.execute_atomic(
-                _memory_sliding_window_log_script, keys, args
-            )
-        else:
-            # Redis backend: use Lua script
-            result = storage.execute_atomic(LUA_SCRIPT, keys, args)
+        result = storage.execute_algorithm(
+            LUA_SCRIPT, _memory_sliding_window_log_script, keys, args
+        )
 
         allowed = bool(result[0])
         remaining = int(result[1])

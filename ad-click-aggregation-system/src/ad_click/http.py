@@ -20,7 +20,9 @@ class WorkerLoop:
     def run(self):
         while not self.stop.is_set():
             try:
-                batch = log_page(self.config, self.store.partition, self.store.status()["seq"])
+                batch = log_page(
+                    self.config, self.store.partition, self.store.status()["seq"]
+                )
                 self.store.apply(batch)
                 if not batch["entries"]:
                     self.store.idle()
@@ -34,13 +36,19 @@ class WorkerLoop:
 
 def server(role, config, store, host, port, loop=None):
     class Handler(BaseHTTPRequestHandler):
+        # Apply before parsing headers, including clients that send no request.
+        timeout = 10.0
+
         def log_message(self, *args):
             pass
 
         def auth(self, *roles):
             supplied = self.headers.get("Authorization", "")
             allowed = roles + ("admin",)
-            if not any(hmac.compare_digest(supplied, "Bearer " + config[r + "_token"]) for r in allowed):
+            if not any(
+                hmac.compare_digest(supplied, "Bearer " + config[r + "_token"])
+                for r in allowed
+            ):
                 raise Error(401, "valid bearer credential required")
 
         def body(self):
@@ -77,7 +85,11 @@ def server(role, config, store, host, port, loop=None):
             if role == "worker":
                 if path == "/internal/status" and not post:
                     self.auth("internal")
-                    return {**store.status(), "error": loop.error, "last_poll": loop.updated}
+                    return {
+                        **store.status(),
+                        "error": loop.error,
+                        "last_poll": loop.updated,
+                    }
                 if path in {"/internal/totals", "/internal/audit"}:
                     self.auth("internal")
                     if loop.error:
@@ -95,14 +107,32 @@ def server(role, config, store, host, port, loop=None):
                     return aggregate_query(config, self.body())
                 if not post and path.startswith("/v1/ads/"):
                     self.auth("read")
-                    if set(params) - {"from", "to", "window", "count", "user_id", "ip", "country"}:
+                    if set(params) - {
+                        "from",
+                        "to",
+                        "window",
+                        "count",
+                        "user_id",
+                        "ip",
+                        "country",
+                    }:
                         raise ValueError("unknown query parameter")
-                    body = {k: int(v) for k, v in params.items() if k in {"from", "to", "window", "count"}}
-                    body["filters"] = {k: v for k, v in params.items() if k in {"user_id", "ip", "country"}}
+                    body = {
+                        k: int(v)
+                        for k, v in params.items()
+                        if k in {"from", "to", "window", "count"}
+                    }
+                    body["filters"] = {
+                        k: v
+                        for k, v in params.items()
+                        if k in {"user_id", "ip", "country"}
+                    }
                     if path == "/v1/ads/popular_ads":
                         return aggregate_query(config, body)
                     if path.endswith("/aggregated_count"):
-                        body["ad_id"] = unquote(path[len("/v1/ads/"):-len("/aggregated_count")])
+                        body["ad_id"] = unquote(
+                            path[len("/v1/ads/") : -len("/aggregated_count")]
+                        )
                         return aggregate_query(config, body)
             raise Error(404, "unknown route or method")
 
@@ -118,11 +148,18 @@ def server(role, config, store, host, port, loop=None):
                 # Preserve the documented candidate-budget error; fail closed on
                 # availability, authentication or topology failures upstream.
                 status = 422 if exc.code == 422 else 503
-                result = {"error": "candidate budget exceeded" if status == 422 else "required upstream unavailable"}
+                result = {
+                    "error": "candidate budget exceeded"
+                    if status == 422
+                    else "required upstream unavailable"
+                }
             except (URLError, TimeoutError, OSError):
                 result, status = {"error": "required upstream unavailable"}, 503
             except Exception:
-                result, status = {"error": "internal error; input position retained"}, 500
+                result, status = (
+                    {"error": "internal error; input position retained"},
+                    500,
+                )
             raw = dumps(result).encode()
             self.send_response(status)
             self.send_header("Content-Type", "application/json")

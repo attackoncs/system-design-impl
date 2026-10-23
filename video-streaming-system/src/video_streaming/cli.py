@@ -52,9 +52,7 @@ def main():
             print(json.dumps(service.cleanup()))
         elif args.command == "worker":
             print("Video worker ready", flush=True)
-            media = video_streaming.media.FFmpegMedia(
-                timeout=args.media_timeout
-            )
+            media = video_streaming.media.FFmpegMedia(timeout=args.media_timeout)
             video_streaming.worker.Worker(
                 service, media, args.name, lease=args.media_timeout + 60
             ).run(args.once)

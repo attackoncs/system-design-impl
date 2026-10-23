@@ -19,10 +19,16 @@ def load_config(path):
     for user, token in config["users"].items():
         identifier(user)
         tokens.append(token)
-    if any(not isinstance(t, str) or len(t)<24 for t in tokens) or len(tokens)!=len(set(tokens)):
+    if any(not isinstance(t, str) or len(t) < 24 for t in tokens) or len(tokens) != len(
+        set(tokens)
+    ):
         raise ValueError("distinct credentials of at least 24 characters required")
     urls = config["shard_urls"]
-    if not isinstance(urls, list) or not 1<=len(urls)<=32 or len(set(urls))!=len(urls):
+    if (
+        not isinstance(urls, list)
+        or not 1 <= len(urls) <= 32
+        or len(set(urls)) != len(urls)
+    ):
         raise ValueError("1..32 distinct shard URLs required")
     integer(config.get("lease_seconds", 2), "lease_seconds", 1, 60)
     integer(config.get("hold_seconds", 120), "hold_seconds", 1, 900)
@@ -39,15 +45,20 @@ def main():
     parser.add_argument("--shard", type=int, default=0)
     args = parser.parse_args()
     config = load_config(args.config)
-    integer(args.shard, "shard", 0, len(config["shard_urls"])-1)
+    integer(args.shard, "shard", 0, len(config["shard_urls"]) - 1)
     root, store = Path(args.root), None
     if args.role == "worker":
         run(config, args.shard)
         return
     if args.role == "shard":
-        store = Store(root/f"shard-{args.shard}.sqlite", args.shard, len(config["shard_urls"]), config.get("hold_seconds", 120))
+        store = Store(
+            root / f"shard-{args.shard}.sqlite",
+            args.shard,
+            len(config["shard_urls"]),
+            config.get("hold_seconds", 120),
+        )
     if args.role == "payment":
-        store = SimulatedLedger(root/"simulated-payments.sqlite")
+        store = SimulatedLedger(root / "simulated-payments.sqlite")
     instance = server(args.role, config, store, args.host, args.port)
     try:
         instance.serve_forever(poll_interval=0.1)

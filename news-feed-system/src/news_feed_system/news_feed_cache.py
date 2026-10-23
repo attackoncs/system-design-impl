@@ -37,9 +37,7 @@ class NewsFeedCache:
         """The configured maximum entries per user."""
         return self._max_entries
 
-    def append(
-        self, user_id: str, entry: news_feed_system.models.FeedEntry
-    ) -> None:
+    def append(self, user_id: str, entry: news_feed_system.models.FeedEntry) -> None:
         """Append a feed entry for a user, evicting the oldest if at capacity.
 
         Args:

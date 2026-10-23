@@ -286,7 +286,7 @@ rule = RateLimitRule(limit=100, window=60, key_func=tenant_key)
 config = RateLimiterConfig(storage_backend="memory")
 ```
 
-- 通过 `threading.Lock` 保证原子操作
+- 通过 `threading.RLock` 保证原子操作
 - 基于 TTL 的自动过期
 - 重启后状态丢失
 
@@ -397,3 +397,14 @@ pytest tests/test_decorators.py # 装饰器测试
 ## License
 
 MIT
+
+## 工程与并发约定
+
+算法通过 `BaseStorage.execute_algorithm` 选择后端原子操作，内存后端执行
+Python 回调，远程后端默认执行 Lua。自定义回调后端需重写该方法。
+`RateLimiter(config, storage=backend)` 支持显式注入、复用存储。
+内存状态只在当前进程内共享；原子回调保证互斥，不提供异常回滚，TTL 使用单调时钟。
+FastAPI 在线程池执行同步检查；Flask 装饰器按路由保留限流器实例。
+两种适配器共用 `middleware/configuration.py` 中的规则配置。
+
+验证结果和剩余限制见[仓库工程检查报告](../ENGINEERING_REVIEW.md)。

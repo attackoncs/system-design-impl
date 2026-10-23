@@ -33,14 +33,21 @@ class RateLimiter:
     and requests.
     """
 
-    def __init__(self, config: rate_limiter_config.RateLimiterConfig) -> None:
+    def __init__(
+        self,
+        config: rate_limiter_config.RateLimiterConfig,
+        *,
+        storage: Optional[storage_base.BaseStorage] = None,
+    ) -> None:
         """Initialize the rate limiter with configuration.
 
         Args:
             config: RateLimiterConfig instance containing rules and settings.
+            storage: Optional shared or custom backend. When omitted, create
+                the backend configured by config.
         """
         self._config = config
-        self._storage = self._create_storage()
+        self._storage = storage if storage is not None else self._create_storage()
         self._algorithms = self._load_algorithms()
 
     def _create_storage(self) -> storage_base.BaseStorage:
@@ -109,13 +116,10 @@ class RateLimiter:
         # Isolate this operation; record failures before continuing.
         except Exception as e:  # pylint: disable=broad-exception-caught
             # Handle storage failures based on fail_open config
-            logging.getLogger(__name__).exception(
-                "Failure isolated in %s", "check"
-            )
+            logging.getLogger(__name__).exception("Failure isolated in %s", "check")
             if self._config.fail_open:
                 logger.warning(
-                    "Rate limiter storage error (fail-open, allowing"
-                    " request): %s",
+                    "Rate limiter storage error (fail-open, allowing request): %s",
                     e,
                 )
                 return algorithms_base.RateLimitResult(
@@ -127,8 +131,7 @@ class RateLimiter:
                 )
             else:
                 logger.warning(
-                    "Rate limiter storage error (fail-closed, denying"
-                    " request): %s",
+                    "Rate limiter storage error (fail-closed, denying request): %s",
                     e,
                 )
                 return algorithms_base.RateLimitResult(
@@ -147,7 +150,7 @@ class RateLimiter:
         """Check a request against all applicable rules.
 
         Evaluates all rules against the request and returns the most restrictive
-        result (first denial, or lowest remaining count if all allowed).
+        result (longest retry delay, or lowest remaining count if all allowed).
 
         Args:
             request_context: Request object or context containing information
@@ -242,17 +245,18 @@ class RateLimiter:
         # Find any denied results
         denied_results = [r for r in results if not r.allowed]
         if denied_results:
-            # Return the denied result with the shortest retry_after
-            return min(
-                denied_results, key=lambda r: r.retry_after or float("inf")
+            # Every rule must allow the retry, so use the longest delay.
+            return max(
+                denied_results,
+                key=lambda r: (
+                    r.retry_after if r.retry_after is not None else r.reset_after
+                ),
             )
 
         # All allowed, return the result with the lowest remaining count
         return min(results, key=lambda r: r.remaining)
 
-    def update_rules(
-        self, rules: list[rate_limiter_config.RateLimitRule]
-    ) -> None:
+    def update_rules(self, rules: list[rate_limiter_config.RateLimitRule]) -> None:
         """Dynamically update rules at runtime.
 
         Args:

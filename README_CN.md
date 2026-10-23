@@ -195,3 +195,9 @@ python examples/basic_usage.py
 ## License
 
 MIT
+
+## 工程质量
+
+工程组织与验证约定见 [CONTRIBUTING.md](CONTRIBUTING.md)，本轮检查、修复、性能取舍及待办见 [ENGINEERING_REVIEW.md](ENGINEERING_REVIEW.md)。可运行 `python tools/audit_code.py` 生成源码检查报告。
+
+本轮工程审查覆盖全部 27 个子项目，报告包含逐项目修改、并发回归测试与未验证的集成环境。安装各章节依赖后，运行 `python tools/run_project_tests.py --jobs 2 --output .test-tmp/review`，即可在独立进程中执行各章节测试。

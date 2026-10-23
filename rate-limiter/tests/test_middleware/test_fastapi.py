@@ -318,3 +318,34 @@ class TestRateLimitConfigHelper:
 
         r3 = client.get("/test")
         assert r3.status_code == 429
+
+
+def test_slow_storage_does_not_block_event_loop():
+    """A loop task can release a blocked backend before its deadline."""
+    import asyncio
+    import threading
+    from rate_limiter.algorithms.base import RateLimitResult
+    from starlette.responses import Response
+
+    release = threading.Event()
+    class SlowLimiter:
+        def check_request(self, request):
+            if not release.wait(2):
+                raise AssertionError('synchronous storage blocked the event loop')
+            return RateLimitResult(True, 1, 2, 0, None)
+
+    async def exercise():
+        middleware = rate_limiter.middleware.fastapi.RateLimitMiddleware(
+            None, limiter=SlowLimiter()
+        )
+        async def next_handler(request):
+            return Response('ok')
+        task = asyncio.create_task(middleware.dispatch(None, next_handler))
+        try:
+            await asyncio.sleep(0.05)
+            release.set()
+            response = await asyncio.wait_for(task, 3)
+            assert response.status_code == 200
+        finally:
+            release.set()
+    asyncio.run(exercise())

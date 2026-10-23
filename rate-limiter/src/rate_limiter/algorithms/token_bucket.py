@@ -83,7 +83,7 @@ def _memory_token_bucket_script(
     Args:
         keys: [tokens_key, last_refill_key]
         args: [capacity, refill_rate, current_time]
-        storage: The MemoryStorage instance (use _get_raw/_set_raw).
+        storage: The MemoryStorage instance (use get_unlocked/set_unlocked).
 
     Returns:
         A list: [allowed (1 or 0), remaining (int), limit (int), reset_after
@@ -128,9 +128,7 @@ def _memory_token_bucket_script(
 
         remaining = int(tokens)
         # Time until bucket is fully refilled
-        reset_after = (
-            (capacity - tokens) / refill_rate if refill_rate > 0 else 0.0
-        )
+        reset_after = (capacity - tokens) / refill_rate if refill_rate > 0 else 0.0
 
         return [1, remaining, int(capacity), reset_after, 0.0]
     else:
@@ -141,9 +139,7 @@ def _memory_token_bucket_script(
         # Time until at least 1 token is refilled
         deficit = 1.0 - tokens
         retry_after = deficit / refill_rate if refill_rate > 0 else 0.0
-        reset_after = (
-            (capacity - tokens) / refill_rate if refill_rate > 0 else 0.0
-        )
+        reset_after = (capacity - tokens) / refill_rate if refill_rate > 0 else 0.0
 
         return [0, 0, int(capacity), reset_after, retry_after]
 
@@ -188,15 +184,9 @@ class TokenBucketAlgorithm(algorithms_base.BaseAlgorithm):
         keys = [tokens_key, last_refill_key]
         args = [str(capacity), str(refill_rate), str(now)]
 
-        # Detect storage type and use appropriate script
-        if hasattr(storage, "_get_raw"):
-            # In-memory backend: use callable
-            result = storage.execute_atomic(
-                _memory_token_bucket_script, keys, args
-            )
-        else:
-            # Redis backend: use Lua script (to be implemented in Task 4.3)
-            result = storage.execute_atomic(LUA_SCRIPT, keys, args)
+        result = storage.execute_algorithm(
+            LUA_SCRIPT, _memory_token_bucket_script, keys, args
+        )
 
         allowed = bool(result[0])
         remaining = int(result[1])

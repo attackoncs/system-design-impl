@@ -91,7 +91,7 @@ def _memory_sliding_window_counter_script(
     Args:
         keys: [key_prefix]
         args: [limit, window, current_time]
-        storage: The MemoryStorage instance (use _get_raw/_set_raw).
+        storage: The MemoryStorage instance (use get_unlocked/set_unlocked).
 
     Returns:
         A list: [allowed (1 or 0), remaining (int), limit (int), reset_after
@@ -115,12 +115,8 @@ def _memory_sliding_window_counter_script(
     raw_current_count = storage.get_unlocked(current_key)
     raw_previous_count = storage.get_unlocked(previous_key)
 
-    current_count = (
-        int(raw_current_count) if raw_current_count is not None else 0
-    )
-    previous_count = (
-        int(raw_previous_count) if raw_previous_count is not None else 0
-    )
+    current_count = int(raw_current_count) if raw_current_count is not None else 0
+    previous_count = int(raw_previous_count) if raw_previous_count is not None else 0
 
     # Calculate overlap percentage of previous window
     window_progress = (now - current_window_start) / window
@@ -203,15 +199,9 @@ class SlidingWindowCounterAlgorithm(algorithms_base.BaseAlgorithm):
         keys = [key_prefix]
         args = [str(rule.limit), str(rule.window), str(now)]
 
-        # Detect storage type and use appropriate script
-        if hasattr(storage, "_get_raw"):
-            # In-memory backend: use callable
-            result = storage.execute_atomic(
-                _memory_sliding_window_counter_script, keys, args
-            )
-        else:
-            # Redis backend: use Lua script
-            result = storage.execute_atomic(LUA_SCRIPT, keys, args)
+        result = storage.execute_algorithm(
+            LUA_SCRIPT, _memory_sliding_window_counter_script, keys, args
+        )
 
         allowed = bool(result[0])
         remaining = int(result[1])

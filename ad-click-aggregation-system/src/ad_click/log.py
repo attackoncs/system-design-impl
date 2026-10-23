@@ -2,6 +2,7 @@
 
 This SQLite queue has one durable owner, not replicated broker HA.
 """
+
 import time
 import uuid
 
@@ -21,12 +22,20 @@ class EventLog(Database):
             UNIQUE(partition,seq));
         """)
         with self.transaction(True) as db:
-            db.execute("INSERT OR IGNORE INTO metadata VALUES(1,?,?)", (uuid.uuid4().hex, partitions))
+            db.execute(
+                "INSERT OR IGNORE INTO metadata VALUES(1,?,?)",
+                (uuid.uuid4().hex, partitions),
+            )
             meta = db.execute("SELECT * FROM metadata").fetchone()
             if meta["partitions"] != partitions:
-                raise Error(409, "partition count is immutable; offline migration required")
+                raise Error(
+                    409, "partition count is immutable; offline migration required"
+                )
             self.lineage = meta["lineage"]
-            db.executemany("INSERT OR IGNORE INTO heads VALUES(?,0)", [(p,) for p in range(partitions)])
+            db.executemany(
+                "INSERT OR IGNORE INTO heads VALUES(?,0)",
+                [(p,) for p in range(partitions)],
+            )
 
     def append(self, bodies):
         if not isinstance(bodies, list) or not 1 <= len(bodies) <= 200:
@@ -38,20 +47,38 @@ class EventLog(Database):
             used = db.execute("SELECT count(*) FROM events").fetchone()[0]
             for value in normalized:
                 fingerprint = digest(value)
-                existing = db.execute("SELECT * FROM events WHERE event_id=?", (value["event_id"],)).fetchone()
+                existing = db.execute(
+                    "SELECT * FROM events WHERE event_id=?", (value["event_id"],)
+                ).fetchone()
                 if existing:
                     if existing["hash"] != fingerprint:
                         raise Error(409, "event ID reused with different payload")
-                    results.append({"partition": existing["partition"], "seq": existing["seq"], "duplicate": True})
+                    results.append(
+                        {
+                            "partition": existing["partition"],
+                            "seq": existing["seq"],
+                            "duplicate": True,
+                        }
+                    )
                     continue
                 if used >= self.max_events:
-                    raise Error(429, "raw log capacity reached; archive/migrate before continuing")
+                    raise Error(
+                        429,
+                        "raw log capacity reached; archive/migrate before continuing",
+                    )
                 # Salt by event identity so even a single hot ad spans workers.
                 partition = int(digest(value["event_id"])[:16], 16) % self.partitions
-                seq = db.execute("SELECT seq FROM heads WHERE partition=?", (partition,)).fetchone()[0] + 1
+                seq = (
+                    db.execute(
+                        "SELECT seq FROM heads WHERE partition=?", (partition,)
+                    ).fetchone()[0]
+                    + 1
+                )
                 db.execute("UPDATE heads SET seq=? WHERE partition=?", (seq, partition))
-                db.execute("INSERT INTO events VALUES(?,?,?,?,?,?)",
-                           (value["event_id"], fingerprint, partition, seq, dumps(value), now))
+                db.execute(
+                    "INSERT INTO events VALUES(?,?,?,?,?,?)",
+                    (value["event_id"], fingerprint, partition, seq, dumps(value), now),
+                )
                 used += 1
                 results.append({"partition": partition, "seq": seq, "duplicate": False})
         return {"lineage": self.lineage, "receipts": results}
@@ -61,19 +88,40 @@ class EventLog(Database):
         integer(after, "after", 0, 2**53)
         integer(limit, "limit", 1, 200)
         with self.transaction() as db:
-            head = db.execute("SELECT seq FROM heads WHERE partition=?", (partition,)).fetchone()[0]
+            head = db.execute(
+                "SELECT seq FROM heads WHERE partition=?", (partition,)
+            ).fetchone()[0]
             if after > head:
                 raise Error(409, "cursor ahead of raw log")
-            upper = head if until is None else min(integer(until, "until", 0, 2**53), head)
-            rows = db.execute("SELECT seq,payload,accepted,hash FROM events WHERE partition=? AND seq>? AND seq<=? ORDER BY seq LIMIT ?",
-                              (partition, after, upper, limit)).fetchall()
+            upper = (
+                head if until is None else min(integer(until, "until", 0, 2**53), head)
+            )
+            rows = db.execute(
+                "SELECT seq,payload,accepted,hash FROM events WHERE partition=? AND seq>? AND seq<=? ORDER BY seq LIMIT ?",
+                (partition, after, upper, limit),
+            ).fetchall()
         import json
-        return {"lineage": self.lineage, "partition": partition, "head": head,
-                "entries": [{"seq": r["seq"], "event": json.loads(r["payload"]),
-                             "accepted": r["accepted"], "hash": r["hash"]} for r in rows]}
+
+        return {
+            "lineage": self.lineage,
+            "partition": partition,
+            "head": head,
+            "entries": [
+                {
+                    "seq": r["seq"],
+                    "event": json.loads(r["payload"]),
+                    "accepted": r["accepted"],
+                    "hash": r["hash"],
+                }
+                for r in rows
+            ],
+        }
 
     def status(self):
         with self.transaction() as db:
-            return {"lineage": self.lineage, "heads": {str(r[0]): r[1] for r in db.execute("SELECT * FROM heads")},
-                    "raw_events": db.execute("SELECT count(*) FROM events").fetchone()[0],
-                    "capacity": self.max_events}
+            return {
+                "lineage": self.lineage,
+                "heads": {str(r[0]): r[1] for r in db.execute("SELECT * FROM heads")},
+                "raw_events": db.execute("SELECT count(*) FROM events").fetchone()[0],
+                "capacity": self.max_events,
+            }

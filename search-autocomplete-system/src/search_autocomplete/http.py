@@ -40,9 +40,7 @@ class Coordinator:
             raise ValueError("invalid replica map")
         self.snapshots = collections.OrderedDict()
         self.lock = threading.RLock()
-        self.pool = concurrent.futures.ThreadPoolExecutor(
-            max_workers=concurrency
-        )
+        self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=concurrency)
 
     def close(self):
         self.pool.shutdown(wait=True)
@@ -133,9 +131,7 @@ class Coordinator:
                 self.snapshots.popitem(last=False)
         futures = [
             self.pool.submit(self._query, shard, prefix, version, revision)
-            for shard in search_autocomplete.service.relevant_shards(
-                snapshot, prefix
-            )
+            for shard in search_autocomplete.service.relevant_shards(snapshot, prefix)
         ]
         candidates = []
         for future in futures:
@@ -210,6 +206,9 @@ def server(service, host="127.0.0.1", port=0, shard=None):
     """
 
     class Handler(http.server.BaseHTTPRequestHandler):
+        # Apply before parsing headers, including clients that send no request.
+        timeout = 10.0
+
         """An HTTP request handler bound to the enclosing service instance."""
 
         def log_message(self, *_):
@@ -243,14 +242,10 @@ def server(service, host="127.0.0.1", port=0, shard=None):
                         if "revision" in params
                         else service.store.view()[1]
                     )
-                    requested = (
-                        int(params["shard"][0]) if "shard" in params else shard
-                    )
+                    requested = int(params["shard"][0]) if "shard" in params else shard
                     if requested != shard:
                         raise ValueError("wrong shard endpoint")
-                    suggestions = service.suggest(
-                        prefix, version, revision, shard
-                    )
+                    suggestions = service.suggest(prefix, version, revision, shard)
                 body = {
                     "version": version,
                     "revision": revision,
@@ -263,9 +258,10 @@ def server(service, host="127.0.0.1", port=0, shard=None):
             except (ValueError, KeyError):
                 status, body = 400, {"error": "invalid request"}
             except (search_autocomplete.store.Unavailable, sqlite3.Error):
-                status, body = 503, {
-                    "error": "required generation or shard unavailable; retry"
-                }
+                status, body = (
+                    503,
+                    {"error": "required generation or shard unavailable; retry"},
+                )
             payload = json.dumps(body).encode()
             self.send_response(status)
             self.send_header("Content-Type", "application/json")

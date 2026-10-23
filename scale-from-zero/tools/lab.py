@@ -99,7 +99,16 @@ class Lab:
     def __exit__(self,*args):
         for node in reversed(list(self.processes)):
             self.stop(node)
-        self.temp.cleanup()
+        # Windows can retain a recently closed file handle briefly. Retry only
+        # that transient error, on this lab's own TemporaryDirectory.
+        for attempt in range(10):
+            try:
+                self.temp.cleanup()
+                break
+            except PermissionError:
+                if attempt == 9:
+                    raise
+                time.sleep(0.1)
 
     def call(self,path,body=None,node=None,auth=None,user=None):
         url=self.config["services"][node] if node else self.config["entry"]

@@ -313,8 +313,8 @@ def test_http_push_adapter_and_online_recipient_filter(redis_url):
         def log_message(self, *args):
             pass
 
-    http = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=http.serve_forever, daemon=True)
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
 
     async def scenario():
@@ -328,7 +328,7 @@ def test_http_push_adapter_and_online_recipient_filter(redis_url):
                 worker = chat_system.push.PushWorker(
                     backend,
                     chat_system.push.HTTPWebhookNotifier(
-                        f"http://127.0.0.1:{http.server_port}/push"
+                        f"http://127.0.0.1:{httpd.server_port}/push"
                     ),
                 )
                 await worker.run_once()
@@ -342,8 +342,8 @@ def test_http_push_adapter_and_online_recipient_filter(redis_url):
     try:
         asyncio.run(scenario())
     finally:
-        http.shutdown()
-        http.server_close()
+        httpd.shutdown()
+        httpd.server_close()
         thread.join(timeout=2)
 
 

@@ -21,9 +21,7 @@ class CounterCache:
     """
 
     def __init__(self) -> None:
-        self._counters: dict[
-            tuple[str, news_feed_system.models.CounterType], int
-        ] = {}
+        self._counters: dict[tuple[str, news_feed_system.models.CounterType], int] = {}
 
     def increment(
         self, entity_id: str, counter_type: news_feed_system.models.CounterType

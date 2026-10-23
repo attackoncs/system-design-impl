@@ -101,7 +101,7 @@ def test_queue_depth_equals_enqueues_minus_dequeues(
         # Verify depth invariant: depth == enqueues - dequeues
         assert mq.depth(channel) == actual_enqueues - actual_dequeues
 
-    asyncio.get_event_loop().run_until_complete(run())
+    asyncio.run(run())
 
 
 @hypothesis.given(
@@ -141,7 +141,7 @@ def test_queue_full_raises_error_at_max_depth(channel, max_depth):
         # Depth must still equal max_depth (overflow was rejected)
         assert mq.depth(channel) == max_depth
 
-    asyncio.get_event_loop().run_until_complete(run())
+    asyncio.run(run())
 
 
 @hypothesis.given(
@@ -187,7 +187,7 @@ def test_queue_depth_never_exceeds_max_depth(channel, max_depth, operations):
             # Invariant: depth never exceeds max_depth
             assert mq.depth(channel) <= max_depth
 
-    asyncio.get_event_loop().run_until_complete(run())
+    asyncio.run(run())
 
 
 # --- Property 14: Duplicate suppression within window ---
@@ -896,7 +896,7 @@ class TestProperty5QueueFIFOOrdering:
                 f"but dequeued {dequeued_ids}"
             )
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
     @hypothesis.given(
         channel=channels,
@@ -945,7 +945,7 @@ class TestProperty5QueueFIFOOrdering:
                 f"items {task_ids[:dequeue_count]}, but got {dequeued_ids}"
             )
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
 
 # --- Property 8: Template missing placeholder error ---
@@ -2509,7 +2509,7 @@ class TestProperty19RetryExhaustionMarksPermanentFailure:
                 f" max_retries={config.max_retries})"
             )
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
     @hypothesis.given(
         data=retry_config_and_exhausted_attempt(),
@@ -2575,7 +2575,7 @@ class TestProperty19RetryExhaustionMarksPermanentFailure:
                 f"(attempt={attempt}, max_retries={config.max_retries})"
             )
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
     @hypothesis.given(
         data=retry_config_and_exhausted_attempt(),
@@ -2648,7 +2648,7 @@ class TestProperty19RetryExhaustionMarksPermanentFailure:
                 f" {queue.depth(channel)}"
             )
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
 
 # --- Property 15: Deduplication TTL expiry ---
@@ -2916,7 +2916,7 @@ class TestProperty20RetryableVsNonRetryableErrorClassification:
                 queue.depth(channel) == 0
             ), "Non-retryable error should not re-enqueue the task"
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
     @hypothesis.given(
         channel=channels,
@@ -2989,7 +2989,7 @@ class TestProperty20RetryableVsNonRetryableErrorClassification:
             assert requeued.attempt == attempt + 1
             assert requeued.notification_id == notification_id
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
     @hypothesis.given(
         channel=channels,
@@ -3063,7 +3063,7 @@ class TestProperty20RetryableVsNonRetryableErrorClassification:
                 queue.depth(channel) == 0
             ), "Exhausted retries should not re-enqueue the task"
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
 
 # --- Property 1: Channel routing correctness ---
@@ -3152,7 +3152,7 @@ class TestProperty1ChannelRoutingCorrectness:
             ), f"Expected task channel {channel}, got {task.channel}"
             assert task.notification_id == notification_id
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
     @hypothesis.given(
         channels_list=st.lists(
@@ -3226,7 +3226,7 @@ class TestProperty1ChannelRoutingCorrectness:
                     f"got {queue.depth(ch)}"
                 )
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
 
 # --- Property 3: Invalid recipient validation ---
@@ -3287,7 +3287,7 @@ class TestProperty3InvalidRecipientValidation:
             assert recipient_id in str(exc_info.value)
             assert channel.value in str(exc_info.value)
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
     @hypothesis.given(
         recipient_id=_prop3_recipient_ids,
@@ -3326,7 +3326,7 @@ class TestProperty3InvalidRecipientValidation:
 
             assert exc_info.value.field == "recipient_id"
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
 
 # --- Property 2: Opt-out rejection ---
@@ -3415,7 +3415,7 @@ class TestProperty2OptOutRejection:
                 f"but depth is {queue.depth(channel)} for channel {channel}"
             )
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
     @hypothesis.given(data=user_with_contact_for_channel())
     @hypothesis.settings(max_examples=200)
@@ -3461,7 +3461,7 @@ class TestProperty2OptOutRejection:
                     f"but depth is {queue.depth(ch)}"
                 )
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
     @hypothesis.given(data=user_with_contact_for_channel())
     @hypothesis.settings(max_examples=200)
@@ -3513,7 +3513,7 @@ class TestProperty2OptOutRejection:
             # Queue should now have one item
             assert queue.depth(channel) == 1
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
 
 # --- Property 4: Notification ID uniqueness ---
@@ -3590,7 +3590,7 @@ class TestProperty4NotificationIDUniqueness:
                 set(ids)
             ), "Duplicate notification IDs found: {}".format(ids)
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
     @hypothesis.given(
         channels_list=st.lists(
@@ -3659,4 +3659,4 @@ class TestProperty4NotificationIDUniqueness:
                 ids
             )
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())

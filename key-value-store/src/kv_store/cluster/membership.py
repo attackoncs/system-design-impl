@@ -20,9 +20,7 @@ class HashRingProtocol(Protocol):
     that provides add_node, remove_node, and nodes properties.
     """
 
-    def add_node(
-        self, node: str, num_virtual_nodes: Optional[int] = None
-    ) -> list[int]:
+    def add_node(self, node: str, num_virtual_nodes: Optional[int] = None) -> list[int]:
         """Add a node to the hash ring."""
 
     def remove_node(self, node: str) -> list[int]:

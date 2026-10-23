@@ -80,9 +80,7 @@ class StorageEngine:
         # Create directories
         pathlib.Path(self._config.data_dir).mkdir(parents=True, exist_ok=True)
         pathlib.Path(self._config.wal_dir).mkdir(parents=True, exist_ok=True)
-        pathlib.Path(self._config.sstable_dir).mkdir(
-            parents=True, exist_ok=True
-        )
+        pathlib.Path(self._config.sstable_dir).mkdir(parents=True, exist_ok=True)
 
         # Load existing SSTables from disk
         self._sstables = self._load_sstables()
@@ -91,9 +89,7 @@ class StorageEngine:
         entries = await self._wal.replay()
         for entry in entries:
             if entry.entry_type == storage_wal.WALEntryType.PUT:
-                self._memtable.put(
-                    entry.key, entry.value or b"", entry.timestamp
-                )
+                self._memtable.put(entry.key, entry.value or b"", entry.timestamp)
             elif entry.entry_type == storage_wal.WALEntryType.DELETE:
                 self._memtable.delete(entry.key, entry.timestamp)
 
@@ -105,8 +101,7 @@ class StorageEngine:
 
         self._started = True
         logger.info(
-            "Storage engine started: %d SSTables loaded, MemTable size=%d"
-            " bytes",
+            "Storage engine started: %d SSTables loaded, MemTable size=%d bytes",
             len(self._sstables),
             self._memtable.size_bytes,
         )
@@ -258,9 +253,7 @@ class StorageEngine:
 
         # Generate unique SSTable filename
         sstable_filename = f"sstable_L0_{uuid.uuid4().hex[:12]}.sst"
-        sstable_path = str(
-            pathlib.Path(self._config.sstable_dir) / sstable_filename
-        )
+        sstable_path = str(pathlib.Path(self._config.sstable_dir) / sstable_filename)
 
         # Create SSTable from MemTable
         new_sstable = await storage_sstable.SSTable.create_from_memtable(
@@ -304,9 +297,7 @@ class StorageEngine:
 
         # Remove SSTables that were at the compacted level
         self._sstables = [
-            sst
-            for sst in self._sstables
-            if sst.metadata.level != compacted_level
+            sst for sst in self._sstables if sst.metadata.level != compacted_level
         ]
 
         # Insert the compacted SSTable maintaining newest-first order
@@ -339,9 +330,7 @@ class StorageEngine:
                     sst = storage_sstable.SSTable(str(file_path))
                     sstables.append(sst)
                 except (ValueError, FileNotFoundError) as e:
-                    logger.warning(
-                        "Skipping invalid SSTable file %s: %s", file_path, e
-                    )
+                    logger.warning("Skipping invalid SSTable file %s: %s", file_path, e)
 
         # Sort by created_at descending (newest first)
         sstables.sort(key=lambda s: s.metadata.created_at, reverse=True)

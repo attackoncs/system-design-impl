@@ -38,13 +38,9 @@ class PostCache:
         access_threshold: int = 5,
     ) -> None:
         if hot_capacity <= 0:
-            raise ValueError(
-                f"hot_capacity must be positive, got {hot_capacity}"
-            )
+            raise ValueError(f"hot_capacity must be positive, got {hot_capacity}")
         if normal_capacity <= 0:
-            raise ValueError(
-                f"normal_capacity must be positive, got {normal_capacity}"
-            )
+            raise ValueError(f"normal_capacity must be positive, got {normal_capacity}")
         if access_threshold <= 0:
             raise ValueError(
                 f"access_threshold must be positive, got {access_threshold}"
@@ -55,12 +51,12 @@ class PostCache:
         self._access_threshold = access_threshold
 
         # OrderedDict for LRU: most recently used at the end
-        self._hot: collections.OrderedDict[
-            str, news_feed_system.models.Post
-        ] = collections.OrderedDict()
-        self._normal: collections.OrderedDict[
-            str, news_feed_system.models.Post
-        ] = collections.OrderedDict()
+        self._hot: collections.OrderedDict[str, news_feed_system.models.Post] = (
+            collections.OrderedDict()
+        )
+        self._normal: collections.OrderedDict[str, news_feed_system.models.Post] = (
+            collections.OrderedDict()
+        )
 
         # Track access counts for posts in the normal tier
         self._access_counts: dict[str, int] = {}

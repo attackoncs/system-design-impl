@@ -1,22 +1,46 @@
-"""Consistent hash ring implementation.
+"""Consistent hashing with immutable read snapshots and serialized writers."""
 
-Provides the ConsistentHashRing class which distributes keys across server
-nodes using virtual nodes and clockwise traversal on a hash ring. Uses a sorted
-list of positions with binary search for O(log N) lookups.
-"""
+from __future__ import annotations
 
 import bisect
+from dataclasses import dataclass
+import threading
 from typing import Callable, Optional
 
-import consistent_hashing.hash_functions
+from consistent_hashing import hash_functions
+
+
+@dataclass(frozen=True)
+class _RingState:
+    """One coherent topology; published states are never modified."""
+
+    entries: tuple[tuple[int, str, int], ...] = ()
+    positions: tuple[int, ...] = ()
+    nodes: tuple[str, ...] = ()
+
+    @classmethod
+    def build(cls, entries, nodes) -> _RingState:
+        ordered = tuple(sorted(entries))
+        return cls(ordered, tuple(item[0] for item in ordered), tuple(nodes))
+
+
+def _positive_count(value: int) -> int:
+    if type(value) is not int or value <= 0:
+        raise ValueError("virtual node count must be a positive integer")
+    return value
 
 
 class ConsistentHashRing:
-    """Consistent hash ring with virtual nodes.
+    """Map keys to nodes using stable virtual-node positions.
 
-    Uses a sorted list of hash positions and binary search (bisect) for O(log
-    N) key lookups. Each physical server is mapped to multiple virtual nodes on
-    the ring for balanced distribution.
+    Writers build a replacement topology under a writer lock. Readers acquire
+    only a short publication lock to capture a snapshot, then search it without
+    blocking writers. Custom hash functions must be deterministic and thread
+    safe. Equal positions are ordered by node name and virtual-node index;
+    removing one colliding node cannot remove another node's entry.
+
+    Lookup retains the original strict-clockwise rule (bisect_right): a key
+    exactly at a virtual-node position moves to the next greater position.
     """
 
     def __init__(
@@ -24,190 +48,103 @@ class ConsistentHashRing:
         nodes: Optional[list[str]] = None,
         num_virtual_nodes: int = 150,
         hash_function: Optional[Callable[[str], int]] = None,
-    ):
-        """Initialize the hash ring.
+    ) -> None:
+        self._hash_function = hash_function or hash_functions.sha1_hash
+        self._default_num_virtual_nodes = _positive_count(num_virtual_nodes)
+        self._writer_lock = threading.Lock()
+        self._state_lock = threading.Lock()
+        self._state = _RingState()
+        for node in nodes or ():
+            self.add_node(node)
 
-        Args:
-            nodes: Initial list of server node identifiers to add.
-            num_virtual_nodes: Default number of virtual nodes per server.
-            hash_function: Hash function mapping str -> int. Defaults to SHA-1.
-        """
-        self._hash_function = (
-            hash_function or consistent_hashing.hash_functions.sha1_hash
+    def _snapshot(self) -> _RingState:
+        with self._state_lock:
+            return self._state
+
+    def _publish(self, state: _RingState) -> None:
+        with self._state_lock:
+            self._state = state
+
+    def add_node(self, node: str, num_virtual_nodes: Optional[int] = None) -> list[int]:
+        """Add a node atomically; validation/hash failures leave state intact."""
+        if not isinstance(node, str) or not node:
+            raise ValueError("node must be a non-empty string")
+        count = _positive_count(
+            self._default_num_virtual_nodes
+            if num_virtual_nodes is None
+            else num_virtual_nodes
         )
-        self._default_num_virtual_nodes = num_virtual_nodes
-
-        # Sorted list of hash positions for binary search
-        self._sorted_positions: list[int] = []
-
-        # Map from hash position to physical node name
-        self._position_to_node: dict[int, str] = {}
-
-        # Map from physical node name to its virtual node count
-        self._nodes: dict[str, int] = {}
-
-        # Add initial nodes
-        if nodes:
-            for node in nodes:
-                self.add_node(node)
-
-    def add_node(
-        self, node: str, num_virtual_nodes: Optional[int] = None
-    ) -> list[int]:
-        """Add a server node to the ring.
-
-        Generates virtual nodes using the format "{node}#{index}" and
-        places them on the ring at positions determined by the hash function.
-
-        Args:
-            node: Server identifier string.
-            num_virtual_nodes: Override virtual node count for this server.
-                Uses the ring's default if not specified.
-
-        Returns:
-            List of hash positions where virtual nodes were placed.
-
-        Raises:
-            ValueError: If node already exists on the ring.
-        """
-        if node in self._nodes:
-            raise ValueError(f"Node '{node}' already exists on the ring.")
-
-        vn_count = (
-            num_virtual_nodes
-            if num_virtual_nodes is not None
-            else self._default_num_virtual_nodes
-        )
-        self._nodes[node] = vn_count
-        positions: list[int] = []
-
-        for i in range(vn_count):
-            virtual_key = self._virtual_node_key(node, i)
-            position = self._hash(virtual_key)
-            bisect.insort(self._sorted_positions, position)
-            self._position_to_node[position] = node
-            positions.append(position)
-
-        return positions
+        with self._writer_lock:
+            state = self._snapshot()
+            if node in state.nodes:
+                raise ValueError(f"Node '{node}' already exists on the ring.")
+            added = tuple(
+                (self._hash(f"{node}#{index}"), node, index) for index in range(count)
+            )
+            self._publish(
+                _RingState.build(state.entries + added, state.nodes + (node,))
+            )
+        return [position for position, _, _ in added]
 
     def remove_node(self, node: str) -> list[int]:
-        """Remove a server node and all its virtual nodes from the ring.
+        """Remove the stored entries without recomputing their hashes."""
+        with self._writer_lock:
+            state = self._snapshot()
+            if node not in state.nodes:
+                raise KeyError(f"Node '{node}' does not exist on the ring.")
+            removed = sorted(
+                (item for item in state.entries if item[1] == node),
+                key=lambda item: item[2],
+            )
+            retained = (item for item in state.entries if item[1] != node)
+            nodes = (name for name in state.nodes if name != node)
+            self._publish(_RingState.build(retained, nodes))
+        return [position for position, _, _ in removed]
 
-        Args:
-            node: Server identifier to remove.
-
-        Returns:
-            List of hash positions that were removed.
-
-        Raises:
-            KeyError: If node does not exist on the ring.
-        """
-        if node not in self._nodes:
-            raise KeyError(f"Node '{node}' does not exist on the ring.")
-
-        vn_count = self._nodes[node]
-        positions: list[int] = []
-
-        for i in range(vn_count):
-            virtual_key = self._virtual_node_key(node, i)
-            position = self._hash(virtual_key)
-            self._sorted_positions.remove(position)
-            del self._position_to_node[position]
-            positions.append(position)
-
-        del self._nodes[node]
-        return positions
+    def _start(self, state: _RingState, key: str) -> int:
+        if not state.entries:
+            raise RuntimeError("Hash ring is empty - no nodes available.")
+        return bisect.bisect_right(state.positions, self._hash(key)) % len(
+            state.entries
+        )
 
     def get_node(self, key: str) -> str:
-        """Get the server responsible for a given key.
-
-        Hashes the key and traverses clockwise to find the first server.
-
-        Args:
-            key: The key to look up.
-
-        Returns:
-            The server node identifier responsible for this key.
-
-        Raises:
-            RuntimeError: If the ring is empty (no nodes).
-        """
-        if not self._sorted_positions:
-            raise RuntimeError("Hash ring is empty - no nodes available.")
-
-        hash_value = self._hash(key)
-
-        # Find the first position >= hash_value (clockwise traversal)
-        idx = bisect.bisect_right(self._sorted_positions, hash_value)
-
-        # Wrap around if past the last position
-        if idx == len(self._sorted_positions):
-            idx = 0
-
-        position = self._sorted_positions[idx]
-        return self._position_to_node[position]
+        """Return the owner from a single coherent topology snapshot."""
+        state = self._snapshot()
+        return state.entries[self._start(state, key)][1]
 
     def get_nodes(self, key: str, count: int) -> list[str]:
-        """Get multiple distinct servers for a key (for replication).
-
-        Traverses clockwise from the key's position, collecting distinct
-        physical servers (skipping virtual nodes of already-collected servers).
-
-        Args:
-            key: The key to look up.
-            count: Number of distinct servers to return.
-
-        Returns:
-            List of distinct server identifiers (up to count or total servers).
-
-        Raises:
-            RuntimeError: If the ring is empty.
-        """
-        if not self._sorted_positions:
-            raise RuntimeError("Hash ring is empty - no nodes available.")
-
-        hash_value = self._hash(key)
-        idx = bisect.bisect_right(self._sorted_positions, hash_value)
-
-        # Wrap around if past the last position
-        if idx == len(self._sorted_positions):
-            idx = 0
-
-        result: list[str] = []
-        seen: set[str] = set()
-        num_positions = len(self._sorted_positions)
-        max_servers = min(count, len(self._nodes))
-
-        for i in range(num_positions):
-            pos_idx = (idx + i) % num_positions
-            position = self._sorted_positions[pos_idx]
-            node = self._position_to_node[position]
-
+        """Return up to count distinct clockwise owners; zero returns []."""
+        if type(count) is not int or count < 0:
+            raise ValueError("count must be a non-negative integer")
+        if count == 0:
+            return []
+        state = self._snapshot()
+        start = self._start(state, key)
+        target = min(count, len(state.nodes))
+        result = []
+        seen = set()
+        for offset in range(len(state.entries)):
+            node = state.entries[(start + offset) % len(state.entries)][1]
             if node not in seen:
-                result.append(node)
                 seen.add(node)
-                if len(result) == max_servers:
+                result.append(node)
+                if len(result) == target:
                     break
-
         return result
 
     @property
     def nodes(self) -> list[str]:
-        """List of all physical node names on the ring."""
-        return list(self._nodes.keys())
+        """Return a copy of the physical node names in insertion order."""
+        return list(self._snapshot().nodes)
 
     @property
     def total_virtual_nodes(self) -> int:
-        """Total number of virtual nodes on the ring."""
-        return len(self._sorted_positions)
+        """Return the number of virtual entries, including collisions."""
+        return len(self._snapshot().entries)
 
     def _hash(self, key: str) -> int:
-        """Hash a key to a ring position."""
-        return self._hash_function(key)
-
-    def _virtual_node_key(self, node: str, index: int) -> str:
-        """Generate the string to hash for a virtual node.
-
-        Format: "{node}#{index}"
-        """
-        return f"{node}#{index}"
+        value = self._hash_function(key)
+        if type(value) is not int:
+            raise ValueError("hash function must return an integer")
+        return value

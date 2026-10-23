@@ -57,9 +57,7 @@ class NotificationSettings:
         self._ensure_user(user_id)
         self._preferences[user_id][channel] = False
 
-    def opt_in(
-        self, user_id: str, channel: notification_system.models.Channel
-    ) -> None:
+    def opt_in(self, user_id: str, channel: notification_system.models.Channel) -> None:
         """Opt a user back in to a notification channel.
 
         Args:

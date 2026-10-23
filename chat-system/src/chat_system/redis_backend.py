@@ -10,6 +10,8 @@ import secrets
 import string
 import uuid
 
+from chat_system.redis_scripts import _APPEND, _ADMIT, _SESSION, _ONLINE
+
 import chat_system.discovery
 import chat_system.models
 
@@ -42,59 +44,6 @@ class WriteUncertainError(ConnectionError):
     """
 
 
-_APPEND = (
-    "\n"
-    "if ARGV[8] ~= '' then\n"
-    "    local time=redis.call('TIME'); local now=tonumber(time[1])+tonumber(t"
-    "ime[2])/1000000\n"
-    "    local record=redis.call('HGET',KEYS[8],ARGV[8])\n"
-    "    if not record then return {'FENCED'} end\n"
-    "    local s=cjson.decode(record)\n"
-    "    local node=redis.call('HGET',KEYS[9],s.node)\n"
-    "    if s.session~=ARGV[9] or s.instance~=ARGV[10] or s.expires<=now or\n"
-    "        not node or cjson.decode(node).instance~=s.instance or\n"
-    "        tonumber(redis.call('ZSCORE',KEYS[10],s.node) or '0')<=now or\n"
-    "        redis.call('HGET',KEYS[11],ARGV[11])~=ARGV[3] then return {'FENCE"
-    "D'} end\n"
-    "end\n"
-    "local old = redis.call('HGET', KEYS[3], ARGV[6])\n"
-    "if old then\n"
-    "    local data = redis.call('HGET', KEYS[2], old)\n"
-    "    local m = cjson.decode(data)\n"
-    "    if m.channel_id ~= ARGV[2] or m.content ~= ARGV[4] then\n"
-    "        return {'CONFLICT'}\n"
-    "    end\n"
-    "    return {'EXISTING', data}\n"
-    "end\n"
-    "if redis.call('HGET', KEYS[4], ARGV[2]) ~= ARGV[1] then return {'RETRY'} "
-    "end\n"
-    "local channel = cjson.decode(ARGV[1])\n"
-    "local allowed = false\n"
-    "for _, user in ipairs(channel.members) do if user == ARGV[3] then allowed"
-    " = true end end\n"
-    "if not allowed then return {'DENIED'} end\n"
-    "local current = tonumber(redis.call('GET', KEYS[1]) or '0')\n"
-    "if current >= 9007199254740990 then return {'LIMIT'} end\n"
-    "redis.call('INCR', KEYS[1])\n"
-    "local id = redis.call('GET', KEYS[1])\n"
-    "local m = cjson.decode(ARGV[7])\n"
-    "m.message_id = id\n"
-    "local data = cjson.encode(m)\n"
-    "redis.call('HSET', KEYS[2], id, data)\n"
-    "redis.call('HSET', KEYS[3], ARGV[6], id)\n"
-    "redis.call('ZADD', KEYS[7], id, id)\n"
-    "for i, user in ipairs(channel.members) do\n"
-    "    redis.call('ZADD', KEYS[11+i], id, id)\n"
-    "    if user ~= ARGV[3] then\n"
-    "        redis.call('XADD', KEYS[6], '*', 'user', user, 'message_id', id)"
-    "\n"
-    "    end\n"
-    "end\n"
-    "redis.call('XADD', KEYS[5], '*', 'data', data, 'members', cjson.encode(ch"
-    "annel.members))\n"
-    "return {'NEW', data}\n"
-)
-
 _ADD_MEMBER = (
     "\n"
     "local raw = redis.call('HGET', KEYS[1], ARGV[1])\n"
@@ -124,111 +73,21 @@ _LEASE = (
     "return 1\n"
 )
 
-_ADMIT = (
-    "\n"
-    "local time = redis.call('TIME'); local now = tonumber(time[1])+tonumber(t"
-    "ime[2])/1000000\n"
-    "local raw = redis.call('HGET', KEYS[1], ARGV[1])\n"
-    "if not raw or cjson.decode(raw).instance ~= ARGV[2] then return 0 end\n"
-    "if tonumber(redis.call('ZSCORE', KEYS[2], ARGV[1]) or '0') <= now then re"
-    "turn 0 end\n"
-    "local old = redis.call('HGET', KEYS[3], ARGV[3])\n"
-    "if (old or '') ~= ARGV[7] then return -1 end\n"
-    "local count=redis.call('ZCOUNT',KEYS[5],'('..now,'+inf')\n"
-    "if tonumber(redis.call('ZSCORE',KEYS[5],ARGV[3]) or '0')>now then count=c"
-    "ount-1 end\n"
-    "if count >= tonumber(ARGV[6]) then return 0 end\n"
-    "if old then redis.call('ZREM',KEYS[6],ARGV[3]) end\n"
-    "local record = cjson.decode(ARGV[4]); record.expires = now+tonumber(ARGV["
-    "5])\n"
-    "redis.call('HSET', KEYS[3], ARGV[3], cjson.encode(record))\n"
-    "redis.call('ZADD', KEYS[4], record.expires, ARGV[3])\n"
-    "redis.call('ZADD', KEYS[5], record.expires, ARGV[3])\n"
-    "redis.call('ZADD', KEYS[7], record.expires, ARGV[3])\n"
-    "redis.call('EXPIRE',KEYS[4],math.ceil(tonumber(ARGV[5])*2))\n"
-    "redis.call('EXPIRE',KEYS[5],math.ceil(tonumber(ARGV[5])*2))\n"
-    "return 1\n"
-)
-
-_SESSION = (
-    "\n"
-    "local time = redis.call('TIME'); local now = tonumber(time[1])+tonumber(t"
-    "ime[2])/1000000\n"
-    "local raw = redis.call('HGET', KEYS[1], ARGV[1])\n"
-    "if not raw then return 0 end\n"
-    "local s = cjson.decode(raw)\n"
-    "if s.session ~= ARGV[2] then return 0 end\n"
-    "if ARGV[3] == 'close' then\n"
-    "    redis.call('HDEL', KEYS[1], ARGV[1]); redis.call('ZREM', KEYS[2], ARG"
-    "V[1])\n"
-    "    redis.call('ZREM', KEYS[3], ARGV[1]); redis.call('ZREM',KEYS[6],ARGV["
-    "1]); return 1\n"
-    "end\n"
-    "if ARGV[5]~='' and redis.call('HGET',KEYS[7],ARGV[5])~=s.user then return"
-    " 0 end\n"
-    "if s.expires <= now then return 0 end\n"
-    "local node = redis.call('HGET', KEYS[4], s.node)\n"
-    "if not node or cjson.decode(node).instance ~= s.instance then return 0 en"
-    "d\n"
-    "if tonumber(redis.call('ZSCORE', KEYS[5], s.node) or '0') <= now then ret"
-    "urn 0 end\n"
-    "if ARGV[3] == 'heartbeat' then\n"
-    "    s.expires = now+tonumber(ARGV[4])\n"
-    "    redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(s))\n"
-    "    redis.call('ZADD', KEYS[2], s.expires, ARGV[1])\n"
-    "    redis.call('ZADD', KEYS[3], s.expires, ARGV[1])\n"
-    "    redis.call('ZADD', KEYS[6], s.expires, ARGV[1])\n"
-    "    redis.call('EXPIRE',KEYS[2],math.ceil(tonumber(ARGV[4])*2))\n"
-    "    redis.call('EXPIRE',KEYS[3],math.ceil(tonumber(ARGV[4])*2))\n"
-    "elseif ARGV[3] == 'close' then\n"
-    "    redis.call('HDEL', KEYS[1], ARGV[1]); redis.call('ZREM', KEYS[2], ARG"
-    "V[1])\n"
-    "    redis.call('ZREM', KEYS[3], ARGV[1])\n"
-    "end\n"
-    "return 1\n"
-)
-
-_ONLINE = (
-    "\n"
-    "local time = redis.call('TIME'); local now = tonumber(time[1])+tonumber(t"
-    "ime[2])/1000000\n"
-    "local devices = redis.call('ZRANGEBYSCORE', KEYS[1], '('..now, '+inf')\n"
-    "for _, device in ipairs(devices) do\n"
-    "    local raw = redis.call('HGET', KEYS[2], device)\n"
-    "    if raw then\n"
-    "        local s = cjson.decode(raw)\n"
-    "        local node = redis.call('HGET', KEYS[3], s.node)\n"
-    "        if node and s.expires > now and cjson.decode(node).instance == s."
-    "instance and\n"
-    "            tonumber(redis.call('ZSCORE', KEYS[4], s.node) or '0') > now "
-    "then return 1 end\n"
-    "    end\n"
-    "end\n"
-    "return 0\n"
-)
-
 
 class RedisBackend:
     """Redis-backed chat persistence, credentials, node leases, and session
     indexes.
     """
 
-    def __init__(
-        self, client, namespace="chat", wait_replicas=0, wait_timeout_ms=1000
-    ):
+    def __init__(self, client, namespace="chat", wait_replicas=0, wait_timeout_ms=1000):
         if not namespace or any(
-            c
-            not in (string.ascii_letters + string.digits + "-_")
-            for c in namespace
+            c not in (string.ascii_letters + string.digits + "-_") for c in namespace
         ):
             raise ValueError("invalid Redis namespace")
         self.redis = client
         self.prefix = "{" + namespace + "}:"
         if (
-            (
-                not isinstance(wait_replicas, int)
-                or isinstance(wait_replicas, bool)
-            )
+            (not isinstance(wait_replicas, int) or isinstance(wait_replicas, bool))
             or wait_replicas < 0
             or wait_timeout_ms < 1
         ):
@@ -312,9 +171,7 @@ class RedisBackend:
             # a
             # replication offset on this connection so WAIT also covers that
             # state.
-            pipeline.set(
-                self.key("replication_barrier"), uuid.uuid4().hex, ex=60
-            )
+            pipeline.set(self.key("replication_barrier"), uuid.uuid4().hex, ex=60)
             pipeline.wait(self.wait_replicas, self.wait_timeout_ms)
             result, _, replicas = await pipeline.execute()
         if replicas < self.wait_replicas:
@@ -332,9 +189,7 @@ class RedisBackend:
     @staticmethod
     def device_key(user, device):
         return digest(
-            json.dumps(
-                [identifier(user), identifier(device)], ensure_ascii=False
-            )
+            json.dumps([identifier(user), identifier(device)], ensure_ascii=False)
         )
 
     async def now(self):
@@ -368,14 +223,10 @@ class RedisBackend:
         return user
 
     async def revoke(self, token):
-        await self.write_confirmed(
-            "hdel", self.key("credentials"), digest(token)
-        )
+        await self.write_confirmed("hdel", self.key("credentials"), digest(token))
 
     async def _channel_raw(self, channel_id):
-        raw = await self.redis.hget(
-            self.key("channels"), identifier(channel_id)
-        )
+        raw = await self.redis.hget(self.key("channels"), identifier(channel_id))
         if raw is None:
             raise chat_system.models.ChatError("channel not found")
         return raw
@@ -390,9 +241,7 @@ class RedisBackend:
         return self._channel(await self._channel_raw(channel_id))
 
     async def create_channel(self, owner_id, members, kind, limit):
-        users = tuple(
-            sorted({identifier(u) for u in members} | {identifier(owner_id)})
-        )
+        users = tuple(sorted({identifier(u) for u in members} | {identifier(owner_id)}))
         if kind not in ("direct", "group") or not 2 <= len(users) <= limit:
             raise chat_system.models.ChatError("invalid channel")
         if kind == "direct" and len(users) != 2:
@@ -471,8 +320,7 @@ class RedisBackend:
             ]
             keys += [self.key("history:" + channel_id)]
             keys += [
-                self.key(n)
-                for n in ("sessions", "nodes", "node_expiry", "credentials")
+                self.key(n) for n in ("sessions", "nodes", "node_expiry", "credentials")
             ]
             keys += [self.user_key("inbox", u) for u in channel.members]
             result = await self.write_confirmed(
@@ -487,11 +335,7 @@ class RedisBackend:
                 client_message_id,
                 retry_key,
                 template,
-                (
-                    self.device_key(sender_id, session.device_id)
-                    if session
-                    else ""
-                ),
+                (self.device_key(sender_id, session.device_id) if session else ""),
                 session.session_id if session else "",
                 instance or "",
                 digest(session.token) if session else "",
@@ -558,9 +402,7 @@ class RedisBackend:
                 break
             for message_id in ids:
                 if (
-                    await self.redis.zscore(
-                        self.user_key("inbox", user_id), message_id
-                    )
+                    await self.redis.zscore(self.user_key("inbox", user_id), message_id)
                     is not None
                 ):
                     found.append(await self.get_message(message_id))
@@ -634,9 +476,7 @@ class RedisBackend:
             )
         )
 
-    async def admit(
-        self, user, device, session_id, node, instance, ttl, capacity
-    ):
+    async def admit(self, user, device, session_id, node, instance, ttl, capacity):
         device_key = self.device_key(user, device)
         record = json.dumps(
             {
@@ -650,9 +490,7 @@ class RedisBackend:
         )
         for _ in range(10):
             old = await self.redis.hget(self.key("sessions"), device_key)
-            previous = (
-                json.loads(old) if old else {"node": node, "instance": instance}
-            )
+            previous = json.loads(old) if old else {"node": node, "instance": instance}
             result = await self.redis.eval(
                 _ADMIT,
                 7,
@@ -662,10 +500,7 @@ class RedisBackend:
                 self.user_key("devices", user),
                 self.key("node_devices:" + node + ":" + instance),
                 self.key(
-                    "node_devices:"
-                    + previous["node"]
-                    + ":"
-                    + previous["instance"]
+                    "node_devices:" + previous["node"] + ":" + previous["instance"]
                 ),
                 self.key("sessions_expiry"),
                 node,
@@ -772,9 +607,7 @@ class RedisBackend:
                         30,
                         digest(session.token),
                     )
-                results.extend(
-                    bool(value) for value in await pipeline.execute()
-                )
+                results.extend(bool(value) for value in await pipeline.execute())
         return results
 
     async def is_online(self, user):

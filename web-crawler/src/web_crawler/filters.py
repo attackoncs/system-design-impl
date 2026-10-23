@@ -30,9 +30,7 @@ class URLFilter:
             ext.lower() for ext in extension_blacklist or []
         )
         self._domain_whitelist: Optional[Set[str]] = (
-            set(d.lower() for d in domain_whitelist)
-            if domain_whitelist
-            else None
+            set(d.lower() for d in domain_whitelist) if domain_whitelist else None
         )
         self._domain_blacklist: Set[str] = set(
             d.lower() for d in domain_blacklist or []

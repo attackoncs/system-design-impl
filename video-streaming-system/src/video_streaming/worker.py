@@ -72,9 +72,7 @@ class Worker:
                     bytes.fromhex(job["video_data"]["key_hex"]),
                 )
                 return {
-                    f"{job['profile']}/{path.name}": service.objects.put_file(
-                        path
-                    )
+                    f"{job['profile']}/{path.name}": service.objects.put_file(path)
                     for path in files
                 }
             if job["kind"] == "publish":
@@ -89,9 +87,7 @@ class Worker:
                     if name.startswith("encode-")
                 )
                 for profile in profiles:
-                    width, height, bitrate = video_streaming.service.PROFILES[
-                        profile
-                    ]
+                    width, height, bitrate = video_streaming.service.PROFILES[profile]
                     assets.update(outputs[f"encode-{profile}"])
                     playlist += [
                         (
@@ -108,8 +104,7 @@ class Worker:
                     ("\n".join(playlist) + "\n").encode()
                 )
                 if not profiles or any(
-                    not service.objects.file(key).is_file()
-                    for key in assets.values()
+                    not service.objects.file(key).is_file() for key in assets.values()
                 ):
                     raise RuntimeError("publication output incomplete")
                 return assets
@@ -130,9 +125,7 @@ class Worker:
             self.service.complete(job, self.execute(job))
         # Isolate this operation; record failures before continuing.
         except Exception as error:  # pylint: disable=broad-exception-caught
-            logging.getLogger(__name__).exception(
-                "Failure isolated in %s", "run_once"
-            )
+            logging.getLogger(__name__).exception("Failure isolated in %s", "run_once")
             self.service.fail(
                 job,
                 error,

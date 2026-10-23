@@ -108,7 +108,6 @@ def rate_limit(
 
     # Create a limiter if not provided
     if limiter is None:
-
         rule = rate_limiter_config.RateLimitRule(
             limit=limit, window=window, algorithm=algo
         )
@@ -125,11 +124,8 @@ def rate_limit(
             else:
                 # Try to extract from request context
                 # For Flask/FastAPI, the first argument is often the request
-                request_context = (
-                    args[0] if args else kwargs.get("request", None)
-                )
+                request_context = args[0] if args else kwargs.get("request", None)
                 if request_context is not None:
-
                     key = rate_limiter_keys.ip_key(request_context)
                 else:
                     # Fallback to function name
@@ -192,23 +188,17 @@ def _rate_limit_response(result: Any) -> dict:
 # Convenience decorators for specific algorithms
 def rate_limit_token_bucket(limit: int, window: int, **kwargs) -> Callable:
     """Rate limit using token bucket algorithm."""
-    return rate_limit(
-        limit=limit, window=window, algorithm="token_bucket", **kwargs
-    )
+    return rate_limit(limit=limit, window=window, algorithm="token_bucket", **kwargs)
 
 
 def rate_limit_leaking_bucket(limit: int, window: int, **kwargs) -> Callable:
     """Rate limit using leaking bucket algorithm."""
-    return rate_limit(
-        limit=limit, window=window, algorithm="leaking_bucket", **kwargs
-    )
+    return rate_limit(limit=limit, window=window, algorithm="leaking_bucket", **kwargs)
 
 
 def rate_limit_fixed_window(limit: int, window: int, **kwargs) -> Callable:
     """Rate limit using fixed window counter algorithm."""
-    return rate_limit(
-        limit=limit, window=window, algorithm="fixed_window", **kwargs
-    )
+    return rate_limit(limit=limit, window=window, algorithm="fixed_window", **kwargs)
 
 
 def rate_limit_sliding_window(limit: int, window: int, **kwargs) -> Callable:

@@ -64,9 +64,7 @@ class Crawler:
         self._results: list[web_crawler.models.CrawlResult] = []
         self._pages_crawled = 0
 
-    async def crawl(
-        self, seed_urls: list[str]
-    ) -> list[web_crawler.models.CrawlResult]:
+    async def crawl(self, seed_urls: list[str]) -> list[web_crawler.models.CrawlResult]:
         """Run the crawl loop starting from seed URLs.
 
         Enqueues seed URLs with HIGH priority at depth 0, then enters
@@ -81,51 +79,40 @@ class Crawler:
         """
         # Enqueue seed URLs
         for url in seed_urls:
-            self._enqueue_url(
-                url, priority=web_crawler.models.Priority.HIGH, depth=0
-            )
+            self._enqueue_url(url, priority=web_crawler.models.Priority.HIGH, depth=0)
 
-        # Crawl loop
         tasks: set[asyncio.Task] = set()
-        while not self._frontier.is_empty() or tasks:
-            # Check stop condition
-            if self._pages_crawled >= self._config.max_pages:
-                break
-
-            # Try to dequeue and start new downloads
-            while (
-                not self._frontier.is_empty()
-                and self._pages_crawled + len(tasks) < self._config.max_pages
-            ):
-                entry = self._frontier.get()
-                if entry is None:
-                    break  # No URL ready (politeness delay)
-                task = asyncio.create_task(self._process_url(entry))
-                tasks.add(task)
-                task.add_done_callback(tasks.discard)
-
-            if not tasks:
-                # No tasks running and nothing ready from frontier
-                # Wait briefly for politeness delays to expire
-                await asyncio.sleep(0.1)
-                continue
-
-            # Wait for at least one task to complete
-            _, tasks = await asyncio.wait(
-                tasks, return_when=asyncio.FIRST_COMPLETED
-            )
-
-        # Cancel remaining tasks if we hit max_pages
-        for task in tasks:
-            task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        try:
+            while not self._frontier.is_empty() or tasks:
+                if self._pages_crawled >= self._config.max_pages:
+                    break
+                while (
+                    not self._frontier.is_empty()
+                    and len(tasks) < self._config.max_concurrent
+                    and self._pages_crawled + len(tasks) < self._config.max_pages
+                ):
+                    entry = self._frontier.get()
+                    if entry is None:
+                        break
+                    tasks.add(asyncio.create_task(self._process_url(entry)))
+                if not tasks:
+                    await asyncio.sleep(0.1)
+                    continue
+                done, pending = await asyncio.wait(
+                    tasks, return_when=asyncio.FIRST_COMPLETED
+                )
+                # Keep all tasks owned until their exceptions have been observed.
+                await asyncio.gather(*done)
+                tasks = pending
+        finally:
+            for task in tasks:
+                task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
 
         return self._results
 
-    async def _process_url(
-        self, entry: web_crawler.models.FrontierEntry
-    ) -> None:
+    async def _process_url(self, entry: web_crawler.models.FrontierEntry) -> None:
         """Process a single URL through the full pipeline.
 
         Pipeline steps:

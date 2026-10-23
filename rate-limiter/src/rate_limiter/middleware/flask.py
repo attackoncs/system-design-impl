@@ -9,7 +9,7 @@ import flask
 
 from rate_limiter import config as rate_limiter_config
 from rate_limiter import core as rate_limiter_core
-from rate_limiter import keys as rate_limiter_keys
+from rate_limiter.middleware.configuration import RateLimitConfig, build_rule
 
 
 class RateLimitExtension:
@@ -126,9 +126,7 @@ class RateLimitExtension:
         response.headers["X-RateLimit-Limit"] = str(result.limit)
         response.headers["X-RateLimit-Remaining"] = str(result.remaining)
         response.headers["X-RateLimit-Reset"] = str(result.reset_after)
-        response.headers["Retry-After"] = str(
-            result.retry_after or result.reset_after
-        )
+        response.headers["Retry-After"] = str(result.retry_after or result.reset_after)
         return response
 
     def _add_rate_limit_headers(self, response) -> dict:
@@ -145,95 +143,10 @@ class RateLimitExtension:
         rate_limit_result = getattr(flask.g, "rate_limit_result", None)
         if rate_limit_result is not None:
             response.headers["X-RateLimit-Limit"] = str(rate_limit_result.limit)
-            response.headers["X-RateLimit-Remaining"] = str(
-                rate_limit_result.remaining
-            )
-            response.headers["X-RateLimit-Reset"] = str(
-                rate_limit_result.reset_after
-            )
+            response.headers["X-RateLimit-Remaining"] = str(rate_limit_result.remaining)
+            response.headers["X-RateLimit-Reset"] = str(rate_limit_result.reset_after)
 
         return response
-
-
-class RateLimitConfig:
-    """Configuration helper for rate limiting.
-
-    Provides a convenient way to configure rate limiting for Flask.
-
-    Example:
-        ```python
-        from flask import Flask
-        from rate_limiter.middleware.flask import RateLimitConfig, RateLimitExtension
-
-        app = Flask(__name__)
-
-        # Configure rate limiting
-        config = RateLimitConfig()
-        config.add_rule(limit=100, window=60, key_type="ip")
-        config.add_rule(limit=1000, window=3600, key_type="user_id")
-
-        # Initialize extension
-        rate_limiter = RateLimitExtension(app, config=config.get_config())
-        ```
-    """
-
-    def __init__(self) -> None:
-        self.rules: list[rate_limiter_config.RateLimitRule] = []
-
-    def add_rule(
-        self,
-        limit: int,
-        window: int,
-        algorithm: str = "token_bucket",
-        key_type: str = "ip",
-        path_pattern: Optional[str] = None,
-    ) -> None:
-        """Add a rate limiting rule.
-
-        Args:
-            limit: Maximum number of requests allowed in the window.
-            window: Time window in seconds.
-            algorithm: Rate limiting algorithm to use.
-            key_type: Type of key to use ('ip', 'user_id', 'path', 'method').
-            path_pattern: Optional path pattern to match (not implemented yet).
-        """
-
-        try:
-            algo = rate_limiter_config.Algorithm(algorithm.lower())
-        except ValueError as error:
-            raise ValueError(
-                f"Unknown algorithm: {algorithm}. Valid options:"
-                f" {', '.join(a.value for a in rate_limiter_config.Algorithm)}"
-            ) from error
-
-        # Create key function based on type
-        if key_type == "ip":
-            key_func = rate_limiter_keys.ip_key
-        elif key_type == "user_id":
-            key_func = rate_limiter_keys.user_id_key
-        elif key_type == "path":
-            key_func = rate_limiter_keys.path_key
-        elif key_type == "method":
-            key_func = rate_limiter_keys.method_key
-        else:
-            raise ValueError(f"Unknown key type: {key_type}")
-
-        rule = rate_limiter_config.RateLimitRule(
-            limit=limit,
-            window=window,
-            algorithm=algo,
-            key_func=key_func,
-            path_pattern=path_pattern,
-        )
-        self.rules.append(rule)
-
-    def get_config(self) -> rate_limiter_config.RateLimiterConfig:
-        """Get the rate_limiter_config.RateLimiterConfig for use with extension.
-
-        Returns:
-            Configured rate_limiter_config.RateLimiterConfig instance.
-        """
-        return rate_limiter_config.RateLimiterConfig(rules=self.rules)
 
 
 # Convenience decorator for rate limiting specific Flask routes
@@ -270,43 +183,17 @@ def rate_limit(
         ```
     """
 
-    # Convert algorithm string to enum
-    try:
-        algo = rate_limiter_config.Algorithm(algorithm.lower())
-    except ValueError as error:
-        raise ValueError(
-            f"Unknown algorithm: {algorithm}. Valid options:"
-            f" {', '.join(a.value for a in rate_limiter_config.Algorithm)}"
-        ) from error
-
     def decorator(func):
+        # Keep one backend for the lifetime of the decorated route. Creating
+        # a backend per request resets every counter and silently disables limits.
+        local_limiter = limiter
+        if local_limiter is None:
+            rule = build_rule(limit, window, algorithm, key_type)
+            config = rate_limiter_config.RateLimiterConfig(rules=[rule])
+            local_limiter = rate_limiter_core.RateLimiter(config)
+
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            # Create limiter if not provided
-            if limiter is None:
-                if key_type == "ip":
-                    key_func = rate_limiter_keys.ip_key
-                elif key_type == "user_id":
-                    key_func = rate_limiter_keys.user_id_key
-                elif key_type == "path":
-                    key_func = rate_limiter_keys.path_key
-                elif key_type == "method":
-                    key_func = rate_limiter_keys.method_key
-                else:
-                    raise ValueError(f"Unknown key type: {key_type}")
-
-                rule = rate_limiter_config.RateLimitRule(
-                    limit=limit,
-                    window=window,
-                    algorithm=algo,
-                    key_func=key_func,
-                )
-                config = rate_limiter_config.RateLimiterConfig(rules=[rule])
-                local_limiter = rate_limiter_core.RateLimiter(config)
-            else:
-                local_limiter = limiter
-                key_func = None
-
             # Check rate limit
             result = local_limiter.check_request(flask.request)
 
@@ -370,7 +257,5 @@ def create_rate_limited_app(
         ```
     """
     config = RateLimitConfig()
-    config.add_rule(
-        limit=limit, window=window, algorithm=algorithm, key_type=key_type
-    )
+    config.add_rule(limit=limit, window=window, algorithm=algorithm, key_type=key_type)
     return RateLimitExtension(app, config=config.get_config())

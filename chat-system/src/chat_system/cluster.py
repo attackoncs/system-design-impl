@@ -32,9 +32,7 @@ class DiscoveryHTTPServer:
             method, target, _ = line.split(" ")
             parsed = urllib.parse.urlsplit(target)
             if method == "GET" and parsed.path == "/discover":
-                region = urllib.parse.parse_qs(parsed.query).get(
-                    "region", [None]
-                )[0]
+                region = urllib.parse.parse_qs(parsed.query).get("region", [None])[0]
                 server = await self.backend.select(region)
                 status, body = "200 OK", dataclasses.asdict(server)
             elif method == "GET" and parsed.path == "/health":
@@ -43,9 +41,10 @@ class DiscoveryHTTPServer:
             else:
                 status, body = "404 Not Found", {"error": "not found"}
         except (chat_system.models.ChatError, ConnectionError):
-            status, body = "503 Service Unavailable", {
-                "error": "no available chat server"
-            }
+            status, body = (
+                "503 Service Unavailable",
+                {"error": "no available chat server"},
+            )
         except (
             ValueError,
             asyncio.TimeoutError,
@@ -55,12 +54,8 @@ class DiscoveryHTTPServer:
             pass
         # Isolate this operation; record failures before continuing.
         except Exception:  # pylint: disable=broad-exception-caught
-            logging.getLogger(__name__).exception(
-                "Failure isolated in %s", "handler"
-            )
-            status, body = "503 Service Unavailable", {
-                "error": "service unavailable"
-            }
+            logging.getLogger(__name__).exception("Failure isolated in %s", "handler")
+            status, body = "503 Service Unavailable", {"error": "service unavailable"}
         try:
             payload = json.dumps(body).encode()
             writer.write(
@@ -94,15 +89,11 @@ async def run(args):
             await backend.revoke(token)
         elif args.command == "discover":
             print(
-                json.dumps(
-                    dataclasses.asdict(await backend.select(args.region))
-                ),
+                json.dumps(dataclasses.asdict(await backend.select(args.region))),
                 flush=True,
             )
         elif args.command == "discovery":
-            server = await DiscoveryHTTPServer(backend).start(
-                args.host, args.port
-            )
+            server = await DiscoveryHTTPServer(backend).start(args.host, args.port)
             async with server:
                 print("Discovery service ready", flush=True)
                 await server.serve_forever()
@@ -115,9 +106,7 @@ async def run(args):
                 args.capacity,
                 args.lease,
                 args.poll,
-                chat_system.models.ChatConfig(
-                    heartbeat_timeout=args.heartbeat_timeout
-                ),
+                chat_system.models.ChatConfig(heartbeat_timeout=args.heartbeat_timeout),
             )
             adapter = chat_system.transport.WebSocketChatServer(service)
             # Open socket before publishing the node's lease.
@@ -154,9 +143,7 @@ def parser():
         "--redis-url",
         default=os.environ.get("CHAT_REDIS_URL", "redis://127.0.0.1:6379/0"),
     )
-    root.add_argument(
-        "--namespace", default=os.environ.get("CHAT_NAMESPACE", "chat")
-    )
+    root.add_argument("--namespace", default=os.environ.get("CHAT_NAMESPACE", "chat"))
     root.add_argument(
         "--sentinels",
         default=os.environ.get("CHAT_REDIS_SENTINELS", ""),

@@ -22,13 +22,11 @@ class EventTracker:
     """
 
     def __init__(self, clock: Optional[callable] = None) -> None:
-        self._clock = clock or (
-            lambda: datetime.datetime.now(datetime.timezone.utc)
-        )
+        self._clock = clock or (lambda: datetime.datetime.now(datetime.timezone.utc))
         # notification_id -> list of events (ordered by time)
-        self._events: dict[
-            str, list[notification_system.models.NotificationEvent]
-        ] = collections.defaultdict(list)
+        self._events: dict[str, list[notification_system.models.NotificationEvent]] = (
+            collections.defaultdict(list)
+        )
 
     def record(
         self,
@@ -127,10 +125,7 @@ class EventTracker:
                 continue
             if end_time and last_event.timestamp > end_time:
                 continue
-            if (
-                last_event.status
-                == notification_system.models.NotificationStatus.SENT
-            ):
+            if last_event.status == notification_system.models.NotificationStatus.SENT:
                 counts["total_sent"] += 1
             elif (
                 last_event.status
@@ -174,10 +169,7 @@ class EventTracker:
                 notification_system.models.NotificationStatus.CLICKED,
             ):
                 success += 1
-            elif (
-                last_status
-                == notification_system.models.NotificationStatus.FAILED
-            ):
+            elif last_status == notification_system.models.NotificationStatus.FAILED:
                 failed += 1
 
         return {

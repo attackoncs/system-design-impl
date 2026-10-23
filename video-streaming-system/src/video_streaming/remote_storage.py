@@ -72,9 +72,7 @@ class S3Objects(video_streaming.storage.LocalObjects):
             or prefix.startswith("/")
             or ".." in prefix.split("/")
         ):
-            raise ValueError(
-                "private bucket and nonempty isolated prefix required"
-            )
+            raise ValueError("private bucket and nonempty isolated prefix required")
         self.bucket, self.prefix = bucket, prefix.rstrip("/") + "/"
         if client is None:
             if boto3 is None or botocore is None:
@@ -105,9 +103,7 @@ class S3Objects(video_streaming.storage.LocalObjects):
         """
         video_streaming.storage.LocalObjects.file(self, key)
         try:
-            return self.client.head_object(
-                Bucket=self.bucket, Key=self.prefix + key
-            )
+            return self.client.head_object(Bucket=self.bucket, Key=self.prefix + key)
         except Exception as error:
             response = getattr(error, "response", {})
             if response.get("Error", {}).get("Code") in (
@@ -198,9 +194,7 @@ class S3Objects(video_streaming.storage.LocalObjects):
                         and key not in references
                         and item["LastModified"].timestamp() < cutoff
                     ):
-                        self.client.delete_object(
-                            Bucket=self.bucket, Key=item["Key"]
-                        )
+                        self.client.delete_object(Bucket=self.bucket, Key=item["Key"])
                         removed += 1
         except Exception:
             raise OSError("object sweep unavailable") from None

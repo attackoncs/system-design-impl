@@ -37,9 +37,7 @@ class Post:
     created_at: datetime.datetime = dataclasses.field(
         default_factory=lambda: datetime.datetime.now(datetime.timezone.utc)
     )
-    selective_sharing: Optional[List[str]] = (
-        None  # None = public to all followers
-    )
+    selective_sharing: Optional[List[str]] = None  # None = public to all followers
 
 
 @dataclasses.dataclass(frozen=True)

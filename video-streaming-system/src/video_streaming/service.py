@@ -1,9 +1,9 @@
 """Resumable uploads, persistent leased DAG and completion outbox."""
 
-import base64
 import collections
+from . import grants
+
 import hashlib
-import hmac
 import json
 import math
 import re
@@ -137,54 +137,14 @@ class VideoService:
         return row[0]
 
     def _sign(self, value):
-        data = (
-            base64.urlsafe_b64encode(
-                json.dumps(value, separators=(",", ":")).encode()
-            )
-            .decode()
-            .rstrip("=")
-        )
-        return (
-            data
-            + "."
-            + hmac.new(self.secret, data.encode(), hashlib.sha256).hexdigest()
-        )
+        return grants.sign(self.secret, value)
 
     def verify(self, token, kind):
-        """Validate a signed grant and return its decoded claims.
-
-        Args:
-            token: Signed upload or playback grant.
-            kind: Required grant kind, either "upload" or "play".
-
-        Returns:
-            A claims dictionary whose signature, kind, and expiry were checked.
-
-        Raises:
-            PermissionError: The grant is invalid, expired, or of another kind.
-        """
-        try:
-            if not isinstance(token, str) or len(token) > 2048:
-                raise ValueError()
-            data, signature = token.split(".")
-            expected = hmac.new(
-                self.secret, data.encode(), hashlib.sha256
-            ).hexdigest()
-            if not hmac.compare_digest(signature, expected):
-                raise ValueError()
-            claims = json.loads(
-                base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
-            )
-            if claims["kind"] != kind or claims["expires"] <= self.clock():
-                raise ValueError()
-            return claims
-        except (ValueError, KeyError, TypeError, UnicodeError):
-            raise PermissionError("invalid or expired grant") from None
+        """Validate a signed grant using the configured clock and secret."""
+        return grants.verify(self.secret, self.clock, token, kind)
 
     def _video(self, video):
-        row = self.db.execute(
-            "SELECT * FROM videos WHERE id=?", (video,)
-        ).fetchone()
+        row = self.db.execute("SELECT * FROM videos WHERE id=?", (video,)).fetchone()
         if row is None:
             raise ValueError("video not found")
         return dict(row)
@@ -225,8 +185,7 @@ class VideoService:
         video = uuid.uuid4().hex
         with self.lock, self.db:
             self.db.execute(
-                "INSERT INTO videos"
-                " VALUES(?,?,?,?,?,'UPLOADING',NULL,'{}',?,?)",
+                "INSERT INTO videos VALUES(?,?,?,?,?,'UPLOADING',NULL,'{}',?,?)",
                 (
                     video,
                     owner,
@@ -256,9 +215,7 @@ class VideoService:
             ValueError: The upload state or lifetime is invalid.
         """
         owner = self.authenticate(token)
-        if (
-            not isinstance(ttl, int) or isinstance(ttl, bool)
-        ) or not 1 <= ttl <= 86400:
+        if (not isinstance(ttl, int) or isinstance(ttl, bool)) or not 1 <= ttl <= 86400:
             raise ValueError("invalid grant lifetime")
         with self.lock, self.db:
             value = self._video(video)
@@ -414,9 +371,7 @@ class VideoService:
                 ("inspect", "inspect", None, []),
                 ("thumbnail", "thumbnail", None, ["inspect"]),
             ]
-            jobs += [
-                (f"encode-{p}", "encode", p, ["inspect"]) for p in self.profiles
-            ]
+            jobs += [(f"encode-{p}", "encode", p, ["inspect"]) for p in self.profiles]
             jobs += [
                 (
                     "publish",
@@ -447,8 +402,7 @@ class VideoService:
 
     def _cancel(self, video):
         self.db.execute(
-            "UPDATE videos SET state='FAILED' WHERE id=? AND"
-            " state='PROCESSING'",
+            "UPDATE videos SET state='FAILED' WHERE id=? AND state='PROCESSING'",
             (video,),
         )
         self.db.execute(
@@ -487,8 +441,7 @@ class VideoService:
                     self._cancel(row["video"])
                 else:
                     self.db.execute(
-                        "UPDATE jobs SET state='QUEUED',lease=NULL,due=? WHERE"
-                        " id=?",
+                        "UPDATE jobs SET state='QUEUED',lease=NULL,due=? WHERE id=?",
                         (now, row["id"]),
                     )
             for row in self.db.execute(
@@ -603,8 +556,7 @@ class VideoService:
             return {
                 row["name"]: json.loads(row["output"])
                 for row in self.db.execute(
-                    "SELECT name,output FROM jobs WHERE video=? AND"
-                    " state='DONE'",
+                    "SELECT name,output FROM jobs WHERE video=? AND state='DONE'",
                     (video,),
                 )
             }
@@ -625,8 +577,7 @@ class VideoService:
                     not assets
                     or "master.m3u8" not in assets
                     or any(
-                        not self.objects.file(key).is_file()
-                        for key in assets.values()
+                        not self.objects.file(key).is_file() for key in assets.values()
                     )
                 ):
                     # Preserve the outbox until object storage recovers.
@@ -659,9 +610,7 @@ class VideoService:
             ValueError: The video is not ready or the lifetime is invalid.
         """
         owner = self.authenticate(token)
-        if (
-            not isinstance(ttl, int) or isinstance(ttl, bool)
-        ) or not 1 <= ttl <= 3600:
+        if (not isinstance(ttl, int) or isinstance(ttl, bool)) or not 1 <= ttl <= 3600:
             raise ValueError("invalid playback lifetime")
         with self.lock:
             value = self._video(video)
@@ -707,9 +656,7 @@ class VideoService:
             value = self._video(video)
             if value["owner"] != owner:
                 raise PermissionError("not the owner")
-            self.db.execute(
-                "UPDATE videos SET state='REMOVED' WHERE id=?", (video,)
-            )
+            self.db.execute("UPDATE videos SET state='REMOVED' WHERE id=?", (video,))
             self.db.execute(
                 "UPDATE jobs SET state='CANCELLED' WHERE video=? AND state IN"
                 " ('QUEUED','RUNNING')",
@@ -759,9 +706,7 @@ class VideoService:
                 if isinstance(value, dict):
                     for child in value.values():
                         collect(child)
-                elif isinstance(value, str) and re.fullmatch(
-                    r"[0-9a-f]{64}", value
-                ):
+                elif isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value):
                     references.add(value)
 
             for row in self.db.execute(
@@ -801,8 +746,7 @@ class VideoService:
             live = {
                 r[0]
                 for r in self.db.execute(
-                    "SELECT lease FROM jobs WHERE state='RUNNING' AND"
-                    " expires>?",
+                    "SELECT lease FROM jobs WHERE state='RUNNING' AND expires>?",
                     (self.clock(),),
                 )
             }

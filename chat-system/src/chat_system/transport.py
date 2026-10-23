@@ -46,9 +46,7 @@ class WebSocketChatServer:
             return {"online": True}
         if op == "direct":
             return dataclasses.asdict(
-                await resolve(
-                    service.create_direct(session, request["recipient_id"])
-                )
+                await resolve(service.create_direct(session, request["recipient_id"]))
             )
         if op == "group":
             members = request["members"]
@@ -80,9 +78,7 @@ class WebSocketChatServer:
                 messages = await resolve(service.sync(session, after, limit))
             else:
                 messages = await resolve(
-                    service.history(
-                        session, request["channel_id"], after, limit
-                    )
+                    service.history(session, request["channel_id"], after, limit)
                 )
             # Page size is also bounded in bytes; Unicode content can be much
             # larger
@@ -91,9 +87,7 @@ class WebSocketChatServer:
             page, byte_count = [], 0
             for message in messages:
                 value = dataclasses.asdict(message)
-                size = len(
-                    json.dumps(value, ensure_ascii=False).encode("utf-8")
-                )
+                size = len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
                 if page and byte_count + size > 1_900_000:
                     break
                 page.append(value)
@@ -131,17 +125,13 @@ class WebSocketChatServer:
                 event = await session.queue.get()
                 await write(event)
                 if event["type"] == "closed":
-                    await websocket.close(
-                        code=1000, reason="reconnect and sync"
-                    )
+                    await websocket.close(code=1000, reason="reconnect and sync")
                     return
 
         try:
             while True:
                 if session is None:
-                    timeout = max(
-                        0, deadline - asyncio.get_running_loop().time()
-                    )
+                    timeout = max(0, deadline - asyncio.get_running_loop().time())
                     raw = await asyncio.wait_for(websocket.recv(), timeout)
                 else:
                     raw = await websocket.recv()
@@ -157,9 +147,7 @@ class WebSocketChatServer:
                             "JSON object with operation required"
                         )
                     request_id = request.get("request_id")
-                    if not (
-                        request_id is None or isinstance(request_id, (str, int))
-                    ):
+                    if not (request_id is None or isinstance(request_id, (str, int))):
                         request_id = None
                         raise chat_system.models.ChatError("invalid request ID")
                     if session is None:
@@ -168,9 +156,7 @@ class WebSocketChatServer:
                                 "login required"
                             )
                         session = await resolve(
-                            self.service.connect(
-                                request["token"], request["device_id"]
-                            )
+                            self.service.connect(request["token"], request["device_id"])
                         )
                         self._owned_sessions.add(session)
                         result = {
@@ -217,9 +203,7 @@ class WebSocketChatServer:
                             "type": "response",
                             "request_id": request_id,
                             "ok": False,
-                            "error": (
-                                "service unavailable; rediscover and retry"
-                            ),
+                            "error": ("service unavailable; rediscover and retry"),
                         }
                     )
         except asyncio.TimeoutError:
@@ -249,9 +233,7 @@ class WebSocketChatServer:
                     "Failure isolated in %s", "_cleanup"
                 )
                 continue
-            self._owned_sessions = {
-                s for s in self._owned_sessions if not s.closed
-            }
+            self._owned_sessions = {s for s in self._owned_sessions if not s.closed}
 
     @contextlib.asynccontextmanager
     async def running(self, host="127.0.0.1", port=8765, **options):
@@ -264,7 +246,9 @@ class WebSocketChatServer:
         options.setdefault("max_size", 2_000_000)
         cleanup = asyncio.create_task(self._cleanup())
         try:
-            async with websockets.asyncio.server.serve(self.handler, host, port, **options) as server:
+            async with websockets.asyncio.server.serve(
+                self.handler, host, port, **options
+            ) as server:
                 yield server
         finally:
             cleanup.cancel()

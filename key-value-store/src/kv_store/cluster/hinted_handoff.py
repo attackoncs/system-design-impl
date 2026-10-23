@@ -65,6 +65,7 @@ class HintedHandoffManager:
 
         # In-memory hint storage: target_node_id -> list of hints
         self._hints: dict[str, list[HintedData]] = {}
+        self._delivery_locks: dict[str, asyncio.Lock] = {}
 
         self._running = False
         self._task: Optional[asyncio.Task] = None
@@ -125,25 +126,29 @@ class HintedHandoffManager:
             True if delivery succeeded (or no hints to deliver), False
             otherwise.
         """
-        hints = self._hints.get(target_node_id)
-        if not hints:
-            return True
-
-        if self._deliver_func is None:
-            return False
-
-        try:
-            success = await self._deliver_func(target_node_id, hints)
-            if success:
-                # Remove delivered hints
-                del self._hints[target_node_id]
-            return success
-        # Isolate this operation; record failures before continuing.
-        except Exception:  # pylint: disable=broad-exception-caught
-            logging.getLogger(__name__).exception(
-                "Failure isolated in %s", "deliver_hints"
-            )
-            return False
+        lock = self._delivery_locks.setdefault(target_node_id, asyncio.Lock())
+        async with lock:
+            hints = list(self._hints.get(target_node_id, ()))
+            if not hints:
+                return True
+            if self._deliver_func is None:
+                return False
+            count = len(hints)
+            try:
+                success = await self._deliver_func(target_node_id, hints)
+                if success:
+                    # New hints may have arrived during network I/O. Remove only
+                    # the acknowledged prefix, never the whole mutable queue.
+                    current = self._hints[target_node_id]
+                    del current[:count]
+                    if not current:
+                        del self._hints[target_node_id]
+                return success
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "Hint delivery failed for %s", target_node_id
+                )
+                return False
 
     async def _handoff_loop(self) -> None:
         """Background loop that attempts to deliver hints to recovered

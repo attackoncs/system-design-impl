@@ -20,7 +20,9 @@ def run(config, shard):
         except Exception as exc:
             if job:
                 try:
-                    http_json(url + "/internal/retry", token, {"job": job, "error": str(exc)})
+                    http_json(
+                        url + "/internal/retry", token, {"job": job, "error": str(exc)}
+                    )
                 except Exception:
                     pass  # The durable lease will expire; no job is acknowledged.
             time.sleep(0.1)

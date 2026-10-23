@@ -229,8 +229,8 @@ class TestFailOpenBehavior:
         limiter = rate_limiter.core.RateLimiter(config)
 
         # Make storage raise an exception
-        limiter._storage = unittest.mock.MagicMock()
-        limiter._storage.execute_atomic.side_effect = RuntimeError(
+        limiter._storage = unittest.mock.Mock(wraps=limiter.storage)
+        limiter._storage.execute_algorithm.side_effect = RuntimeError(
             "Storage unavailable"
         )
         limiter._storage.get.side_effect = RuntimeError("Storage unavailable")
@@ -264,8 +264,8 @@ class TestFailClosedBehavior:
         limiter = rate_limiter.core.RateLimiter(config)
 
         # Make storage raise an exception
-        limiter._storage = unittest.mock.MagicMock()
-        limiter._storage.execute_atomic.side_effect = RuntimeError(
+        limiter._storage = unittest.mock.Mock(wraps=limiter.storage)
+        limiter._storage.execute_algorithm.side_effect = RuntimeError(
             "Storage unavailable"
         )
         limiter._storage.get.side_effect = RuntimeError("Storage unavailable")

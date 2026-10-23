@@ -95,9 +95,7 @@ class KVNode:
         )
 
         # Replication layer - quorum manager
-        self._quorum_manager = replication_quorum.QuorumManager(
-            config.replication
-        )
+        self._quorum_manager = replication_quorum.QuorumManager(config.replication)
 
         # Replication layer - request coordinator
         self._coordinator = replication_coordinator.RequestCoordinator(
@@ -189,9 +187,7 @@ class KVNode:
                 (f"seed-{i}", addr)
                 for i, addr in enumerate(self._config.cluster.seed_nodes)
             ]
-            await self._membership.join_cluster(
-                seed_nodes if seed_nodes else None
-            )
+            await self._membership.join_cluster(seed_nodes if seed_nodes else None)
             logger.info("Joined cluster")
 
             # 4. Start hinted handoff
@@ -271,9 +267,7 @@ class KVNode:
                 Returns:
                     PutResult with success status and updated vector clock.
         """
-        return await self._coordinator.put(
-            key, value, client_clock, consistency
-        )
+        return await self._coordinator.put(key, value, client_clock, consistency)
 
     async def get(
         self,

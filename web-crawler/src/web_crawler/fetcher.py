@@ -91,6 +91,4 @@ class URLLibFetcher(Fetcher):
         except urllib.error.URLError as e:
             raise web_crawler.exceptions.FetchError(url, str(e.reason)) from e
         except TimeoutError as e:
-            raise web_crawler.exceptions.FetchError(
-                url, "Request timed out"
-            ) from e
+            raise web_crawler.exceptions.FetchError(url, "Request timed out") from e

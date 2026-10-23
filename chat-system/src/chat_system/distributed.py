@@ -26,11 +26,7 @@ class DistributedChatService:
         poll_interval=0.2,
         config=None,
     ):
-        if (
-            capacity < 1
-            or node_lease <= 0
-            or not 0 < poll_interval < node_lease / 2
-        ):
+        if capacity < 1 or node_lease <= 0 or not 0 < poll_interval < node_lease / 2:
             raise ValueError("invalid capacity or lease intervals")
         self.backend = backend
         self.store = backend
@@ -159,9 +155,7 @@ class DistributedChatService:
             self.capacity,
         )
         if not admitted:
-            raise chat_system.models.ChatError(
-                "node full or lease expired; rediscover"
-            )
+            raise chat_system.models.ChatError("node full or lease expired; rediscover")
         previous = self._sessions.get((user, device_id))
         if previous:
             self._local_close(previous)
@@ -172,8 +166,7 @@ class DistributedChatService:
     async def validate_session(self, session):
         if (
             session.closed
-            or self._sessions.get((session.user_id, session.device_id))
-            is not session
+            or self._sessions.get((session.user_id, session.device_id)) is not session
         ):
             raise chat_system.models.AuthenticationError("session closed")
         valid = await self.backend.session_operation(
@@ -186,9 +179,7 @@ class DistributedChatService:
         )
         if not valid:
             self._local_close(session)
-            raise chat_system.models.AuthenticationError(
-                "expired or replaced session"
-            )
+            raise chat_system.models.AuthenticationError("expired or replaced session")
 
     async def heartbeat(self, session):
         """Refresh the lease of an authenticated active session.
@@ -201,8 +192,7 @@ class DistributedChatService:
         """
         if (
             session.closed
-            or self._sessions.get((session.user_id, session.device_id))
-            is not session
+            or self._sessions.get((session.user_id, session.device_id)) is not session
         ):
             raise chat_system.models.AuthenticationError("session closed")
         valid = await self.backend.session_operation(
@@ -217,9 +207,7 @@ class DistributedChatService:
         )
         if not valid:
             self._local_close(session)
-            raise chat_system.models.AuthenticationError(
-                "expired or replaced session"
-            )
+            raise chat_system.models.AuthenticationError("expired or replaced session")
 
     async def disconnect(self, session):
         """Close a session and publish offline presence when appropriate.
@@ -243,9 +231,7 @@ class DistributedChatService:
     async def expire_sessions(self):
         """Disconnect expired or revoked sessions and update presence."""
         sessions = list(self._sessions.values())
-        valid = await self.backend.check_sessions(
-            sessions, self.node_id, self.instance
-        )
+        valid = await self.backend.check_sessions(sessions, self.node_id, self.instance)
         for session, alive in zip(sessions, valid):
             if not alive:
                 await self.disconnect(session)
@@ -268,9 +254,7 @@ class DistributedChatService:
             ChatError: The subscription or session is invalid.
         """
         await self.validate_session(session)
-        users = {
-            chat_system.redis_backend.identifier(user) for user in user_ids
-        }
+        users = {chat_system.redis_backend.identifier(user) for user in user_ids}
         if len(users) > 100:
             raise chat_system.models.ChatError("too many subscriptions")
         snapshot = {user: await self.is_online(user) for user in users}
@@ -393,9 +377,7 @@ class DistributedChatService:
             Messages visible to the caller after the cursor.
         """
         await self.validate_session(session)
-        return await self.store.history(
-            channel_id, session.user_id, after, limit
-        )
+        return await self.store.history(channel_id, session.user_id, after, limit)
 
     async def _consume(self):
         while True:
@@ -423,9 +405,7 @@ class DistributedChatService:
                         recipients, self.node_id, self.instance
                     )
                     valid = {
-                        session
-                        for session, alive in zip(recipients, checks)
-                        if alive
+                        session for session, alive in zip(recipients, checks) if alive
                     }
                     for session, alive in zip(recipients, checks):
                         if not alive:

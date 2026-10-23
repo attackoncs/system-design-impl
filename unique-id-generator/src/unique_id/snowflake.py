@@ -53,34 +53,30 @@ class SnowflakeGenerator:
             ClockMovedBackwardsError: If system clock moved backwards.
         """
         with self._lock:
-            timestamp = self._current_millis()
+            return self._generate_locked()
 
-            if timestamp < self._last_timestamp:
-                raise unique_id.exceptions.ClockMovedBackwardsError(
-                    self._last_timestamp, timestamp
-                )
-
-            if timestamp == self._last_timestamp:
-                self._sequence = (
-                    self._sequence + 1
-                ) & self._config.max_sequence
-                if self._sequence == 0:
-                    # Sequence overflow — wait for next millisecond
-                    timestamp = self._wait_next_millis(self._last_timestamp)
-            else:
-                self._sequence = 0
-
-            self._last_timestamp = timestamp
-
-            # Compose the 64-bit ID
-            ts_offset = timestamp - self._config.epoch_ms
-            id_value = (
-                (ts_offset << self._config.timestamp_shift)
-                | (self._config.datacenter_id << self._config.datacenter_shift)
-                | (self._config.machine_id << self._config.machine_shift)
-                | self._sequence
+    def _generate_locked(self) -> int:
+        """Validate first, then atomically publish the next sequence state."""
+        timestamp = self._current_millis()
+        if timestamp < self._last_timestamp:
+            raise unique_id.exceptions.ClockMovedBackwardsError(
+                self._last_timestamp, timestamp
             )
-            return id_value
+        sequence = 0
+        if timestamp == self._last_timestamp:
+            sequence = (self._sequence + 1) & self._config.max_sequence
+            if sequence == 0:
+                timestamp = self._wait_next_millis(self._last_timestamp)
+        offset = timestamp - self._config.epoch_ms
+        if not 0 <= offset <= self._config.max_timestamp:
+            raise ValueError("timestamp outside configured Snowflake bit range")
+        self._last_timestamp, self._sequence = timestamp, sequence
+        return (
+            (offset << self._config.timestamp_shift)
+            | (self._config.datacenter_id << self._config.datacenter_shift)
+            | (self._config.machine_id << self._config.machine_shift)
+            | sequence
+        )
 
     def generate_batch(self, count: int) -> list[int]:
         """Generate multiple unique IDs efficiently.
@@ -98,43 +94,11 @@ class SnowflakeGenerator:
             ValueError: If count is not positive.
             ClockMovedBackwardsError: If system clock moved backwards.
         """
-        if count <= 0:
+        if type(count) is not int or count <= 0:
             raise ValueError(f"count must be positive, got {count}")
 
-        ids: list[int] = []
         with self._lock:
-            for _ in range(count):
-                timestamp = self._current_millis()
-
-                if timestamp < self._last_timestamp:
-                    raise unique_id.exceptions.ClockMovedBackwardsError(
-                        self._last_timestamp, timestamp
-                    )
-
-                if timestamp == self._last_timestamp:
-                    self._sequence = (
-                        self._sequence + 1
-                    ) & self._config.max_sequence
-                    if self._sequence == 0:
-                        timestamp = self._wait_next_millis(self._last_timestamp)
-                else:
-                    self._sequence = 0
-
-                self._last_timestamp = timestamp
-
-                ts_offset = timestamp - self._config.epoch_ms
-                id_value = (
-                    (ts_offset << self._config.timestamp_shift)
-                    | (
-                        self._config.datacenter_id
-                        << self._config.datacenter_shift
-                    )
-                    | (self._config.machine_id << self._config.machine_shift)
-                    | self._sequence
-                )
-                ids.append(id_value)
-
-        return ids
+            return [self._generate_locked() for _ in range(count)]
 
     def _wait_next_millis(self, last_timestamp: int) -> int:
         """Spin-wait until the clock advances past the given timestamp.

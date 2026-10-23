@@ -38,12 +38,8 @@ class NotificationService:
         self,
         config: Optional[notification_system.config.NotificationConfig] = None,
         queue: Optional[notification_system.queue.MessageQueue] = None,
-        settings: Optional[
-            notification_system.settings.NotificationSettings
-        ] = None,
-        contacts: Optional[
-            notification_system.contacts.ContactInfoStore
-        ] = None,
+        settings: Optional[notification_system.settings.NotificationSettings] = None,
+        contacts: Optional[notification_system.contacts.ContactInfoStore] = None,
         rate_limiter: Optional[
             notification_system.rate_limiter.SlidingWindowRateLimiter
         ] = None,
@@ -69,12 +65,8 @@ class NotificationService:
         self._queue = queue or notification_system.queue.MessageQueue(
             max_depth=self._config.queue_max_depth
         )
-        self._settings = (
-            settings or notification_system.settings.NotificationSettings()
-        )
-        self._contacts = (
-            contacts or notification_system.contacts.ContactInfoStore()
-        )
+        self._settings = settings or notification_system.settings.NotificationSettings()
+        self._contacts = contacts or notification_system.contacts.ContactInfoStore()
         self._rate_limiter = (
             rate_limiter
             or notification_system.rate_limiter.SlidingWindowRateLimiter(
@@ -82,16 +74,12 @@ class NotificationService:
                 global_limit=self._config.global_rate_limit,
             )
         )
-        self._deduplicator = (
-            deduplicator
-            or notification_system.dedup.Deduplicator(
-                window_seconds=self._config.dedup_window_seconds
-            )
+        self._deduplicator = deduplicator or notification_system.dedup.Deduplicator(
+            window_seconds=self._config.dedup_window_seconds
         )
         self._tracker = tracker or notification_system.tracker.EventTracker()
         self._templates = (
-            template_registry
-            or notification_system.templates.TemplateRegistry()
+            template_registry or notification_system.templates.TemplateRegistry()
         )
 
     @property
@@ -164,9 +152,7 @@ class NotificationService:
             )
 
         # 2. Check preferences: reject if user opted out
-        if not self._settings.is_opted_in(
-            request.recipient_id, request.channel
-        ):
+        if not self._settings.is_opted_in(request.recipient_id, request.channel):
             # Record UNSUBSCRIBED event before rejecting
             self._tracker.record(
                 notification_id,

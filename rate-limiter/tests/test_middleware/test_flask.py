@@ -370,3 +370,20 @@ class TestAutoHeadersDisabled:
         assert response.status_code == 429
         assert "X-RateLimit-Limit" in response.headers
         assert "Retry-After" in response.headers
+
+
+def test_route_decorator_retains_counter_between_requests():
+    import flask
+    from rate_limiter.middleware.flask import rate_limit
+    from unittest.mock import patch
+
+    app = flask.Flask(__name__)
+    @app.route('/limited')
+    @rate_limit(limit=1, window=60, algorithm='fixed_window')
+    def endpoint():
+        return 'ok'
+    with patch('time.time', return_value=120):
+        with app.test_client() as client:
+            assert client.get('/limited').status_code == 200
+            assert client.get('/limited').status_code == 429
+            assert client.get('/limited').status_code == 429

@@ -3,9 +3,9 @@
 import unittest
 import unittest.mock
 
-import src.rate_limiter.algorithms.sliding_window_log
-import src.rate_limiter.config
-import src.rate_limiter.storage.memory
+import rate_limiter.algorithms.sliding_window_log
+import rate_limiter.config
+import rate_limiter.storage.memory
 
 
 class TestSlidingWindowLogAlgorithm(unittest.TestCase):
@@ -13,10 +13,10 @@ class TestSlidingWindowLogAlgorithm(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.algorithm = src.rate_limiter.algorithms.sliding_window_log.SlidingWindowLogAlgorithm()
-        self.storage = src.rate_limiter.storage.memory.MemoryStorage()
-        self.rule = src.rate_limiter.config.RateLimitRule(
-            limit=5, window=60, algorithm=src.rate_limiter.config.Algorithm.SLIDING_WINDOW_LOG
+        self.algorithm = rate_limiter.algorithms.sliding_window_log.SlidingWindowLogAlgorithm()
+        self.storage = rate_limiter.storage.memory.MemoryStorage()
+        self.rule = rate_limiter.config.RateLimitRule(
+            limit=5, window=60, algorithm=rate_limiter.config.Algorithm.SLIDING_WINDOW_LOG
         )
         self.key = "test_key"
 
@@ -152,11 +152,11 @@ class TestSlidingWindowLogAlgorithm(unittest.TestCase):
 
     def test_different_rules_are_isolated(self):
         """Test that different rules affect the same key independently."""
-        rule1 = src.rate_limiter.config.RateLimitRule(
-            limit=3, window=60, algorithm=src.rate_limiter.config.Algorithm.SLIDING_WINDOW_LOG
+        rule1 = rate_limiter.config.RateLimitRule(
+            limit=3, window=60, algorithm=rate_limiter.config.Algorithm.SLIDING_WINDOW_LOG
         )
-        rule2 = src.rate_limiter.config.RateLimitRule(
-            limit=5, window=60, algorithm=src.rate_limiter.config.Algorithm.SLIDING_WINDOW_LOG
+        rule2 = rate_limiter.config.RateLimitRule(
+            limit=5, window=60, algorithm=rate_limiter.config.Algorithm.SLIDING_WINDOW_LOG
         )
 
         # Use up rule1

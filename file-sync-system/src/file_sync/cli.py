@@ -8,9 +8,11 @@ from .service import Drive
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Encrypted file synchronization reference")
+    parser = argparse.ArgumentParser(
+        description="Encrypted file synchronization reference"
+    )
     parser.add_argument("--root", default=".runtime/server")
-    parser.add_argument("--block-size", type=int, default=4 * 1024 ** 2)
+    parser.add_argument("--block-size", type=int, default=4 * 1024**2)
     commands = parser.add_subparsers(dest="command", required=True)
     token = commands.add_parser("token")
     token.add_argument("user")
@@ -30,7 +32,9 @@ def main():
         commands.add_parser(name).add_argument("key")
     args = parser.parse_args()
     if args.command in ("push", "pull", "delete"):
-        client = DeviceClient(args.url, os.environ["FILE_SYNC_TOKEN"], args.folder, args.device)
+        client = DeviceClient(
+            args.url, os.environ["FILE_SYNC_TOKEN"], args.folder, args.device
+        )
         try:
             if args.command == "pull":
                 batch = client.pull()
@@ -50,7 +54,9 @@ def main():
         elif args.command == "cleanup":
             print(drive.cleanup())
         elif args.command in ("archive", "restore-block"):
-            getattr(drive.store, "archive" if args.command == "archive" else "restore")(args.key)
+            getattr(drive.store, "archive" if args.command == "archive" else "restore")(
+                args.key
+            )
             print("Local block tier updated")
         else:
             http = server(drive, args.host, args.port)

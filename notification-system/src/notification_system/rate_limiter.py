@@ -42,13 +42,9 @@ class SlidingWindowRateLimiter:
             tuple[str, notification_system.models.Channel], list[float]
         ] = collections.defaultdict(list)
         # user_id -> list of timestamps (global across channels)
-        self._global_windows: dict[str, list[float]] = collections.defaultdict(
-            list
-        )
+        self._global_windows: dict[str, list[float]] = collections.defaultdict(list)
 
-    def check(
-        self, user_id: str, channel: notification_system.models.Channel
-    ) -> None:
+    def check(self, user_id: str, channel: notification_system.models.Channel) -> None:
         """Check if a notification is allowed under rate limits.
 
         Args:
@@ -64,9 +60,7 @@ class SlidingWindowRateLimiter:
         channel_config = self._per_channel_limits.get(channel)
         if channel_config:
             key = (user_id, channel)
-            self._prune(
-                self._channel_windows[key], now - channel_config.window_seconds
-            )
+            self._prune(self._channel_windows[key], now - channel_config.window_seconds)
             if len(self._channel_windows[key]) >= channel_config.max_count:
                 raise notification_system.exceptions.RateLimitExceededError(
                     user_id,
@@ -88,9 +82,7 @@ class SlidingWindowRateLimiter:
                 self._global_limit.window_seconds,
             )
 
-    def record(
-        self, user_id: str, channel: notification_system.models.Channel
-    ) -> None:
+    def record(self, user_id: str, channel: notification_system.models.Channel) -> None:
         """Record a notification send for rate tracking.
 
         Args:

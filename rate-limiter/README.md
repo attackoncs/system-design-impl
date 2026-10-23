@@ -269,7 +269,7 @@ Thread-safe in-process storage. No external dependencies.
 config = RateLimiterConfig(storage_backend="memory")
 ```
 
-- Atomic operations via `threading.Lock`
+- Atomic operations via `threading.RLock`
 - TTL-based expiry
 - State lost on restart
 
@@ -347,3 +347,17 @@ pytest tests/test_decorators.py # Decorator tests
 ## License
 
 MIT
+
+## Engineering and concurrency guarantees
+
+Algorithms dispatch through `BaseStorage.execute_algorithm`, with Lua as the
+remote-backend default and Python callbacks for memory storage. Custom callable
+backends should override this method. `RateLimiter(config, storage=backend)`
+allows backend sharing without changing private attributes. In-memory state is
+process-local; atomic callbacks provide mutual exclusion, not rollback. TTL uses
+a monotonic clock. FastAPI runs synchronous checks in Starlette's worker pool;
+Flask route decorators retain one limiter per route. Both adapters share rule
+configuration in `middleware/configuration.py`.
+
+See [the repository review](../ENGINEERING_REVIEW.md) for regression results and
+remaining resource/performance limits.

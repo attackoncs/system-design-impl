@@ -13,6 +13,20 @@ class BaseStorage(abc.ABC):
     methods. Implementations must be thread-safe for concurrent access.
     """
 
+    def execute_algorithm(
+        self,
+        lua_script: str,
+        memory_script: Any,
+        keys: list[str],
+        args: list[str],
+    ) -> Any:
+        """Dispatch an algorithm to the backend's native atomic operation.
+
+        Remote backends use Lua by default. Callable backends override this
+        method so algorithms never need to inspect backend internals.
+        """
+        return self.execute_atomic(lua_script, keys, args)
+
     @abc.abstractmethod
     def get(self, key: str) -> str | None:
         """Get a value by key.
@@ -35,9 +49,7 @@ class BaseStorage(abc.ABC):
         """
 
     @abc.abstractmethod
-    def increment(
-        self, key: str, amount: int = 1, ttl: int | None = None
-    ) -> int:
+    def increment(self, key: str, amount: int = 1, ttl: int | None = None) -> int:
         """Atomically increment a counter and return the new value.
 
         If the key does not exist, it is initialized to 0 before
@@ -53,9 +65,7 @@ class BaseStorage(abc.ABC):
         """
 
     @abc.abstractmethod
-    def execute_atomic(
-        self, script: str, keys: list[str], args: list[str]
-    ) -> Any:
+    def execute_atomic(self, script: str, keys: list[str], args: list[str]) -> Any:
         """Execute an atomic operation.
 
         For Redis backends, this executes a Lua script. For in-memory

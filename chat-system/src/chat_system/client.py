@@ -83,9 +83,7 @@ class ReconnectingChatClient:
             json.dumps({"op": op, "request_id": request_id, **parameters})
         )
         while True:
-            event = json.loads(
-                await asyncio.wait_for(self._ws.recv(), self.timeout)
-            )
+            event = json.loads(await asyncio.wait_for(self._ws.recv(), self.timeout))
             if event.get("type") == "closed":
                 raise ConnectionError("session closed; rediscover")
             if (
@@ -160,9 +158,7 @@ class ReconnectingChatClient:
             return
         new_cursor = max(self.cursor, int(messages[-1]["message_id"]))
         if self.cursor_file:
-            temporary = self.cursor_file.with_name(
-                self.cursor_file.name + ".tmp"
-            )
+            temporary = self.cursor_file.with_name(self.cursor_file.name + ".tmp")
             with temporary.open("w", encoding="utf-8") as file:
                 file.write(str(new_cursor))
                 file.flush()

@@ -32,9 +32,7 @@ class MessageQueue:
             for channel in notification_system.models.Channel
         }
 
-    async def enqueue(
-        self, task: notification_system.models.NotificationTask
-    ) -> None:
+    async def enqueue(self, task: notification_system.models.NotificationTask) -> None:
         """Enqueue a notification task to the appropriate channel queue.
 
         Args:

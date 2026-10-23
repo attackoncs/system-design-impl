@@ -20,9 +20,7 @@ class ContactInfoStore:
     def __init__(self) -> None:
         self._contacts: dict[str, notification_system.models.ContactInfo] = {}
 
-    def get(
-        self, user_id: str
-    ) -> Optional[notification_system.models.ContactInfo]:
+    def get(self, user_id: str) -> Optional[notification_system.models.ContactInfo]:
         """Retrieve contact info for a user.
 
         Args:

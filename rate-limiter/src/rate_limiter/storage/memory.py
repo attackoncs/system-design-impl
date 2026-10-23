@@ -12,14 +12,16 @@ from rate_limiter.storage import base as storage_base
 class MemoryStorage(storage_base.BaseStorage):
     """Thread-safe in-memory storage backend.
 
-    Uses a threading lock to ensure atomic operations and supports TTL-based
-    key expiration via expiry timestamps.
+    Uses a reentrant lock so atomic callbacks can call public methods.
+    TTL deadlines use a monotonic clock, independent of wall-clock changes.
+    Callbacks must be short and must not wait for another storage operation.
+    Atomicity provides mutual exclusion, not rollback on callback failure.
     """
 
     def __init__(self) -> None:
         self._data: dict[str, str] = {}
         self._expiry: dict[str, float] = {}
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     def _is_expired(self, key: str) -> bool:
         """Check if a key has expired.
@@ -31,7 +33,7 @@ class MemoryStorage(storage_base.BaseStorage):
             True if the key exists in _expiry and its expiry time has passed.
         """
         if key in self._expiry:
-            return time.time() > self._expiry[key]
+            return time.monotonic() >= self._expiry[key]
         return False
 
     def _cleanup_expired(self) -> None:
@@ -39,10 +41,8 @@ class MemoryStorage(storage_base.BaseStorage):
 
         This method should be called under the lock.
         """
-        now = time.time()
-        expired_keys = [
-            key for key, expiry in self._expiry.items() if now > expiry
-        ]
+        now = time.monotonic()
+        expired_keys = [key for key, expiry in self._expiry.items() if now >= expiry]
         for key in expired_keys:
             self._data.pop(key, None)
             self._expiry.pop(key, None)
@@ -58,11 +58,7 @@ class MemoryStorage(storage_base.BaseStorage):
             exist or has expired.
         """
         with self._lock:
-            if self._is_expired(key):
-                self._data.pop(key, None)
-                self._expiry.pop(key, None)
-                return None
-            return self._data.get(key)
+            return self.get_unlocked(key)
 
     def set(self, key: str, value: str, ttl: int | None = None) -> None:
         """Set a value with optional TTL.
@@ -73,15 +69,9 @@ class MemoryStorage(storage_base.BaseStorage):
             ttl: Time-to-live in seconds. None means no expiration.
         """
         with self._lock:
-            self._data[key] = value
-            if ttl is not None:
-                self._expiry[key] = time.time() + ttl
-            else:
-                self._expiry.pop(key, None)
+            self.set_unlocked(key, value, ttl)
 
-    def increment(
-        self, key: str, amount: int = 1, ttl: int | None = None
-    ) -> int:
+    def increment(self, key: str, amount: int = 1, ttl: int | None = None) -> int:
         """Atomically increment a counter and return the new value.
 
         If the key does not exist or has expired, it is initialized to 0
@@ -96,22 +86,19 @@ class MemoryStorage(storage_base.BaseStorage):
             The new value after incrementing.
         """
         with self._lock:
-            if self._is_expired(key):
-                self._data.pop(key, None)
-                self._expiry.pop(key, None)
+            return self._increment_raw(key, amount, ttl)
 
-            current = int(self._data.get(key, "0"))
-            new_value = current + amount
-            self._data[key] = str(new_value)
-
-            if ttl is not None:
-                self._expiry[key] = time.time() + ttl
-
-            return new_value
-
-    def execute_atomic(
-        self, script: Any, keys: list[str], args: list[str]
+    def execute_algorithm(
+        self,
+        lua_script: str,
+        memory_script: Any,
+        keys: list[str],
+        args: list[str],
     ) -> Any:
+        """Execute the Python implementation of an atomic algorithm."""
+        return self.execute_atomic(memory_script, keys, args)
+
+    def execute_atomic(self, script: Any, keys: list[str], args: list[str]) -> Any:
         """Execute an atomic operation under the lock.
 
         For the in-memory backend, `script` should be a callable that
@@ -156,9 +143,7 @@ class MemoryStorage(storage_base.BaseStorage):
             return None
         return self._data.get(key)
 
-    def set_unlocked(
-        self, key: str, value: str, ttl: int | None = None
-    ) -> None:
+    def set_unlocked(self, key: str, value: str, ttl: int | None = None) -> None:
         """Set a value without acquiring the lock (for use inside
         execute_atomic).
 
@@ -169,13 +154,11 @@ class MemoryStorage(storage_base.BaseStorage):
         """
         self._data[key] = value
         if ttl is not None:
-            self._expiry[key] = time.time() + ttl
+            self._expiry[key] = time.monotonic() + ttl
         else:
             self._expiry.pop(key, None)
 
-    def _increment_raw(
-        self, key: str, amount: int = 1, ttl: int | None = None
-    ) -> int:
+    def _increment_raw(self, key: str, amount: int = 1, ttl: int | None = None) -> int:
         """Increment without acquiring the lock (for use inside
         execute_atomic).
 
@@ -196,6 +179,6 @@ class MemoryStorage(storage_base.BaseStorage):
         self._data[key] = str(new_value)
 
         if ttl is not None:
-            self._expiry[key] = time.time() + ttl
+            self._expiry[key] = time.monotonic() + ttl
 
         return new_value

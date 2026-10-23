@@ -80,9 +80,7 @@ class RobotsChecker:
         try:
             response = await self._fetcher.fetch(robots_url, timeout=10.0)
             parser = urllib.robotparser.RobotFileParser()
-            parser.parse(
-                response.body.decode("utf-8", errors="replace").splitlines()
-            )
+            parser.parse(response.body.decode("utf-8", errors="replace").splitlines())
             # RobotFileParser strips the request's product version. Normalize
             # versioned directives too so their restrictions are not bypassed.
             for entry in parser.entries:

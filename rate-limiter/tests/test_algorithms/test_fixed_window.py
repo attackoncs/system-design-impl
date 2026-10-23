@@ -4,9 +4,9 @@ import time
 import unittest
 import unittest.mock
 
-import src.rate_limiter.algorithms.fixed_window
-import src.rate_limiter.config
-import src.rate_limiter.storage.memory
+import rate_limiter.algorithms.fixed_window
+import rate_limiter.config
+import rate_limiter.storage.memory
 
 
 class TestFixedWindowAlgorithm(unittest.TestCase):
@@ -14,10 +14,10 @@ class TestFixedWindowAlgorithm(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.algorithm = src.rate_limiter.algorithms.fixed_window.FixedWindowAlgorithm()
-        self.storage = src.rate_limiter.storage.memory.MemoryStorage()
-        self.rule = src.rate_limiter.config.RateLimitRule(
-            limit=5, window=60, algorithm=src.rate_limiter.config.Algorithm.FIXED_WINDOW
+        self.algorithm = rate_limiter.algorithms.fixed_window.FixedWindowAlgorithm()
+        self.storage = rate_limiter.storage.memory.MemoryStorage()
+        self.rule = rate_limiter.config.RateLimitRule(
+            limit=5, window=60, algorithm=rate_limiter.config.Algorithm.FIXED_WINDOW
         )
         self.key = "test_key"
 
@@ -133,11 +133,11 @@ class TestFixedWindowAlgorithm(unittest.TestCase):
 
     def test_different_rules_are_isolated(self):
         """Test that different rules affect the same key independently."""
-        rule1 = src.rate_limiter.config.RateLimitRule(
-            limit=3, window=60, algorithm=src.rate_limiter.config.Algorithm.FIXED_WINDOW
+        rule1 = rate_limiter.config.RateLimitRule(
+            limit=3, window=60, algorithm=rate_limiter.config.Algorithm.FIXED_WINDOW
         )
-        rule2 = src.rate_limiter.config.RateLimitRule(
-            limit=5, window=60, algorithm=src.rate_limiter.config.Algorithm.FIXED_WINDOW
+        rule2 = rate_limiter.config.RateLimitRule(
+            limit=5, window=60, algorithm=rate_limiter.config.Algorithm.FIXED_WINDOW
         )
 
         # Use up rule1

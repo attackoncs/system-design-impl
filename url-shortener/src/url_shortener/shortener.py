@@ -5,6 +5,7 @@ provide the full shorten/redirect flow.
 """
 
 import datetime
+import threading
 import urllib.parse
 from typing import Optional
 
@@ -39,12 +40,11 @@ class URLShortener:
                 Defaults to 302.
             domain: Custom domain for constructing short URLs.
         """
-        self._strategy = (
-            strategy or url_shortener.strategies.HashCollisionStrategy()
-        )
+        self._strategy = strategy or url_shortener.strategies.HashCollisionStrategy()
         self._storage = storage or url_shortener.storage.InMemoryStorage()
         self._default_redirect_type = default_redirect_type
         self._domain = domain.rstrip("/")
+        self._click_lock = threading.Lock()
         self._clicks: dict[str, list[models.ClickRecord]] = {}
 
     def shorten(
@@ -66,23 +66,16 @@ class URLShortener:
         """
         self._validate_url(long_url)
 
-        # Check if already shortened (idempotence)
-        existing = self._storage.get_by_long_url(long_url)
-        if existing is not None:
-            return f"{self._domain}/{existing.short_code}"
+        def create_mapping():
+            code = self._strategy.generate(long_url, self._storage)
+            return models.URLMapping(
+                short_code=code,
+                long_url=long_url,
+                redirect_type=redirect_type or self._default_redirect_type,
+            )
 
-        # Generate short code via strategy
-        short_code = self._strategy.generate(long_url, self._storage)
-
-        # Store the mapping
-        mapping = models.URLMapping(
-            short_code=short_code,
-            long_url=long_url,
-            redirect_type=redirect_type or self._default_redirect_type,
-        )
-        self._storage.save(mapping)
-
-        return f"{self._domain}/{short_code}"
+        mapping = self._storage.get_or_create(long_url, create_mapping)
+        return f"{self._domain}/{mapping.short_code}"
 
     def resolve(
         self,
@@ -113,7 +106,8 @@ class URLShortener:
             timestamp=datetime.datetime.now(datetime.timezone.utc),
             client_id=client_id,
         )
-        self._clicks.setdefault(short_code, []).append(click)
+        with self._click_lock:
+            self._clicks.setdefault(short_code, []).append(click)
 
         return mapping.long_url, mapping.redirect_type
 
@@ -126,11 +120,10 @@ class URLShortener:
         Returns:
             Total click count (0 if no clicks recorded).
         """
-        return len(self._clicks.get(short_code, []))
+        with self._click_lock:
+            return len(self._clicks.get(short_code, []))
 
-    def get_click_records(
-        self, short_code: str
-    ) -> list[models.ClickRecord]:
+    def get_click_records(self, short_code: str) -> list[models.ClickRecord]:
         """Get all click records for a short code.
 
         Args:
@@ -139,7 +132,8 @@ class URLShortener:
         Returns:
             List of ClickRecord objects (empty if no clicks).
         """
-        return list(self._clicks.get(short_code, []))
+        with self._click_lock:
+            return list(self._clicks.get(short_code, []))
 
     def _validate_url(self, url: str) -> None:
         """Validate that a URL is well-formed.
@@ -151,9 +145,7 @@ class URLShortener:
             URLValidationError: If the URL is invalid.
         """
         if not url or not url.strip():
-            raise url_shortener.exceptions.URLValidationError(
-                "URL cannot be empty"
-            )
+            raise url_shortener.exceptions.URLValidationError("URL cannot be empty")
 
         parsed = urllib.parse.urlparse(url)
         if not parsed.scheme:

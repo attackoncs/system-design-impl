@@ -61,11 +61,7 @@ class FanoutWorker:
             item = await sentinel_queue.get()
             try:
                 if item is _STOP_SENTINEL:
-                    # Put the sentinel back so other workers can also stop.
-                    await sentinel_queue.put(_STOP_SENTINEL)
-                    logger.debug(
-                        "Worker %d received stop sentinel", self._worker_id
-                    )
+                    logger.debug("Worker %d received stop sentinel", self._worker_id)
                     return
 
                 task: news_feed_system.models.FanoutTask = item
@@ -181,8 +177,7 @@ class WorkerPool:
         """Stop the worker pool gracefully.
 
         Cancels the pump task (no new items will be forwarded), then enqueues
-        a single sentinel value. Workers pass the sentinel along so every
-        worker receives it and exits after finishing any in-flight task.
+        one sentinel per worker. Every worker consumes one marker and exits after finishing any in-flight task.
         Finally, waits for all worker tasks to complete.
 
         Raises:
@@ -200,8 +195,9 @@ class WorkerPool:
                 pass
             self._pump_task = None
 
-        # Enqueue the sentinel once; each worker re-enqueues it for the next.
-        await self._sentinel_queue.put(_STOP_SENTINEL)
+        # One marker per worker; task_done balances every queued marker.
+        for _ in self._workers:
+            await self._sentinel_queue.put(_STOP_SENTINEL)
 
         # Wait for all workers to finish.
         worker_tasks = [w.task for w in self._workers if w.task is not None]

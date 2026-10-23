@@ -21,8 +21,8 @@ class MessageQueue:
             max_size: Maximum number of items the queue can hold.
                       0 means unlimited.
         """
-        self._queue: asyncio.Queue[news_feed_system.models.FanoutTask] = (
-            asyncio.Queue(maxsize=max_size)
+        self._queue: asyncio.Queue[news_feed_system.models.FanoutTask] = asyncio.Queue(
+            maxsize=max_size
         )
         self._max_size = max_size
 

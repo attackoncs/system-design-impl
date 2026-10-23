@@ -18,9 +18,7 @@ class LinkExtractorParser(html_parser.HTMLParser):
         super().__init__()
         self.links: List[str] = []
 
-    def handle_starttag(
-        self, tag: str, attrs: List[Tuple[str, Optional[str]]]
-    ) -> None:
+    def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
         if tag == "a":
             for name, value in attrs:
                 if name == "href" and value is not None:

@@ -72,9 +72,7 @@ class UserCache:
                 self._store.popitem(last=False)
             self._store[user_id] = (user_profile, expiry)
 
-    def get(
-        self, user_id: str
-    ) -> Optional[news_feed_system.models.UserProfile]:
+    def get(self, user_id: str) -> Optional[news_feed_system.models.UserProfile]:
         """Retrieve a user profile by user_id.
 
         Returns None if the entry is not found or has expired.

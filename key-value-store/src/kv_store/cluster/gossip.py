@@ -195,10 +195,7 @@ class GossipProtocol:
 
             elapsed = now - info.last_updated
 
-            if (
-                info.status == NodeStatus.ALIVE
-                and elapsed > self._failure_timeout
-            ):
+            if info.status == NodeStatus.ALIVE and elapsed > self._failure_timeout:
                 info.status = NodeStatus.SUSPECTED
             elif (
                 info.status == NodeStatus.SUSPECTED
@@ -249,9 +246,7 @@ class GossipProtocol:
             List of MemberInfo for alive nodes.
         """
         return [
-            info
-            for info in self._members.values()
-            if info.status == NodeStatus.ALIVE
+            info for info in self._members.values() if info.status == NodeStatus.ALIVE
         ]
 
     def get_node_status(self, node_id: str) -> Optional[NodeStatus]:

@@ -72,9 +72,7 @@ class Autocomplete:
             snapshot = self.snapshots[version]
             while len(self.snapshots) > 2:
                 self.snapshots.popitem(last=False)
-            indices = (
-                relevant_shards(snapshot, prefix) if shard is None else [shard]
-            )
+            indices = relevant_shards(snapshot, prefix) if shard is None else [shard]
             if any(
                 (not isinstance(i, int) or isinstance(i, bool))
                 or not 0 <= i < len(snapshot["shards"])

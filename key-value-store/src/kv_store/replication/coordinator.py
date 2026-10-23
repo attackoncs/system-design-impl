@@ -86,9 +86,9 @@ class GetResult:
     value: Optional[bytes] = None
     vector_clock: Optional[replication_vector_clock.VectorClock] = None
     has_conflict: bool = False
-    conflicting_values: list[
-        tuple[bytes, replication_vector_clock.VectorClock]
-    ] = dataclasses.field(default_factory=list)
+    conflicting_values: list[tuple[bytes, replication_vector_clock.VectorClock]] = (
+        dataclasses.field(default_factory=list)
+    )
 
 
 @dataclasses.dataclass
@@ -620,9 +620,7 @@ class RequestCoordinator:
 
         # Find the dominating version(s)
         # A version dominates if it dominates all other versions
-        non_dominated: list[
-            tuple[bytes, replication_vector_clock.VectorClock]
-        ] = []
+        non_dominated: list[tuple[bytes, replication_vector_clock.VectorClock]] = []
 
         for i, (val_i, clock_i) in enumerate(values):
             is_dominated = False
@@ -681,6 +679,4 @@ class RequestCoordinator:
                 f"Key exceeds maximum size of 256 bytes: {len(key_bytes)} bytes"
             )
         if len(value) > 10 * 1024:
-            raise ValueError(
-                f"Value exceeds maximum size of 10 KB: {len(value)} bytes"
-            )
+            raise ValueError(f"Value exceeds maximum size of 10 KB: {len(value)} bytes")

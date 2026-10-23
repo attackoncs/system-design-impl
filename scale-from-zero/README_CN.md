@@ -83,3 +83,7 @@ worker使用持久任务、一秒租约与认领令牌；独立收件表按稳�
 详见[设计](docs/design.md)、[验证及实测](benchmarks/REPORT.md)和[原始样本](benchmarks/latest.json)。小流量下新增网络层可能更慢，实验观察其开销及主库资料读取减少，不预设分层一定提速。
 
 固定SHA256用户分片，没有在线迁移。主库、会话库、负载均衡及各单实例服务仍有单点；主库停机影响该分片的鉴权、写入和强读。未验证跨机耐久性、自动主库切换、真实CDN/GeoDNS、多地域、百万用户负载、生产TLS/身份或自动伸缩。每主库限制1000条资料变更和1000个有效会话，保留完整历史。后续章节组件可用于深入学习，但未冒充已经集成为本实验的生产基础设施。
+
+## Engineering review (2026-10-23)
+
+Routing/replay policy lives in `balancer.py`; owned background operations and shutdown live in `workers.py`. Cache synchronization is internal, so direct reuse is thread-safe. Network I/O and cache copying do not hold routing/cache metadata locks. See [per-project review](../DEEP_REVIEW_PROGRESS.md) for findings, regression evidence and remaining limits.

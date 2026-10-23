@@ -198,3 +198,9 @@ python examples/basic_usage.py
 ## License
 
 MIT
+
+## Engineering quality
+
+See [engineering guidelines](CONTRIBUTING.md) and the [review and validation record](ENGINEERING_REVIEW.md). Run `python tools/audit_code.py` for a dependency-free source inventory and review signals.
+
+The engineering review covers all 27 projects, with per-project changes, concurrency regressions and explicit integration-test limits. Use `python tools/run_project_tests.py --jobs 2 --output .test-tmp/review` to run chapter suites in isolated interpreters after installing their dependencies.

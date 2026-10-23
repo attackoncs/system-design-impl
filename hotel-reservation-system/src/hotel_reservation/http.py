@@ -10,6 +10,9 @@ from .common import Error, booking_hotel, dumps, http_json, identifier, shard_fo
 
 def server(role, config, store, host, port):
     class Handler(BaseHTTPRequestHandler):
+        # Apply before parsing headers, including clients that send no request.
+        timeout = 10.0
+
         def log_message(self, *args):
             pass
 
@@ -18,7 +21,9 @@ def server(role, config, store, host, port):
             if hmac.compare_digest(supplied, "Bearer " + config["admin_token"]):
                 return None
             if required != "user":
-                if hmac.compare_digest(supplied, "Bearer " + config[required + "_token"]):
+                if hmac.compare_digest(
+                    supplied, "Bearer " + config[required + "_token"]
+                ):
                     return None
             else:
                 for user, token in config["users"].items():
@@ -77,23 +82,29 @@ def server(role, config, store, host, port):
             parts = path.strip("/").split("/")
             hotel = None
             if parts[:2] == ["v1", "hotels"]:
-                hotel = identifier(parts[2]) if len(parts) > 2 else identifier(body["id"])
+                hotel = (
+                    identifier(parts[2]) if len(parts) > 2 else identifier(body["id"])
+                )
             elif parts[:2] == ["v1", "reservations"]:
                 if len(parts) == 3:
                     hotel = booking_hotel(parts[2])
                 else:
-                    hotel = identifier(body["hotel"] if method == "POST" else params["hotel"])
+                    hotel = identifier(
+                        body["hotel"] if method == "POST" else params["hotel"]
+                    )
             if hotel is None:
                 raise Error(404, "unknown resource")
             if role == "gateway":
                 url = config["shard_urls"][shard_for(hotel, len(config["shard_urls"]))]
-                token = self.headers["Authorization"][len("Bearer "):]
-                return http_json(url+self.path, token, body, method)
+                token = self.headers["Authorization"][len("Bearer ") :]
+                return http_json(url + self.path, token, body, method)
             store.owner(hotel)
             if parts[:2] == ["v1", "hotels"]:
                 if len(parts) == 2 and method == "POST":
                     self.identity("admin")
-                    return store.manage(hotel, {k: v for k, v in body.items() if k != "id"})
+                    return store.manage(
+                        hotel, {k: v for k, v in body.items() if k != "id"}
+                    )
                 if len(parts) == 3:
                     if method == "GET":
                         return store.catalog(hotel)
@@ -101,10 +112,16 @@ def server(role, config, store, host, port):
                     if method in ("PUT", "DELETE"):
                         return store.manage(hotel, body, delete=method == "DELETE")
                 if len(parts) >= 4 and parts[3] == "rooms":
-                    room = identifier(parts[4]) if len(parts)>4 else identifier(body["id"])
+                    room = (
+                        identifier(parts[4])
+                        if len(parts) > 4
+                        else identifier(body["id"])
+                    )
                     if len(parts) == 4 and method == "POST":
                         self.identity("admin")
-                        return store.manage(hotel, {k: v for k, v in body.items() if k != "id"}, room)
+                        return store.manage(
+                            hotel, {k: v for k, v in body.items() if k != "id"}, room
+                        )
                     if len(parts) == 5:
                         if method == "GET":
                             return store.catalog(hotel, room)
@@ -116,15 +133,23 @@ def server(role, config, store, host, port):
                         if not isinstance(body, dict) or set(body) != {"days"}:
                             raise ValueError("calendar requires days")
                         return store.set_days(hotel, room, body["days"])
-                    if len(parts) == 6 and parts[5] == "availability" and method == "GET":
+                    if (
+                        len(parts) == 6
+                        and parts[5] == "availability"
+                        and method == "GET"
+                    ):
                         if set(params) != {"start", "end"}:
                             raise ValueError("availability requires start and end")
-                        return store.availability(hotel, room, params["start"], params["end"])
+                        return store.availability(
+                            hotel, room, params["start"], params["end"]
+                        )
             if parts[:2] == ["v1", "reservations"]:
                 if len(parts) == 2:
                     if method == "POST":
                         if user is None:
-                            raise Error(400, "reserve using a configured guest identity")
+                            raise Error(
+                                400, "reserve using a configured guest identity"
+                            )
                         return store.reserve(user, body)
                     if method == "GET":
                         if user is None:
@@ -153,7 +178,12 @@ def server(role, config, store, host, port):
             except (ValueError, TypeError, KeyError) as exc:
                 result, status = {"error": str(exc)}, 400
             except (URLError, OSError, TimeoutError, sqlite3.OperationalError):
-                result, status = {"error": "service temporarily unavailable; retry with the same key"}, 503
+                result, status = (
+                    {
+                        "error": "service temporarily unavailable; retry with the same key"
+                    },
+                    503,
+                )
             except Exception:
                 result, status = {"error": "internal error"}, 500
             raw = dumps(result).encode()

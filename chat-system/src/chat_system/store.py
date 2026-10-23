@@ -109,9 +109,7 @@ class SQLiteMessageStore:
     def add_member(self, channel_id, actor, user_id, limit):
         channel = self.get_channel(channel_id)
         if channel.owner_id != actor or channel.kind != "group":
-            raise chat_system.models.ChatError(
-                "only group owner may add members"
-            )
+            raise chat_system.models.ChatError("only group owner may add members")
         if not isinstance(user_id, str) or not user_id:
             raise chat_system.models.ChatError("invalid user")
         if user_id in channel.members:
@@ -119,9 +117,7 @@ class SQLiteMessageStore:
         if len(channel.members) >= limit:
             raise chat_system.models.ChatError("group is full")
         with self.db:
-            self.db.execute(
-                "INSERT INTO members VALUES (?, ?)", (channel_id, user_id)
-            )
+            self.db.execute("INSERT INTO members VALUES (?, ?)", (channel_id, user_id))
         return self.get_channel(channel_id)
 
     def append(self, channel_id, sender_id, content, client_message_id):

@@ -2,10 +2,10 @@ import json
 import threading
 import time
 
-from .common import Error,digest,dumps,http_json,integer,month_bounds,shard_for
-from .redis import Redis,RedisError
+from .common import Error, digest, dumps, http_json, integer, month_bounds, shard_for
+from .redis import Redis, RedisError
 
-APPLY=r"""
+APPLY = r"""
 local root=KEYS[1]
 local batch=cjson.decode(ARGV[1])
 local generation=redis.call('GET',root..':lineage')
@@ -36,7 +36,7 @@ redis.call('SET',root..':position',nextpos)
 return cjson.encode({position=nextpos})
 """
 
-QUERY=r"""
+QUERY = r"""
 local root=KEYS[1]
 local q=cjson.decode(ARGV[1])
 if redis.call('GET',root..':lineage')~=q.lineage then return redis.error_reply('NOTREADY lineage') end
@@ -73,7 +73,7 @@ else return redis.error_reply('MODE unknown') end
 return cjson.encode(result)
 """
 
-RESET=r"""
+RESET = r"""
 local root=KEYS[1]
 for _,month in ipairs(redis.call('SMEMBERS',root..':months')) do
   redis.call('DEL',root..':score:'..month,root..':order:'..month)
@@ -84,80 +84,111 @@ return 1
 
 
 class Projection:
-    def __init__(self,config,shard):
-        self.config,self.shard=config,shard
-        self.root=config["namespace"]+":shard:"+str(shard)
-        self.clients=[Redis(n["host"],n["port"],config["redis_password"]) for n in config["redis_nodes"][shard]]
-        self.lock=threading.RLock()
-        self.state={"error":"starting","last_poll":0}
+    def __init__(self, config, shard):
+        self.config, self.shard = config, shard
+        self.root = config["namespace"] + ":shard:" + str(shard)
+        self.clients = [
+            Redis(n["host"], n["port"], config["redis_password"])
+            for n in config["redis_nodes"][shard]
+        ]
+        self.lock = threading.RLock()
+        self.state = {"error": "starting", "last_poll": 0}
 
     def master(self):
-        masters=[]
+        masters = []
         for client in self.clients:
             try:
-                if client.command("ROLE",timeout=.2)[0]=="master":
+                if client.command("ROLE", timeout=0.2)[0] == "master":
                     masters.append(client)
-            except (OSError,RedisError):
+            except (OSError, RedisError):
                 pass
-        if len(masters)!=1:
-            raise Error(503,"exactly one reachable master required; fence/promote operationally")
+        if len(masters) != 1:
+            raise Error(
+                503,
+                "exactly one reachable master required; fence/promote operationally",
+            )
         return masters[0]
 
-    def position(self,client=None):
-        return int((client or self.master()).command("GET",self.root+":position") or 0)
+    def position(self, client=None):
+        return int(
+            (client or self.master()).command("GET", self.root + ":position") or 0
+        )
 
-    def apply(self,batch):
-        if batch["shard"]!=self.shard:
-            raise Error(409,"wrong event shard")
-        expected=batch["after"]
+    def apply(self, batch):
+        if batch["shard"] != self.shard:
+            raise Error(409, "wrong event shard")
+        expected = batch["after"]
         for entry in batch["events"]:
-            p=entry["payload"]
+            p = entry["payload"]
             month_bounds(p["month"])
-            integer(p["score"],"score",0,1_000_000_000)
-            if shard_for(p["user"],len(self.config["projection_urls"]))!=self.shard or entry["seq"]!=expected+1 or digest(p)!=entry["hash"]:
-                raise Error(409,"event checksum, offset or ownership mismatch")
-            expected=entry["seq"]
-        return json.loads(self.master().command("EVAL",APPLY,1,self.root,dumps(batch)))
+            integer(p["score"], "score", 0, 1_000_000_000)
+            if (
+                shard_for(p["user"], len(self.config["projection_urls"])) != self.shard
+                or entry["seq"] != expected + 1
+                or digest(p) != entry["hash"]
+            ):
+                raise Error(409, "event checksum, offset or ownership mismatch")
+            expected = entry["seq"]
+        return json.loads(
+            self.master().command("EVAL", APPLY, 1, self.root, dumps(batch))
+        )
 
     def poll_once(self):
         with self.lock:
-            after=self.position()
-            batch=http_json(self.config["authority_url"]+f"/internal/feed?shard={self.shard}&after={after}",self.config["internal_token"])
-            client=self.master()
-            generation=client.command("GET",self.root+":lineage")
-            if not batch["events"] and generation==batch["lineage"] and self.position(client)==after:
-                result={"position":after}
+            after = self.position()
+            batch = http_json(
+                self.config["authority_url"]
+                + f"/internal/feed?shard={self.shard}&after={after}",
+                self.config["internal_token"],
+            )
+            client = self.master()
+            generation = client.command("GET", self.root + ":lineage")
+            if (
+                not batch["events"]
+                and generation == batch["lineage"]
+                and self.position(client) == after
+            ):
+                result = {"position": after}
             else:
-                result=self.apply(batch)
-            self.state.update(error=None,last_poll=time.time(),source_head=batch["head"],position=result["position"])
-            return batch["head"]>result["position"]
+                result = self.apply(batch)
+            self.state.update(
+                error=None,
+                last_poll=time.time(),
+                source_head=batch["head"],
+                position=result["position"],
+            )
+            return batch["head"] > result["position"]
 
-    def run(self,stop):
+    def run(self, stop):
         while not stop.is_set():
             try:
-                busy=self.poll_once()
-                stop.wait(.005 if busy else .03)
+                busy = self.poll_once()
+                stop.wait(0.005 if busy else 0.03)
             except Exception as exc:
-                self.state["error"]=str(exc)
-                stop.wait(.1)
+                self.state["error"] = str(exc)
+                stop.wait(0.1)
 
-    def query(self,body):
+    def query(self, body):
         month_bounds(body["month"])
-        integer(body["minimum"],"minimum")
-        if body["mode"]=="top":
-            integer(body["limit"],"limit",1,10)
-        if body["mode"]=="around":
-            integer(body["radius"],"radius",0,4)
+        integer(body["minimum"], "minimum")
+        if body["mode"] == "top":
+            integer(body["limit"], "limit", 1, 10)
+        if body["mode"] == "around":
+            integer(body["radius"], "radius", 0, 4)
         with self.lock:
-            result=json.loads(self.master().command("EVAL",QUERY,1,self.root,dumps({**body,"shard":self.shard})))
+            result = json.loads(
+                self.master().command(
+                    "EVAL", QUERY, 1, self.root, dumps({**body, "shard": self.shard})
+                )
+            )
             # Redis Lua cjson encodes empty tables as {}; normalize array fields.
-            for key in ("rows","above","below"):
-                if key in result and result[key]=={}:
-                    result[key]=[]
+            for key in ("rows", "above", "below"):
+                if key in result and result[key] == {}:
+                    result[key] = []
             return result
 
     def reset(self):
         with self.lock:
-            self.master().command("EVAL",RESET,1,self.root)
-            self.state["error"]="rebuilding"
-        return {"rebuilding":True,"shard":self.shard}
+            self.master().command("EVAL", RESET, 1, self.root)
+            self.state["error"] = "rebuilding"
+        return {"rebuilding": True, "shard": self.shard}

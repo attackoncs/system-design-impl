@@ -39,9 +39,7 @@ class FanoutConfig:
 class NewsFeedConfig:
     """Top-level configuration for the news feed system."""
 
-    rate_limit: RateLimitConfig = dataclasses.field(
-        default_factory=RateLimitConfig
-    )
+    rate_limit: RateLimitConfig = dataclasses.field(default_factory=RateLimitConfig)
     cache: CacheConfig = dataclasses.field(default_factory=CacheConfig)
     fanout: FanoutConfig = dataclasses.field(default_factory=FanoutConfig)
     default_page_size: int = 20
@@ -54,8 +52,7 @@ class NewsFeedConfig:
             )
         if self.rate_limit.window_seconds <= 0:
             raise ValueError(
-                "window_seconds must be positive, got"
-                f" {self.rate_limit.window_seconds}"
+                f"window_seconds must be positive, got {self.rate_limit.window_seconds}"
             )
         if self.fanout.celebrity_threshold <= 0:
             raise ValueError(

@@ -30,9 +30,7 @@ def normalize(value, empty=False):
         raise ValueError("query is empty")
     pattern = r"[a-z]+(?: [a-z]+)* ?" if empty else r"[a-z]+(?: [a-z]+)*"
     if len(value) > 50 or not re.fullmatch(pattern, value):
-        raise ValueError(
-            "only English letters/spaces up to 50 characters supported"
-        )
+        raise ValueError("only English letters/spaces up to 50 characters supported")
     return value
 
 
@@ -65,10 +63,7 @@ class Trie:
         for query, frequency in frequencies:
             if (
                 normalize(query) != query
-                or (
-                    not isinstance(frequency, int)
-                    or isinstance(frequency, bool)
-                )
+                or (not isinstance(frequency, int) or isinstance(frequency, bool))
                 or frequency <= 0
             ):
                 raise ValueError("invalid snapshot frequency")

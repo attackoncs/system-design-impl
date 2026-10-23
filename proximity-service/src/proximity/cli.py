@@ -19,26 +19,40 @@ def main():
     parser.add_argument("--shards", type=int, default=4)
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
-    tokens = json.loads(Path(args.tokens).read_text(encoding="utf-8")) if args.tokens else {}
+    tokens = (
+        json.loads(Path(args.tokens).read_text(encoding="utf-8")) if args.tokens else {}
+    )
     if args.role == "gateway":
         if not args.regions:
             parser.error("gateway requires --regions")
-        httpd = server(args.host,args.port,router=Router(json.loads(Path(args.regions).read_text(encoding="utf-8"))))
+        httpd = server(
+            args.host,
+            args.port,
+            router=Router(json.loads(Path(args.regions).read_text(encoding="utf-8"))),
+        )
         replicator = None
     else:
-        Path(args.db).parent.mkdir(parents=True,exist_ok=True)
-        store = Store(args.db,shards=args.shards,readonly=args.role == "replica")
+        Path(args.db).parent.mkdir(parents=True, exist_ok=True)
+        store = Store(args.db, shards=args.shards, readonly=args.role == "replica")
         if args.role == "publish":
             print(json.dumps(store.publish(force=args.force)))
             return
         replicator = None
         if args.role == "replica":
             if not args.upstream or not tokens.get("replication") or args.interval <= 0:
-                parser.error("replica requires --upstream, replication token and positive interval")
-            replicator = Replicator(store,args.upstream,tokens["replication"],args.interval)
+                parser.error(
+                    "replica requires --upstream, replication token and positive interval"
+                )
+            replicator = Replicator(
+                store, args.upstream, tokens["replication"], args.interval
+            )
             replicator.thread.start()
-        httpd = server(args.host,args.port,store=store,tokens=tokens,replicator=replicator)
-    print(f"{args.role} listening on http://{args.host}:{httpd.server_port}",flush=True)
+        httpd = server(
+            args.host, args.port, store=store, tokens=tokens, replicator=replicator
+        )
+    print(
+        f"{args.role} listening on http://{args.host}:{httpd.server_port}", flush=True
+    )
     try:
         httpd.serve_forever(poll_interval=0.2)
     except KeyboardInterrupt:

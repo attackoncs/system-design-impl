@@ -87,3 +87,7 @@ Use the admin token for `GET /admin/status` on a specific service. Available met
 See [design](docs/design.md), [verification/measurements](benchmarks/REPORT.md) and [raw sample](benchmarks/latest.json). Adding tiers creates network cost at small scale; the benchmark measures that tradeoff and primary profile-read reduction without assuming a speedup.
 
 Shard routing is fixed SHA256(user) modulo count. There is no online resharding. Primaries, balancer, session stores, worker and cache/edge instances remain individual services; primary failure stops authentication/writes/strong reads for that shard. Replicas support profile-read fallback only. No cross-host durability, automatic database failover, real CDN, GeoDNS, geographic deployment, million-user load, production identity/TLS or autoscaling has been verified. Each primary retains at most1000 profile changes and1000 live sessions; complete history is kept for replay. Related later chapters provide deeper standalone components, not automatically integrated infrastructure here.
+
+## Engineering review (2026-10-23)
+
+Routing/replay policy lives in `balancer.py`; owned background operations and shutdown live in `workers.py`. Cache synchronization is internal, so direct reuse is thread-safe. Network I/O and cache copying do not hold routing/cache metadata locks. See [per-project review](../DEEP_REVIEW_PROGRESS.md) for findings, regression evidence and remaining limits.

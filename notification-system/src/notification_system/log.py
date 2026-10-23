@@ -81,13 +81,10 @@ class InMemoryNotificationLog(NotificationLogBackend):
     def cleanup(self, retention_seconds: float) -> int:
         """Remove entries older than retention period."""
         cutoff = (
-            datetime.datetime.now(datetime.timezone.utc).timestamp()
-            - retention_seconds
+            datetime.datetime.now(datetime.timezone.utc).timestamp() - retention_seconds
         )
         original_count = len(self._entries)
-        self._entries = [
-            e for e in self._entries if e.timestamp.timestamp() >= cutoff
-        ]
+        self._entries = [e for e in self._entries if e.timestamp.timestamp() >= cutoff]
         return original_count - len(self._entries)
 
 
@@ -98,9 +95,7 @@ class NotificationLog:
     recording attempts and querying history.
     """
 
-    def __init__(
-        self, backend: Optional[NotificationLogBackend] = None
-    ) -> None:
+    def __init__(self, backend: Optional[NotificationLogBackend] = None) -> None:
         self._backend = backend or InMemoryNotificationLog()
 
     def record_attempt(

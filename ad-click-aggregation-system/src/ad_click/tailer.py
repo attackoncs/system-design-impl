@@ -3,6 +3,7 @@
 On a lost ACK the same event IDs replay safely. File prefix hashing detects rotation
 or mutation rather than silently skipping a replaced/truncated file.
 """
+
 import hashlib
 import json
 from pathlib import Path
@@ -13,7 +14,11 @@ from .common import Error, dumps, http_json
 
 def ingest_file(config, source, checkpoint):
     source, checkpoint = Path(source), Path(checkpoint)
-    old = json.loads(checkpoint.read_text()) if checkpoint.exists() else {"offset": 0, "prefix": hashlib.sha256(b"").hexdigest()}
+    old = (
+        json.loads(checkpoint.read_text())
+        if checkpoint.exists()
+        else {"offset": 0, "prefix": hashlib.sha256(b"").hexdigest()}
+    )
     offset = old["offset"]
     hasher = hashlib.sha256()
     with source.open("rb") as stream:
@@ -43,7 +48,11 @@ def ingest_file(config, source, checkpoint):
                 end += len(line)
             if not batch:
                 return {"records": total, "offset": offset}
-            http_json(config["ingress_url"] + "/events", config["write_token"], {"events": batch})
+            http_json(
+                config["ingress_url"] + "/events",
+                config["write_token"],
+                {"events": batch},
+            )
             checkpoint.parent.mkdir(parents=True, exist_ok=True)
             tmp = checkpoint.with_suffix(checkpoint.suffix + ".tmp")
             with tmp.open("w") as handle:

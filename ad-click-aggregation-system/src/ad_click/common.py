@@ -14,7 +14,9 @@ class Error(Exception):
 
 
 def dumps(value):
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+    )
 
 
 def digest(value):
@@ -22,13 +24,21 @@ def digest(value):
 
 
 def text(value, name):
-    if not isinstance(value, str) or not 1 <= len(value) <= 128 or any(ord(c) < 32 for c in value):
+    if (
+        not isinstance(value, str)
+        or not 1 <= len(value) <= 128
+        or any(ord(c) < 32 for c in value)
+    ):
         raise ValueError(f"{name} must contain 1..128 printable characters")
     return value
 
 
 def integer(value, name, low, high):
-    if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not low <= value <= high
+    ):
         raise ValueError(f"{name} must be an integer in [{low},{high}]")
     return value
 
@@ -38,16 +48,29 @@ def event(body, now):
     if not isinstance(body, dict) or set(body) != fields:
         raise ValueError("event requires exactly " + ", ".join(sorted(fields)))
     result = {k: text(body[k], k) for k in fields - {"click_timestamp"}}
-    result["click_timestamp"] = integer(body["click_timestamp"], "click_timestamp", 0, int(now) + 30)
+    result["click_timestamp"] = integer(
+        body["click_timestamp"], "click_timestamp", 0, int(now) + 30
+    )
     result["ip"] = str(ipaddress.ip_address(result["ip"]))
-    if len(result["country"]) != 2 or not result["country"].isascii() or not result["country"].isalpha():
+    if (
+        len(result["country"]) != 2
+        or not result["country"].isascii()
+        or not result["country"].isalpha()
+    ):
         raise ValueError("country must be a two-letter code")
     result["country"] = result["country"].upper()
     return result
 
 
 def query(body, now):
-    if not isinstance(body, dict) or set(body) - {"from", "to", "window", "count", "ad_id", "filters"}:
+    if not isinstance(body, dict) or set(body) - {
+        "from",
+        "to",
+        "window",
+        "count",
+        "ad_id",
+        "filters",
+    }:
         raise ValueError("unknown query fields")
     end = body.get("to", int(now) // 60 * 60)
     window = integer(body.get("window", 1), "window", 1, 1440)
@@ -79,9 +102,9 @@ class Database:
     @contextmanager
     def transaction(self, write=False):
         db = sqlite3.connect(self.path, timeout=15, isolation_level=None)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA synchronous=FULL")
         try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA synchronous=FULL")
             db.execute("BEGIN IMMEDIATE" if write else "BEGIN")
             yield db
             db.commit()
@@ -103,8 +126,14 @@ class Database:
 
 def http_json(url, token, body=None, timeout=5):
     data = None if body is None else dumps(body).encode()
-    request = Request(url, data=data, headers={"Authorization": "Bearer " + token,
-                                             "Content-Type": "application/json"})
+    request = Request(
+        url,
+        data=data,
+        headers={
+            "Authorization": "Bearer " + token,
+            "Content-Type": "application/json",
+        },
+    )
     with urlopen(request, timeout=timeout) as response:
         raw = response.read(8 * 1024 * 1024 + 1)
         if len(raw) > 8 * 1024 * 1024:

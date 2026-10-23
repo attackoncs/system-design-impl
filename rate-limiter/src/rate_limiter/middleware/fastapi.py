@@ -5,12 +5,13 @@ from __future__ import annotations
 from typing import Optional
 
 import starlette.middleware.base
+from starlette.concurrency import run_in_threadpool
 import starlette.requests
 import starlette.responses
 
 from rate_limiter import config as rate_limiter_config
 from rate_limiter import core as rate_limiter_core
-from rate_limiter import keys as rate_limiter_keys
+from rate_limiter.middleware.configuration import RateLimitConfig
 
 
 class RateLimitMiddleware(starlette.middleware.base.BaseHTTPMiddleware):
@@ -54,7 +55,9 @@ class RateLimitMiddleware(starlette.middleware.base.BaseHTTPMiddleware):
             The response, either rate limited (429) or the actual response.
         """
         # Check rate limits
-        result = self.limiter.check_request(request)
+        # Storage backends are synchronous (Redis may wait on network I/O).
+        # Use Starlette's bounded worker pool to keep the event loop responsive.
+        result = await run_in_threadpool(self.limiter.check_request, request)
 
         # If rate limited, return 429 response
         if not result.allowed:
@@ -109,93 +112,6 @@ class RateLimitMiddleware(starlette.middleware.base.BaseHTTPMiddleware):
         response.headers["X-RateLimit-Reset"] = str(result.reset_after)
 
 
-class RateLimitConfig:
-    """Configuration helper for rate limiting.
-
-    Provides a convenient way to configure rate limiting for FastAPI.
-
-    Example:
-        ```python
-        from fastapi import FastAPI
-        from rate_limiter.middleware.fastapi import RateLimitConfig
-
-        app = FastAPI()
-
-        # Configure rate limiting
-        rate_limit_config = RateLimitConfig()
-        rate_limit_config.add_rule(
-            limit=100, window=60, key_type="ip"
-        )
-        rate_limit_config.add_rule(
-            limit=1000, window=3600, key_type="user_id"
-        )
-
-        # Add middleware
-        app.add_middleware(RateLimitMiddleware,
-        config=rate_limit_config.get_config())
-        ```
-    """
-
-    def __init__(self) -> None:
-        self.rules: list[rate_limiter_config.RateLimitRule] = []
-
-    def add_rule(
-        self,
-        limit: int,
-        window: int,
-        algorithm: str = "token_bucket",
-        key_type: str = "ip",
-        path_pattern: Optional[str] = None,
-    ) -> None:
-        """Add a rate limiting rule.
-
-        Args:
-            limit: Maximum number of requests allowed in the window.
-            window: Time window in seconds.
-            algorithm: Rate limiting algorithm to use.
-            key_type: Type of key to use ('ip', 'user_id', 'path', 'method').
-            path_pattern: Optional path pattern to match (not implemented yet).
-        """
-
-        try:
-            algo = rate_limiter_config.Algorithm(algorithm.lower())
-        except ValueError as error:
-            raise ValueError(
-                f"Unknown algorithm: {algorithm}. Valid options:"
-                f" {', '.join(a.value for a in rate_limiter_config.Algorithm)}"
-            ) from error
-
-        # Create key function based on type
-        if key_type == "ip":
-            key_func = rate_limiter_keys.ip_key
-        elif key_type == "user_id":
-            key_func = rate_limiter_keys.user_id_key
-        elif key_type == "path":
-            key_func = rate_limiter_keys.path_key
-        elif key_type == "method":
-            key_func = rate_limiter_keys.method_key
-        else:
-            raise ValueError(f"Unknown key type: {key_type}")
-
-        rule = rate_limiter_config.RateLimitRule(
-            limit=limit,
-            window=window,
-            algorithm=algo,
-            key_func=key_func,
-            path_pattern=path_pattern,
-        )
-        self.rules.append(rule)
-
-    def get_config(self) -> rate_limiter_config.RateLimiterConfig:
-        """Get the rate_limiter_config.RateLimiterConfig for use with
-        middleware.
-
-        Returns:
-            Configured rate_limiter_config.RateLimiterConfig instance.
-        """
-        return rate_limiter_config.RateLimiterConfig(rules=self.rules)
-
-
 # Convenience function to create a rate limited FastAPI app
 def create_rate_limited_app(
     app,
@@ -233,7 +149,5 @@ def create_rate_limited_app(
         ```
     """
     config = RateLimitConfig()
-    config.add_rule(
-        limit=limit, window=window, algorithm=algorithm, key_type=key_type
-    )
+    config.add_rule(limit=limit, window=window, algorithm=algorithm, key_type=key_type)
     return RateLimitMiddleware(app, config=config.get_config())

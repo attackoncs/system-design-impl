@@ -36,9 +36,7 @@ class IDParser:
     created the ID to correctly extract fields.
     """
 
-    def __init__(
-        self, config: Optional[unique_id.config.SnowflakeConfig] = None
-    ):
+    def __init__(self, config: Optional[unique_id.config.SnowflakeConfig] = None):
         """Initialize the parser with a configuration.
 
         Args:

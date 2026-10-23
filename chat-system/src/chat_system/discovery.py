@@ -32,10 +32,7 @@ class ServiceDiscovery:
         """Validate capacity and insert or replace a Server by its
         server_id.
         """
-        if (
-            server.capacity <= 0
-            or not 0 <= server.connections <= server.capacity
-        ):
+        if server.capacity <= 0 or not 0 <= server.connections <= server.capacity:
             raise chat_system.models.ChatError("invalid capacity")
         self._servers[server.server_id] = server
 
@@ -56,9 +53,7 @@ class ServiceDiscovery:
         Raises:
             ChatError: No registered server has spare capacity.
         """
-        available = [
-            s for s in self._servers.values() if s.connections < s.capacity
-        ]
+        available = [s for s in self._servers.values() if s.connections < s.capacity]
         if not available:
             raise chat_system.models.ChatError("no chat server available")
         return min(

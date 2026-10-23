@@ -153,10 +153,10 @@ class WorkerPool:
         self._providers = providers
         self._tracker = tracker
         self._retry_handler = retry_handler
+        if type(workers_per_channel) is not int or workers_per_channel <= 0:
+            raise ValueError("workers_per_channel must be a positive integer")
         self._workers_per_channel = workers_per_channel
-        self._workers: dict[
-            notification_system.models.Channel, list[Worker]
-        ] = {}
+        self._workers: dict[notification_system.models.Channel, list[Worker]] = {}
         self._tasks: list[asyncio.Task] = []
 
     @property
@@ -175,6 +175,9 @@ class WorkerPool:
         Spawns workers_per_channel asyncio tasks for each channel that has a
         registered provider. Channels without providers are skipped.
         """
+        if self.is_running:
+            raise RuntimeError("WorkerPool is already running")
+
         for channel in notification_system.models.Channel:
             provider = self._providers.get(channel)
             if provider is None:

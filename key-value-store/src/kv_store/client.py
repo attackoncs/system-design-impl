@@ -56,9 +56,9 @@ class KVResponse:
     value: Optional[bytes] = None
     vector_clock: Optional[replication_vector_clock.VectorClock] = None
     has_conflict: bool = False
-    conflicting_values: list[
-        tuple[bytes, replication_vector_clock.VectorClock]
-    ] = dataclasses.field(default_factory=list)
+    conflicting_values: list[tuple[bytes, replication_vector_clock.VectorClock]] = (
+        dataclasses.field(default_factory=list)
+    )
 
 
 def _vector_clock_to_proto(
@@ -119,9 +119,7 @@ class KVClient:
 
         last_error: Optional[Exception] = None
         for i in range(len(self._config.seed_nodes)):
-            node_index = (self._current_node_index + i) % len(
-                self._config.seed_nodes
-            )
+            node_index = (self._current_node_index + i) % len(self._config.seed_nodes)
             target = self._config.seed_nodes[node_index]
             try:
                 channel = grpc.aio.insecure_channel(target)
@@ -311,9 +309,7 @@ class KVClient:
             grpc.RpcError: If a non-retryable error occurs.
         """
         if not self._connected or self._stub is None:
-            raise ConnectionError(
-                "Client is not connected. Call connect() first."
-            )
+            raise ConnectionError("Client is not connected. Call connect() first.")
 
         nodes_tried = 0
         total_nodes = len(self._config.seed_nodes)
@@ -324,10 +320,7 @@ class KVClient:
                 try:
                     return await rpc_call(self._stub)
                 except grpc.RpcError as e:
-                    if (
-                        hasattr(e, "code")
-                        and e.code() == grpc.StatusCode.UNAVAILABLE
-                    ):
+                    if hasattr(e, "code") and e.code() == grpc.StatusCode.UNAVAILABLE:
                         logger.warning(
                             "RPC unavailable (attempt %d/%d) on node %s: %s",
                             attempt + 1,

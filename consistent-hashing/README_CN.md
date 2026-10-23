@@ -314,3 +314,17 @@ consistent-hashing/
 ## License
 
 MIT
+
+## Snapshot concurrency contract
+
+Each lookup searches one immutable topology snapshot. Writers are serialized,
+while readers hold only a short snapshot-publication lock. Hash collisions keep
+separate entries ordered by node name and virtual-node index; removal does not
+recompute hashes. A failed update leaves the previous topology usable.
+
+Virtual-node counts must be positive integers. Replica count zero returns an
+empty list; negative/non-integer counts are rejected. Exact-position lookups
+retain the original strictly-clockwise (`bisect_right`) behavior. Custom hash
+functions must be deterministic and thread safe. Different API calls may observe
+different snapshots. Snapshot copying costs memory and read synchronization has
+a measurable cost; see [the engineering review](../ENGINEERING_REVIEW.md).

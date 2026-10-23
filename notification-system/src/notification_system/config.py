@@ -62,9 +62,7 @@ class NotificationConfig:
         }
     )
     global_rate_limit: RateLimitConfig = dataclasses.field(
-        default_factory=lambda: RateLimitConfig(
-            max_count=100, window_seconds=3600.0
-        )
+        default_factory=lambda: RateLimitConfig(max_count=100, window_seconds=3600.0)
     )
 
     # Deduplication
@@ -84,8 +82,7 @@ class NotificationConfig:
             )
         if self.workers_per_channel <= 0:
             raise ValueError(
-                "workers_per_channel must be positive, got"
-                f" {self.workers_per_channel}"
+                f"workers_per_channel must be positive, got {self.workers_per_channel}"
             )
         if self.dedup_window_seconds <= 0:
             raise ValueError(
@@ -94,14 +91,11 @@ class NotificationConfig:
             )
         if self.retry.max_retries < 0:
             raise ValueError(
-                "max_retries must be non-negative, got"
-                f" {self.retry.max_retries}"
+                f"max_retries must be non-negative, got {self.retry.max_retries}"
             )
         if self.retry.base_delay <= 0:
             raise ValueError(
                 f"base_delay must be positive, got {self.retry.base_delay}"
             )
         if self.retry.max_delay <= 0:
-            raise ValueError(
-                f"max_delay must be positive, got {self.retry.max_delay}"
-            )
+            raise ValueError(f"max_delay must be positive, got {self.retry.max_delay}")

@@ -248,8 +248,7 @@ class WriteAheadLog:
             # Read the length field
             if offset + _LENGTH_SIZE > total_size:
                 logger.warning(
-                    "WAL: incomplete length field at offset %d, stopping"
-                    " replay",
+                    "WAL: incomplete length field at offset %d, stopping replay",
                     offset,
                 )
                 break
@@ -303,9 +302,7 @@ class WriteAheadLog:
 
         # Verify checksum
         computed_checksum = zlib.crc32(checksummed_data) & 0xFFFFFFFF
-        (stored_checksum,) = struct.unpack(
-            _CHECKSUM_FORMAT, stored_checksum_bytes
-        )
+        (stored_checksum,) = struct.unpack(_CHECKSUM_FORMAT, stored_checksum_bytes)
 
         if computed_checksum != stored_checksum:
             logger.warning(

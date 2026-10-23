@@ -82,7 +82,7 @@ def _memory_leaking_bucket_script(
     Args:
         keys: [queue_count_key, last_drain_key]
         args: [capacity, drain_rate, current_time]
-        storage: The MemoryStorage instance (use _get_raw/_set_raw).
+        storage: The MemoryStorage instance (use get_unlocked/set_unlocked).
 
     Returns:
         A list: [allowed (1 or 0), remaining (int), limit (int), reset_after
@@ -181,15 +181,9 @@ class LeakingBucketAlgorithm(algorithms_base.BaseAlgorithm):
         keys = [queue_count_key, last_drain_key]
         args = [str(capacity), str(drain_rate), str(now)]
 
-        # Detect storage type and use appropriate script
-        if hasattr(storage, "_get_raw"):
-            # In-memory backend: use callable
-            result = storage.execute_atomic(
-                _memory_leaking_bucket_script, keys, args
-            )
-        else:
-            # Redis backend: use Lua script (to be implemented in Task 5.2)
-            result = storage.execute_atomic(LUA_SCRIPT, keys, args)
+        result = storage.execute_algorithm(
+            LUA_SCRIPT, _memory_leaking_bucket_script, keys, args
+        )
 
         allowed = bool(result[0])
         remaining = int(result[1])

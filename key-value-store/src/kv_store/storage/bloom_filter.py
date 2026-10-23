@@ -54,9 +54,7 @@ class BloomFilter:
         if expected_items < 1:
             raise ValueError("expected_items must be at least 1")
         if not 0 < false_positive_rate < 1:
-            raise ValueError(
-                "false_positive_rate must be between 0 and 1 (exclusive)"
-            )
+            raise ValueError("false_positive_rate must be between 0 and 1 (exclusive)")
 
         self._expected_items = expected_items
         self._false_positive_rate = false_positive_rate
@@ -194,18 +192,14 @@ class BloomFilter:
         header_format = "<BIdIHI"
         header_size = struct.calcsize(header_format)
         if len(data) < header_size:
-            raise ValueError(
-                "Data too short to contain a valid Bloom filter header"
-            )
+            raise ValueError("Data too short to contain a valid Bloom filter header")
 
         version, expected_items, fp_rate, size_bits, num_hashes, array_len = (
             struct.unpack(header_format, data[:header_size])
         )
 
         if version != cls._FORMAT_VERSION:
-            raise ValueError(
-                f"Unsupported Bloom filter format version: {version}"
-            )
+            raise ValueError(f"Unsupported Bloom filter format version: {version}")
 
         if len(data) < header_size + array_len:
             raise ValueError("Data too short to contain the full bit array")
