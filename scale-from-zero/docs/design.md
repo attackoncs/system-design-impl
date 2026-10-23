@@ -61,6 +61,10 @@ Per-process diagnostic counters expose balancer fallback, web identity, primary 
 
 ## Validation and production extensions
 
-Eleven tests cover concurrent idempotency/CAS, session persistence/expiry, replication gap/checksum/replay, LRU/TTL/version reads, lease fencing, topology-change refusal, actual1/8/10-process requests, web/cache/replica failures, primary restart/shard isolation, consumer ACK loss and edge-origin access. See `../benchmarks/REPORT.md` for final commands and measurements.
+Nineteen tests cover concurrent idempotency/CAS, session persistence/expiry, replication gap/checksum/replay, LRU/TTL/version reads, lease fencing, topology-change refusal, actual1/8/10-process requests, web/cache/replica failures, primary restart/shard isolation, consumer ACK loss and edge-origin access. See `../benchmarks/REPORT.md` for final commands and measurements.
 
 The experiment is bounded and one-host. Primaries, session dependencies, balancer, consumer and cache/edge each retain individual failure modes. Production extensions require real database HA and recovery fencing, replicated sessions, load-balancer redundancy, real CDN/GeoDNS, regional synchronization, migration protocols, security, independent monitoring and relevant long-running capacity/failure tests. The local sample cannot establish any of those properties by process count alone.
+
+## Engineering organization (2026-10-23)
+
+Routing policy lives in balancer.py; background single-step operations and owned-thread shutdown live in workers.py. Cache owns its lock, copies snapshots outside the metadata lock, and no longer requires HTTP callers to synchronize it. Profile POST retries require its idempotency key; login is never replayed merely because its body contains request_id. Eight additional regressions cover these contracts.
