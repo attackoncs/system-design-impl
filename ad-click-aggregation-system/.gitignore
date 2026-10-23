@@ -1,6 +1,0 @@
-.runtime/
-__pycache__/
-*.egg-info/
-.venv/
-*.sqlite*
-secrets.json

@@ -1,6 +1,0 @@
-.venv/
-.runtime/
-__pycache__/
-*.egg-info/
-*.sqlite*
-tokens.json
