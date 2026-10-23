@@ -132,7 +132,7 @@ print(f"均衡比率: {stats.balance_ratio:.4f}")
 idx = bisect_right(sorted_positions, hash(key))
 if idx == len(sorted_positions):
     idx = 0  # 绕回开头
-server = position_to_node[sorted_positions[idx]]
+server = sorted_entries[idx][1]  # entries preserve hash collisions
 ```
 
 时间复杂度为 O(log N)，其中 N 是虚拟节点总数。
@@ -260,8 +260,8 @@ $ python examples/demo.py
 | 操作 | 时间复杂度 | 说明 |
 |------|-----------|------|
 | `get_node(key)` | O(log N) | 二分查找，N = 虚拟节点数 |
-| `add_node(node)` | O(K log N) | K = 该服务器的虚拟节点数 |
-| `remove_node(node)` | O(K log N) | K = 该服务器的虚拟节点数 |
+| `add_node(node)` | O((N+K) log(N+K)) | K = 该服务器的虚拟节点数 |
+| `remove_node(node)` | O(N log N) | K = 该服务器的虚拟节点数 |
 | 每服务器空间 | O(K) | K = 虚拟节点数 |
 
 ## 运行测试
@@ -295,6 +295,7 @@ consistent-hashing/
 │   └── consistent_hashing/
 │       ├── __init__.py
 │       ├── ring.py              # ConsistentHashRing 类
+│       ├── migration.py         # affected hash ranges
 │       ├── hash_functions.py    # SHA-1, MD5, SHA-256
 │       └── stats.py             # 分布分析
 ├── tests/
@@ -328,3 +329,20 @@ retain the original strictly-clockwise (`bisect_right`) behavior. Custom hash
 functions must be deterministic and thread safe. Different API calls may observe
 different snapshots. Snapshot copying costs memory and read synchronization has
 a measurable cost; see [the engineering review](../ENGINEERING_REVIEW.md).
+
+## 第 06 章原书核对与新增接口
+
+原书的“Find affected keys”现已补齐为 `affected_ranges(before, after)`：返回受影响哈希区间及旧/新主属节点，不必先枚举全部键。`ring.snapshot()` 提供固定拓扑的只读视图，分布统计也固定同一个快照，避免并发增删造成混合版本。章节逐项覆盖、复杂度与边界见 [design_cn.md](docs/design_cn.md)。
+
+```python
+from consistent_hashing import ConsistentHashRing, affected_ranges
+ring = ConsistentHashRing(["a", "b"])
+before = ring.snapshot()
+ring.add_node("c")
+for interval in affected_ranges(before, ring.snapshot()):
+    print(interval.start, interval.end, interval.previous_owner, interval.new_owner)
+```
+
+区间为 `[start, end)`，跨环尾时 `start > end`，相等表示全环；匹配历史 `bisect_right` 规则。前后快照必须使用同一哈希函数对象。空环归属为 None；这里只规划主属变化，不执行数据迁移或复制。保留快照会保留相应内存。
+
+运行 `python examples/chapter_comparison.py` 对照取模扩容和 1/100/200 个虚拟节点。固定 10,000 键实验中扩容迁移 969 个键，取模为 9066 个；虚拟节点增多并不保证有限样本每次都更均匀，更不能拆分单个热点键。完整测试 **108 项通过**。

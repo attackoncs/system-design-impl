@@ -30,6 +30,68 @@ def _positive_count(value: int) -> int:
     return value
 
 
+@dataclass(frozen=True)
+class RingSnapshot:
+    """Stable read view; retain it to route an entire batch against one topology.
+
+    The captured hash callable must remain deterministic and thread safe.
+    Holding a snapshot retains its topology memory until the view is released.
+    """
+
+    _state: _RingState
+    _hash_function: Callable[[str], int]
+
+    def snapshot(self) -> RingSnapshot:
+        """Already a stable view; allow statistics to consume either interface."""
+        return self
+
+    @property
+    def nodes(self) -> list[str]:
+        return list(self._state.nodes)
+
+    @property
+    def total_virtual_nodes(self) -> int:
+        return len(self._state.entries)
+
+    def _hash(self, key: str) -> int:
+        value = self._hash_function(key)
+        if type(value) is not int:
+            raise ValueError("hash function must return an integer")
+        return value
+
+    def _start(self, state: _RingState, key: str) -> int:
+        if not state.entries:
+            raise RuntimeError("Hash ring is empty - no nodes available.")
+        return bisect.bisect_right(state.positions, self._hash(key)) % len(
+            state.entries
+        )
+
+    def get_node(self, key: str) -> str:
+        """Return the owner from a single coherent topology snapshot."""
+        state = self._state
+        return state.entries[self._start(state, key)][1]
+
+    def get_nodes(self, key: str, count: int) -> list[str]:
+        """Return up to count distinct clockwise owners; zero returns []."""
+        if type(count) is not int or count < 0:
+            raise ValueError("count must be a non-negative integer")
+        if count == 0:
+            return []
+        state = self._state
+        start = self._start(state, key)
+        target = min(count, len(state.nodes))
+        result = []
+        seen = set()
+        for offset in range(len(state.entries)):
+            node = state.entries[(start + offset) % len(state.entries)][1]
+            if node not in seen:
+                seen.add(node)
+                result.append(node)
+                if len(result) == target:
+                    break
+        return result
+
+
 class ConsistentHashRing:
     """Map keys to nodes using stable virtual-node positions.
 
@@ -101,37 +163,17 @@ class ConsistentHashRing:
             self._publish(_RingState.build(retained, nodes))
         return [position for position, _, _ in removed]
 
-    def _start(self, state: _RingState, key: str) -> int:
-        if not state.entries:
-            raise RuntimeError("Hash ring is empty - no nodes available.")
-        return bisect.bisect_right(state.positions, self._hash(key)) % len(
-            state.entries
-        )
+    def snapshot(self) -> RingSnapshot:
+        """Capture one read-only topology for batch routing and migration analysis."""
+        return RingSnapshot(self._snapshot(), self._hash_function)
 
     def get_node(self, key: str) -> str:
-        """Return the owner from a single coherent topology snapshot."""
-        state = self._snapshot()
-        return state.entries[self._start(state, key)][1]
+        """Return an owner using one captured topology."""
+        return self.snapshot().get_node(key)
 
     def get_nodes(self, key: str, count: int) -> list[str]:
-        """Return up to count distinct clockwise owners; zero returns []."""
-        if type(count) is not int or count < 0:
-            raise ValueError("count must be a non-negative integer")
-        if count == 0:
-            return []
-        state = self._snapshot()
-        start = self._start(state, key)
-        target = min(count, len(state.nodes))
-        result = []
-        seen = set()
-        for offset in range(len(state.entries)):
-            node = state.entries[(start + offset) % len(state.entries)][1]
-            if node not in seen:
-                seen.add(node)
-                result.append(node)
-                if len(result) == target:
-                    break
-        return result
+        """Return distinct clockwise owners from one topology."""
+        return self.snapshot().get_nodes(key, count)
 
     @property
     def nodes(self) -> list[str]:

@@ -1,350 +1,63 @@
-# 设计：一致性哈希（Consistent Hashing）
+# 第 06 章一致性哈希：设计与原书核对
 
-## 架构概览
+对照根目录《System Design Interview.md》第 06 章。原书列举的 Dynamo、Cassandra、Discord、Akamai、Maglev 是应用案例，不是要求在本章节重新实现这些系统。
 
-一致性哈希模块采用简单的分层设计，以哈希环（Hash Ring）作为核心数据结构，支持可配置的哈希函数与虚拟节点（Virtual Node），以实现均衡的键分布。
+## 章节覆盖
 
-```
-┌─────────────────────────────────────────────────┐
-│        公共 API（Public API）                   │
-│   （ConsistentHashRing 类）                     │
-├─────────────────────────────────────────────────┤
-│           哈希环数据结构（Hash Ring）           │
-│   （有序虚拟节点位置 + bisect）                 │
-├─────────────────────────────────────────────────┤
-│           哈希函数层（Hash Function）           │
-│   （SHA-1、MD5、SHA-256、自定义）               │
-├─────────────────────────────────────────────────┤
-│      统计与工具（Statistics & Utilities）       │
-│   （分布分析、可视化）                          │
-└─────────────────────────────────────────────────┘
-```
+| 原书主题 | 对应实现/证据 |
+| --- | --- |
+| hash(key) % N 扩缩容导致大量重映射 | examples/chapter_comparison.py 对照新增节点前后映射 |
+| SHA-1 哈希空间与环回 | hash_functions.py 的完整 160 位 SHA-1；二分查找后取索引环回 |
+| 同一函数映射节点与键，顺时针查找 | ring.py，节点标识为 node#index；默认不对哈希值取服务器数量的模 |
+| 加入/移除只改变局部归属 | add_node/remove_node；既有属性测试及新增区间逐位置校验 |
+| 分区大小不均、虚拟节点改善分布 | 可配置全局/每节点虚拟节点数；统计平均数、标准差及变异系数 |
+| 虚拟节点数量与内存取舍 | 对照脚本展示 1/100/200 个虚拟节点的条目数与分布 |
+| Find affected keys：定位受影响区间 | migration.py 的 affected_ranges(before, after)，无需枚举全部键 |
+| 水平扩容及热点讨论 | 只提供路由与迁移计划；单个热点键不会被拆开，不提供实际数据传输 |
 
-## 项目结构
+## 模块与接口
 
-```
-consistent-hashing/
-├── pyproject.toml
-├── README.md
-├── docs/
-│   ├── requirements.md
-│   ├── design.md
-│   └── tasks.md
-├── src/
-│   └── consistent_hashing/
-│       ├── __init__.py          # 公共 API 导出
-│       ├── ring.py              # ConsistentHashRing 类
-│       ├── hash_functions.py    # 哈希函数实现
-│       └── stats.py             # 分布统计工具
-├── tests/
-│   ├── __init__.py
-│   ├── test_ring.py             # 哈希环单元测试
-│   ├── test_hash_functions.py   # 哈希函数单元测试
-│   ├── test_stats.py            # 统计模块单元测试
-│   └── test_properties.py      # 基于属性的测试（Hypothesis）
-└── examples/
-    └── demo.py                  # 演示脚本
-```
-
-## 组件设计
-
-### 1. 哈希函数接口
+- ring.py：不可变 _RingState、公开只读 RingSnapshot、可写 ConsistentHashRing。已有 get_node/get_nodes/add_node/remove_node 接口保持兼容。
+- migration.py：不可变 AffectedRange 与纯拓扑比较；计算旧/新主属节点，不比较副本集合。
+- stats.py：分布统计固定一个快照；既可传 live ring，也可传 RingSnapshot。compute_redistribution 仍负责比较已知键的映射。
+- hash_functions.py：确定性字符串到整数函数。自定义函数必须确定、线程安全，且调用期间行为不变。
 
 ```python
-from typing import Protocol, Callable
-import hashlib
+from consistent_hashing import ConsistentHashRing, affected_ranges
 
-
-class HashFunction(Protocol):
-    """哈希环所用哈希函数的协议（Protocol）。"""
-
-    def __call__(self, key: str) -> int:
-        """将字符串键哈希为环上的整数位置。"""
-        ...
-
-
-def sha1_hash(key: str) -> int:
-    """默认哈希函数，基于 SHA-1，返回完整的 160 位整数。"""
-    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()
-    return int(digest, 16)
-
-
-def md5_hash(key: str) -> int:
-    """基于 MD5 的哈希函数，返回 128 位整数。"""
-    digest = hashlib.md5(key.encode("utf-8")).hexdigest()
-    return int(digest, 16)
-
-
-def sha256_hash(key: str) -> int:
-    """基于 SHA-256 的哈希函数，返回 256 位整数。"""
-    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
-    return int(digest, 16)
+ring = ConsistentHashRing(["a", "b"], num_virtual_nodes=150)
+before = ring.snapshot()
+ring.add_node("c")
+after = ring.snapshot()
+for interval in affected_ranges(before, after):
+    print(interval.start, interval.end, interval.previous_owner, interval.new_owner)
+# 对本地存储键的哈希值使用 interval.contains(position) 筛选迁移对象。
+# 本库不会实际复制、删除数据或切换分布式客户端路由。
 ```
 
-### 2. ConsistentHashRing 类
+## 区间与碰撞语义
 
-```python
-from bisect import bisect_right, insort
-from dataclasses import dataclass, field
-from typing import Optional, Callable
+保留既有严格顺时针 bisect_right：键哈希等于虚拟节点位置时归属于下一个更大位置。因此受影响区间采用 **[start, end)**，起点包含、终点不含。start > end 表示跨越环尾，start == end 表示整个环；这与本库历史路由规则一致，原书未指定相等位置的端点细节。
 
+规划器合并前后位置的边界，逐段比较归属，仅返回归属变化的段；相邻段不强制合并。同位置虚拟节点按节点名称/虚拟节点序号稳定排序，不会覆盖彼此；只有实际主属变化才产生迁移段。空环归属为 None：空→非空表示分配，非空→空表示撤销，两个空环没有区间。
 
-@dataclass
-class NodeInfo:
-    """物理服务器节点的元数据。"""
-    name: str
-    num_virtual_nodes: int
-    weight: float = 1.0
+前后快照必须使用同一哈希 callable 对象，防止混用不同哈希空间。快照之间若发生多次拓扑变更，规划器比较的是这两个端点的净变化，不假设只有一次增删。调用方负责协调真正的数据迁移和拓扑发布。
 
+## 并发与复杂度
 
-class ConsistentHashRing:
-    """带虚拟节点的一致性哈希环。
+写者串行构建替代状态，只在发布时持有短锁；失败不发布部分状态。读取只短暂获取快照，随后在不可变数据上搜索。持有公开 snapshot 后，整批查询和统计不再受后续写入影响，也不逐键获取发布锁。旧快照仍占用其拓扑内存，调用方不应无限保留历史快照。锁保障线程安全，不代表 CPU 并行加速。
 
-    使用 (position, node_name) 元组的有序列表和二分查找，
-    实现 O(log N) 的键查找。
-    """
+N 为环条目数、K 为新增节点的虚拟节点数、B 为前后不同位置的总数：查询 O(log N)；distinct 副本扫描最坏 O(N)；新增采用复制排序，保守上界 O((N+K) log(N+K))；删除扫描、排序保守上界 O(N log N)；状态 O(N)。迁移规划排序边界并逐段二分，O(B log B + B log(N_before+N_after))，结果 O(B)。这些是保守上界，未进行本轮吞吐压测。
 
-    def __init__(
-        self,
-        nodes: Optional[list[str]] = None,
-        num_virtual_nodes: int = 150,
-        hash_function: Optional[Callable[[str], int]] = None,
-    ):
-        """初始化哈希环。
+## 验证与实验
 
-        Args:
-            nodes: 初始的服务器节点标识符列表。
-            num_virtual_nodes: 每台服务器默认的虚拟节点数量。
-            hash_function: 将 str 映射为 int 的哈希函数。默认使用 SHA-1。
-        """
-        self._hash_function = hash_function or sha1_hash
-        self._default_num_virtual_nodes = num_virtual_nodes
-
-        # 用于二分查找的有序哈希位置列表
-        self._sorted_positions: list[int] = []
-
-        # 哈希位置到物理节点名称的映射
-        self._position_to_node: dict[int, str] = {}
-
-        # 物理节点名称到其元数据的映射
-        self._nodes: dict[str, NodeInfo] = {}
-
-        # 添加初始节点
-        if nodes:
-            for node in nodes:
-                self.add_node(node)
-
-    def add_node(self, node: str, num_virtual_nodes: Optional[int] = None) -> list[int]:
-        """向环中添加一个服务器节点。
-
-        Args:
-            node: 服务器标识符字符串。
-            num_virtual_nodes: 为该服务器覆盖默认的虚拟节点数量。
-
-        Returns:
-            虚拟节点被放置到的哈希位置列表。
-
-        Raises:
-            ValueError: 如果该节点已存在于环上。
-        """
-        ...
-
-    def remove_node(self, node: str) -> list[int]:
-        """从环中移除一个服务器节点及其所有虚拟节点。
-
-        Args:
-            node: 要移除的服务器标识符。
-
-        Returns:
-            被移除的哈希位置列表。
-
-        Raises:
-            KeyError: 如果该节点不存在于环上。
-        """
-        ...
-
-    def get_node(self, key: str) -> str:
-        """获取负责给定键的服务器。
-
-        对键进行哈希，然后沿顺时针方向找到第一个服务器。
-
-        Args:
-            key: 要查找的键。
-
-        Returns:
-            负责该键的服务器节点标识符。
-
-        Raises:
-            RuntimeError: 如果哈希环为空（没有任何节点）。
-        """
-        ...
-
-    def get_nodes(self, key: str, count: int) -> list[str]:
-        """为一个键获取多个不同的服务器（用于副本/replication）。
-
-        从键的位置开始沿顺时针遍历，收集不同的物理服务器
-        （跳过已收集服务器的虚拟节点）。
-
-        Args:
-            key: 要查找的键。
-            count: 要返回的不同服务器数量。
-
-        Returns:
-            不同服务器标识符的列表（至多 count 个，或服务器总数）。
-
-        Raises:
-            RuntimeError: 如果哈希环为空。
-        """
-        ...
-
-    def get_redistribution_on_add(self, node: str, num_virtual_nodes: Optional[int] = None) -> dict[str, list[str]]:
-        """预览如果添加某节点，哪些键会移动。
-
-        不会修改哈希环。返回
-        {source_server: [keys_that_would_move_away]} 形式的映射。
-
-        注意：这需要在外部跟踪键；该方法基于提供的键集合工作。
-        """
-        ...
-
-    def get_redistribution_on_remove(self, node: str) -> dict[str, list[str]]:
-        """预览如果移除某节点，哪些键会移动。
-
-        不会修改哈希环。
-        """
-        ...
-
-    @property
-    def nodes(self) -> list[str]:
-        """环上所有物理节点名称的列表。"""
-        return list(self._nodes.keys())
-
-    @property
-    def total_virtual_nodes(self) -> int:
-        """环上虚拟节点的总数。"""
-        return len(self._sorted_positions)
-
-    def _hash(self, key: str) -> int:
-        """将键哈希为环上的位置。"""
-        return self._hash_function(key)
-
-    def _virtual_node_key(self, node: str, index: int) -> str:
-        """生成用于虚拟节点哈希的字符串。
-
-        格式："{node}#{index}"
-        """
-        return f"{node}#{index}"
+```sh
+python -m pytest tests -q -p no:cacheprovider
+python examples/chapter_comparison.py
 ```
 
-### 3. 键查找算法（二分查找）
+本轮完整套件 **108 passed**。新增 22 项覆盖增删、混合拓扑变更、环回、端点、强制碰撞、空环转换、快照存活、不同哈希函数拒绝，以及统计期间并发删除全部节点。保留既有属性测试与并发写入测试。
 
-```python
-def get_node(self, key: str) -> str:
-    """使用 bisect 实现 O(log N) 查找。"""
-    if not self._sorted_positions:
-        raise RuntimeError("Hash ring is empty — no nodes available.")
+确定性实验：10 台节点、10,000 个 key-N 样本。每节点 1/100/200 个虚拟节点分别占 10/1000/2000 个条目，标准差/均值约 1.01794/0.05789/0.06078。10→11 台时一致性哈希迁移 969 个键，取模迁移 9066 个键。增加虚拟节点改善总体均匀性，但有限样本不保证每次单调改善；原书的均值比例不是硬性 SLA。
 
-    hash_value = self._hash(key)
-
-    # 找到第一个 >= hash_value 的位置（顺时针遍历）
-    idx = bisect_right(self._sorted_positions, hash_value)
-
-    # 如果越过最后一个位置，则回绕到起点
-    if idx == len(self._sorted_positions):
-        idx = 0
-
-    position = self._sorted_positions[idx]
-    return self._position_to_node[position]
-```
-
-### 4. 统计模块
-
-```python
-from dataclasses import dataclass
-
-
-@dataclass
-class DistributionStats:
-    """键在各服务器间分布情况的统计信息。"""
-    total_keys: int
-    num_servers: int
-    keys_per_server: dict[str, int]
-    mean: float
-    std_dev: float
-    min_keys: int
-    max_keys: int
-    balance_ratio: float  # std_dev / mean（越低越好）
-
-
-def compute_distribution(ring: "ConsistentHashRing", keys: list[str]) -> DistributionStats:
-    """计算一组键在哈希环上的分布统计信息。
-
-    Args:
-        ring: 一致性哈希环。
-        keys: 要分析的键列表。
-
-    Returns:
-        包含各服务器计数与聚合指标的 DistributionStats。
-    """
-    ...
-
-
-def compute_redistribution(
-    keys: list[str],
-    assignment_before: dict[str, str],
-    assignment_after: dict[str, str],
-) -> dict[str, dict[str, list[str]]]:
-    """计算两次分配之间哪些键发生了移动。
-
-    Args:
-        keys: 所有键。
-        assignment_before: 变更前的 {key: server} 映射。
-        assignment_after: 变更后的 {key: server} 映射。
-
-    Returns:
-        {"moved": {key: {"from": old_server, "to": new_server}}, "total_moved": int}
-    """
-    ...
-```
-
-### 5. 服务器增删与最小化数据迁移
-
-**添加节点：**
-1. 生成 K 个虚拟节点键：`"{node}#{i}"`，其中 i 遍历 range(K)
-2. 对每个键哈希得到位置
-3. 将位置插入有序列表（使用 `insort`）
-4. 将每个位置映射到物理节点
-5. 只有位于新位置与其前一位置（逆时针方向）之间的键会受影响
-
-**移除节点：**
-1. 查找该节点的所有位置
-2. 从有序列表和位置到节点的映射中移除每个位置
-3. 原本分配给被移除节点的键现在顺延到下一个顺时针节点
-
-### 6. 虚拟节点命名约定
-
-虚拟节点使用 `"{node}#{index}"` 格式生成：
-- 服务器 "web-1" 拥有 3 个虚拟节点 → hash("web-1#0")、hash("web-1#1")、hash("web-1#2")
-- 这确保了放置结果具有确定性和可复现性，不受插入顺序影响
-
-## 设计决策
-
-| 决策项 | 选择 | 理由 |
-|--------|------|------|
-| 数据结构 | 有序列表 + bisect | O(log N) 查找，实现简单，基于 Python 标准库 |
-| 哈希函数 | 默认 SHA-1 | 160 位哈希空间提供出色的分布特性；支持配置以保证灵活性 |
-| 虚拟节点格式 | `"{node}#{index}"` | 简单、确定性强，避免节点之间冲突 |
-| 默认虚拟节点数量 | 每台服务器 150 个 | 在分布均匀性与内存占用之间取得良好平衡 |
-| 查找方向 | 顺时针（升序） | 沿用原始论文的标准约定 |
-| 回绕方式 | 取模（越过末尾回到第一个节点） | 确保所有键无论位置如何都能映射到某台服务器 |
-| 按服务器设置虚拟节点 | 通过权重（weight）支持 | 允许异构的服务器容量 |
-| 统计功能 | 独立模块 | 保持核心哈希环逻辑简洁；统计为可选功能 |
-| 基于属性的测试 | Hypothesis 库 | 在随机输入下验证不变量（确定性、最小化数据迁移） |
-
-## 错误处理
-
-- **哈希环为空**：`get_node()` 和 `get_nodes()` 抛出带有描述性信息的 `RuntimeError`。
-- **节点重复**：如果节点已存在，`add_node()` 抛出 `ValueError`。
-- **节点不存在**：如果节点不存在，`remove_node()` 抛出 `KeyError`。
-- **无效的 count**：`get_nodes(key, count)` 返回至多 `min(count, total_physical_nodes)` 台服务器，不会报错。
-- **哈希冲突**：如果两个虚拟节点哈希到同一位置，后写入的会覆盖前一个（在 SHA-1 的 160 位哈希空间中这种情况极其罕见，但仍会被妥善处理）。
+本实现未包括成员发现、故障探测、共识、数据复制/迁移执行器或真实跨机负载；get_nodes 仅提供不同物理节点候选，不产生副本。均匀键样本不等于请求流量，单个热点键仍归属一个主节点。

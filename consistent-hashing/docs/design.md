@@ -1,351 +1,46 @@
-# Design: Consistent Hashing
+# Chapter 06 consistent hashing: implemented design
 
-## Architecture Overview
+The source of the coverage review is chapter 06 in the repository's System Design Interview.md. Named systems such as Dynamo and Cassandra are applications of the technique, not additional systems to implement in this chapter.
 
-The consistent hashing module follows a simple layered design with the hash ring as the core data structure, supporting configurable hash functions and virtual nodes for balanced distribution.
+## Chapter coverage
 
-```
-┌─────────────────────────────────────────────────┐
-│           Public API                             │
-│   (ConsistentHashRing class)                    │
-├─────────────────────────────────────────────────┤
-│           Hash Ring Data Structure               │
-│   (Sorted virtual node positions + bisect)      │
-├─────────────────────────────────────────────────┤
-│           Hash Function Layer                    │
-│   (SHA-1, MD5, SHA-256, custom)                 │
-├─────────────────────────────────────────────────┤
-│           Statistics & Utilities                  │
-│   (Distribution analysis, visualization)        │
-└─────────────────────────────────────────────────┘
-```
+| Topic | Implementation |
+| --- | --- |
+| Modulo rehashing problem | examples/chapter_comparison.py compares routing before/after expansion |
+| SHA-1 space, hash ring, clockwise lookup | Full 160-bit hash; sorted virtual positions and wrapping binary search |
+| Node/key mapping, addition/removal locality | ring.py and existing property tests |
+| Unequal partitions and virtual nodes | Configurable per-node/default counts; distribution statistics |
+| Virtual-node memory/balance tradeoff | Reproducible 1/100/200-node experiment |
+| Find affected keys/ranges | migration.py topology-only affected_ranges planner |
+| Scaling and hotspots | Placement only; one hot key is not split across servers |
 
-## Project Structure
+## Responsibilities and concurrency
 
-```
-consistent-hashing/
-├── pyproject.toml
-├── README.md
-├── docs/
-│   ├── requirements.md
-│   ├── design.md
-│   └── tasks.md
-├── src/
-│   └── consistent_hashing/
-│       ├── __init__.py          # Public API exports
-│       ├── ring.py              # ConsistentHashRing class
-│       ├── hash_functions.py    # Hash function implementations
-│       └── stats.py             # Distribution statistics utilities
-├── tests/
-│   ├── __init__.py
-│   ├── test_ring.py             # Unit tests for hash ring
-│   ├── test_hash_functions.py   # Unit tests for hash functions
-│   ├── test_stats.py            # Unit tests for statistics
-│   └── test_properties.py      # Property-based tests (Hypothesis)
-└── examples/
-    └── demo.py                  # Demonstration script
-```
+ring.py owns immutable topology state, RingSnapshot read views and serialized topology writers. snapshot() captures a coherent topology under a short publication lock. Retained snapshots support consistent batch routing without a per-key publication lock, and remain usable after live nodes are removed. They retain topology memory until released. Hash callables must be deterministic, thread safe and stable.
 
-## Component Design
+migration.py compares primary ownership across two snapshots; stats.py captures one snapshot for a distribution report, preventing mixed-version totals. hash_functions.py supplies deterministic string-to-integer functions. Existing public routing methods retain their behavior; get_nodes only selects distinct candidate nodes, it does not replicate data.
 
-### 1. Hash Function Interface
+## Migration contract
 
 ```python
-from typing import Protocol, Callable
-import hashlib
-
-
-class HashFunction(Protocol):
-    """Protocol for hash functions used by the ring."""
-
-    def __call__(self, key: str) -> int:
-        """Hash a string key to an integer position on the ring."""
-        ...
-
-
-def sha1_hash(key: str) -> int:
-    """Default hash function using SHA-1, returning full 160-bit integer."""
-    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()
-    return int(digest, 16)
-
-
-def md5_hash(key: str) -> int:
-    """MD5-based hash function, returning 128-bit integer."""
-    digest = hashlib.md5(key.encode("utf-8")).hexdigest()
-    return int(digest, 16)
-
-
-def sha256_hash(key: str) -> int:
-    """SHA-256-based hash function, returning 256-bit integer."""
-    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
-    return int(digest, 16)
+from consistent_hashing import ConsistentHashRing, affected_ranges
+ring = ConsistentHashRing(["a", "b"])
+before = ring.snapshot()
+ring.add_node("c")
+after = ring.snapshot()
+ranges = affected_ranges(before, after)
 ```
 
-### 2. ConsistentHashRing Class
+Each immutable AffectedRange has start, end, previous_owner, new_owner and contains(position). Ranges are disjoint, clockwise **[start, end)**, following the existing strict-clockwise bisect_right convention. Equal key/node hashes route to the next greater position. start > end wraps; start == end denotes the whole ring. Adjacent ranges are not merged. Equal-position entries are retained and ordered by physical name and virtual index.
 
-```python
-from bisect import bisect_right, insort
-from dataclasses import dataclass, field
-from typing import Optional, Callable
+The planner uses the union of position boundaries, compares owners at each interval start and emits only changes. Empty-ring owners are None. Both snapshots must use the same hash callable instance; custom function equivalence cannot safely be inferred. Multiple intervening updates yield their net difference. Callers must coordinate data transfer and topology activation themselves; this is not a migration executor or a replica-set planner.
 
+## Cost and evidence
 
-@dataclass
-class NodeInfo:
-    """Metadata for a physical server node."""
-    name: str
-    num_virtual_nodes: int
-    weight: float = 1.0
+For N ring entries and K added entries: lookup O(log N), distinct-replica scan worst-case O(N), copy/sort addition conservatively O((N+K) log(N+K)), removal conservatively O(N log N), and state memory O(N). For B union boundaries migration costs O(B log B + B log(N_before+N_after)), with O(B) output. Snapshot construction is a short reference capture. No throughput improvement is claimed without measurements.
 
+Run `python -m pytest tests -q -p no:cacheprovider` and `python examples/chapter_comparison.py`. Full suite: **108 passed**, including 22 new cases for migration boundaries, wraparound, collisions, empty transitions, incompatible hash functions, retained views and statistics during topology deletion.
 
-class ConsistentHashRing:
-    """Consistent hash ring with virtual nodes.
+Deterministic experiment: 10 servers and 10,000 sample keys, 1/100/200 virtual nodes per server give 10/1000/2000 entries and standard-deviation/mean 1.01794/0.05789/0.06078. Adding server 11 moves 969 keys with consistent hashing versus 9066 with modulo. Finite samples do not guarantee monotonically improving balance or the book's illustrative ratios. Key balance is not traffic balance; a hot key still has one primary owner.
 
-    Uses a sorted list of (position, node_name) tuples and binary search
-    for O(log N) key lookups.
-    """
-
-    def __init__(
-        self,
-        nodes: Optional[list[str]] = None,
-        num_virtual_nodes: int = 150,
-        hash_function: Optional[Callable[[str], int]] = None,
-    ):
-        """Initialize the hash ring.
-
-        Args:
-            nodes: Initial list of server node identifiers.
-            num_virtual_nodes: Default number of virtual nodes per server.
-            hash_function: Hash function mapping str -> int. Defaults to SHA-1.
-        """
-        self._hash_function = hash_function or sha1_hash
-        self._default_num_virtual_nodes = num_virtual_nodes
-
-        # Sorted list of hash positions for binary search
-        self._sorted_positions: list[int] = []
-
-        # Map from hash position to physical node name
-        self._position_to_node: dict[int, str] = {}
-
-        # Map from physical node name to its metadata
-        self._nodes: dict[str, NodeInfo] = {}
-
-        # Add initial nodes
-        if nodes:
-            for node in nodes:
-                self.add_node(node)
-
-    def add_node(self, node: str, num_virtual_nodes: Optional[int] = None) -> list[int]:
-        """Add a server node to the ring.
-
-        Args:
-            node: Server identifier string.
-            num_virtual_nodes: Override virtual node count for this server.
-
-        Returns:
-            List of hash positions where virtual nodes were placed.
-
-        Raises:
-            ValueError: If node already exists on the ring.
-        """
-        ...
-
-    def remove_node(self, node: str) -> list[int]:
-        """Remove a server node and all its virtual nodes from the ring.
-
-        Args:
-            node: Server identifier to remove.
-
-        Returns:
-            List of hash positions that were removed.
-
-        Raises:
-            KeyError: If node does not exist on the ring.
-        """
-        ...
-
-    def get_node(self, key: str) -> str:
-        """Get the server responsible for a given key.
-
-        Hashes the key and traverses clockwise to find the first server.
-
-        Args:
-            key: The key to look up.
-
-        Returns:
-            The server node identifier responsible for this key.
-
-        Raises:
-            RuntimeError: If the ring is empty (no nodes).
-        """
-        ...
-
-    def get_nodes(self, key: str, count: int) -> list[str]:
-        """Get multiple distinct servers for a key (for replication).
-
-        Traverses clockwise from the key's position, collecting distinct
-        physical servers (skipping virtual nodes of already-collected servers).
-
-        Args:
-            key: The key to look up.
-            count: Number of distinct servers to return.
-
-        Returns:
-            List of distinct server identifiers (up to count or total servers).
-
-        Raises:
-            RuntimeError: If the ring is empty.
-        """
-        ...
-
-    def get_redistribution_on_add(self, node: str, num_virtual_nodes: Optional[int] = None) -> dict[str, list[str]]:
-        """Preview which keys would move if a node were added.
-
-        Does NOT modify the ring. Returns a mapping of
-        {source_server: [keys_that_would_move_away]}.
-
-        Note: This requires tracking keys externally; this method works
-        with a provided key set.
-        """
-        ...
-
-    def get_redistribution_on_remove(self, node: str) -> dict[str, list[str]]:
-        """Preview which keys would move if a node were removed.
-
-        Does NOT modify the ring.
-        """
-        ...
-
-    @property
-    def nodes(self) -> list[str]:
-        """List of all physical node names on the ring."""
-        return list(self._nodes.keys())
-
-    @property
-    def total_virtual_nodes(self) -> int:
-        """Total number of virtual nodes on the ring."""
-        return len(self._sorted_positions)
-
-    def _hash(self, key: str) -> int:
-        """Hash a key to a ring position."""
-        return self._hash_function(key)
-
-    def _virtual_node_key(self, node: str, index: int) -> str:
-        """Generate the string to hash for a virtual node.
-
-        Format: "{node}#{index}"
-        """
-        return f"{node}#{index}"
-```
-
-### 3. Key Lookup Algorithm (Binary Search)
-
-```python
-def get_node(self, key: str) -> str:
-    """O(log N) lookup using bisect."""
-    if not self._sorted_positions:
-        raise RuntimeError("Hash ring is empty — no nodes available.")
-
-    hash_value = self._hash(key)
-
-    # Find the first position >= hash_value (clockwise traversal)
-    idx = bisect_right(self._sorted_positions, hash_value)
-
-    # Wrap around if past the last position
-    if idx == len(self._sorted_positions):
-        idx = 0
-
-    position = self._sorted_positions[idx]
-    return self._position_to_node[position]
-```
-
-### 4. Statistics Module
-
-```python
-from dataclasses import dataclass
-
-
-@dataclass
-class DistributionStats:
-    """Statistics about key distribution across servers."""
-    total_keys: int
-    num_servers: int
-    keys_per_server: dict[str, int]
-    mean: float
-    std_dev: float
-    min_keys: int
-    max_keys: int
-    balance_ratio: float  # std_dev / mean (lower is better)
-
-
-def compute_distribution(ring: "ConsistentHashRing", keys: list[str]) -> DistributionStats:
-    """Compute distribution statistics for a set of keys on the ring.
-
-    Args:
-        ring: The consistent hash ring.
-        keys: List of keys to analyze.
-
-    Returns:
-        DistributionStats with per-server counts and aggregate metrics.
-    """
-    ...
-
-
-def compute_redistribution(
-    keys: list[str],
-    assignment_before: dict[str, str],
-    assignment_after: dict[str, str],
-) -> dict[str, dict[str, list[str]]]:
-    """Compute which keys moved between two assignments.
-
-    Args:
-        keys: All keys.
-        assignment_before: {key: server} mapping before change.
-        assignment_after: {key: server} mapping after change.
-
-    Returns:
-        {"moved": {key: {"from": old_server, "to": new_server}}, "total_moved": int}
-    """
-    ...
-```
-
-### 5. Server Add/Remove with Minimal Redistribution
-
-**Adding a node:**
-1. Generate K virtual node keys: `"{node}#{i}"` for i in range(K)
-2. Hash each to get positions
-3. Insert positions into sorted list (using `insort`)
-4. Map each position to the physical node
-5. Only keys between the new position and the previous position (counter-clockwise) are affected
-
-**Removing a node:**
-1. Look up all positions for the node
-2. Remove each position from sorted list and position-to-node map
-3. Keys that were assigned to the removed node now fall through to the next clockwise node
-
-### 6. Virtual Node Naming Convention
-
-Virtual nodes are generated using the format `"{node}#{index}"`:
-- Server "web-1" with 3 virtual nodes → hash("web-1#0"), hash("web-1#1"), hash("web-1#2")
-- This ensures deterministic, reproducible placement regardless of insertion order
-
-## Design Decisions
-
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Data structure | Sorted list + bisect | O(log N) lookup, simple implementation, Python stdlib |
-| Hash function | SHA-1 default | 160-bit space provides excellent distribution; configurable for flexibility |
-| Virtual node format | `"{node}#{index}"` | Simple, deterministic, avoids collisions between nodes |
-| Default virtual nodes | 150 per server | Good balance between distribution uniformity and memory usage |
-| Lookup direction | Clockwise (ascending) | Standard convention from the original paper |
-| Wrap-around | Modular (first node after end) | Ensures all keys map to a server regardless of position |
-| Per-server virtual nodes | Supported via weight | Allows heterogeneous server capacities |
-| Statistics | Separate module | Keeps core ring logic clean; stats are optional |
-| Property-based testing | Hypothesis library | Verifies invariants across random inputs (determinism, minimal redistribution) |
-
-## Error Handling
-
-- **Empty ring**: `get_node()` and `get_nodes()` raise `RuntimeError` with descriptive message.
-- **Duplicate node**: `add_node()` raises `ValueError` if node already exists.
-- **Missing node**: `remove_node()` raises `KeyError` if node doesn't exist.
-- **Invalid count**: `get_nodes(key, count)` returns up to `min(count, total_physical_nodes)` servers without error.
-- **Hash collisions**: If two virtual nodes hash to the same position, the later one overwrites (extremely unlikely with SHA-1's 160-bit space, but handled gracefully).
+Membership discovery, failure detection, consensus, transfer execution and cross-machine load testing are outside this chapter. See design_cn.md for the Chinese coverage matrix and root DEEP_REVIEW_PROGRESS.md for sequential review status.

@@ -132,7 +132,7 @@ Key lookup uses `bisect_right` on a sorted list of virtual node positions:
 idx = bisect_right(sorted_positions, hash(key))
 if idx == len(sorted_positions):
     idx = 0  # wrap around
-server = position_to_node[sorted_positions[idx]]
+server = sorted_entries[idx][1]  # entries preserve hash collisions
 ```
 
 This gives O(log N) lookup where N is the total number of virtual nodes.
@@ -260,8 +260,8 @@ $ python examples/demo.py
 | Operation | Time Complexity | Notes |
 |-----------|----------------|-------|
 | `get_node(key)` | O(log N) | Binary search, N = virtual nodes |
-| `add_node(node)` | O(K log N) | K = virtual nodes for this server |
-| `remove_node(node)` | O(K log N) | K = virtual nodes for this server |
+| `add_node(node)` | O((N+K) log(N+K)) | K = virtual nodes for this server |
+| `remove_node(node)` | O(N log N) | K = virtual nodes for this server |
 | Space per server | O(K) | K = virtual node count |
 
 ## Running Tests
@@ -295,6 +295,7 @@ consistent-hashing/
 │   └── consistent_hashing/
 │       ├── __init__.py
 │       ├── ring.py              # ConsistentHashRing class
+│       ├── migration.py         # affected hash ranges
 │       ├── hash_functions.py    # SHA-1, MD5, SHA-256
 │       └── stats.py             # Distribution analysis
 ├── tests/
@@ -328,3 +329,20 @@ retain the original strictly-clockwise (`bisect_right`) behavior. Custom hash
 functions must be deterministic and thread safe. Different API calls may observe
 different snapshots. Snapshot copying costs memory and read synchronization has
 a measurable cost; see [the engineering review](../ENGINEERING_REVIEW.md).
+
+## Chapter 06 coverage and new APIs
+
+The book's affected-key-range analysis is now implemented by `affected_ranges(before, after)`, returning changed hash intervals and old/new primary owners without enumerating keys. `ring.snapshot()` exposes a stable read view; distribution statistics pin one topology during concurrent updates. See [the design and coverage matrix](docs/design.md).
+
+```python
+from consistent_hashing import ConsistentHashRing, affected_ranges
+ring = ConsistentHashRing(["a", "b"])
+before = ring.snapshot()
+ring.add_node("c")
+for interval in affected_ranges(before, ring.snapshot()):
+    print(interval.start, interval.end, interval.previous_owner, interval.new_owner)
+```
+
+Intervals are `[start, end)`, wrapping if start > end and covering the whole ring if equal, consistent with historical strict-clockwise lookup. Snapshots must share the same hash callable. Empty owners are None. No physical migration or replication is executed; retained snapshots retain memory.
+
+Run `python examples/chapter_comparison.py` for modulo expansion and 1/100/200 virtual-node comparisons. On 10,000 fixed keys, expansion moves 969 keys with consistent hashing versus 9066 with modulo. Finite samples need not improve monotonically with more virtual nodes; a single hot key is not split. Full test suite: **108 passed**.

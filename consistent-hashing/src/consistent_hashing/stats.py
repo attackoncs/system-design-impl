@@ -12,7 +12,7 @@ import math
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from consistent_hashing.ring import ConsistentHashRing
+    from consistent_hashing.ring import ConsistentHashRing, RingSnapshot
 
 
 @dataclasses.dataclass
@@ -75,7 +75,7 @@ def compute_redistribution(
 
 
 def compute_distribution(
-    ring: "ConsistentHashRing", keys: list[str]
+    ring: "ConsistentHashRing | RingSnapshot", keys: list[str]
 ) -> DistributionStats:
     """Compute distribution statistics for a set of keys on the ring.
 
@@ -89,7 +89,8 @@ def compute_distribution(
     Raises:
         RuntimeError: If the ring is empty.
     """
-    # Count keys per server
+    # One capture prevents mixed-topology totals while nodes change.
+    ring = ring.snapshot()
     keys_per_server: dict[str, int] = {node: 0 for node in ring.nodes}
 
     for key in keys:
