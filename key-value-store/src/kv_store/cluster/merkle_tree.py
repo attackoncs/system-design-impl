@@ -208,16 +208,22 @@ class MerkleTree:
             # Sort keys for deterministic hashing
             hasher = hashlib.sha256()
             for key in sorted(bucket.keys()):
-                hasher.update(key.encode("utf-8"))
-                hasher.update(bucket[key].encode("utf-8"))
+                for part in (key.encode("utf-8"), bucket[key].encode("utf-8")):
+                    hasher.update(len(part).to_bytes(8, "big"))
+                    hasher.update(part)
             self._bucket_hashes[bucket_id] = hasher.hexdigest()
 
     def _recompute_root(self) -> None:
         """Recompute the root hash from all bucket hashes."""
-        hasher = hashlib.sha256()
-        for bucket_hash in self._bucket_hashes:
-            hasher.update(bucket_hash.encode("utf-8"))
-        self._root_hash = hasher.hexdigest()
+        level = [
+            hashlib.sha256(value.encode()).digest() for value in self._bucket_hashes
+        ]
+        while len(level) > 1:
+            level = [
+                hashlib.sha256(level[i] + level[i + 1]).digest()
+                for i in range(0, len(level), 2)
+            ]
+        self._root_hash = level[0].hex()
 
     def _recompute_all(self) -> None:
         """Recompute all bucket hashes and the root hash."""
@@ -247,7 +253,9 @@ class AntiEntropyManager:
         sync_func: Optional[SyncFunc] = None,
         sync_interval: float = 60.0,
         get_peers_func: Optional[Callable[[], list[str]]] = None,
+        peer_sync_func=None,
     ):
+        self._peer_sync_func = peer_sync_func
         self._node_id = node_id
         self._merkle_tree = merkle_tree
         self._sync_func = sync_func
@@ -327,7 +335,9 @@ class AntiEntropyManager:
         # via gRPC. For now, this method is a placeholder that can be
         # called with pre-fetched remote hashes.
         # Remote hashes arrive through sync_with_remote_hashes.
-        del peer_node_id
+        if self._peer_sync_func is not None:
+            await self._peer_sync_func(peer_node_id)
+            return []
         return []
 
     async def sync_with_remote_hashes(

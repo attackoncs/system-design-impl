@@ -1,5 +1,7 @@
 # Distributed Key-Value Store
 
+> The chapter 07 runtime now connects replica RPCs, durable causal versions/tombstones, handoff and repair. Some book requirements remain unfinished. See the [coverage and compatibility review](docs/chapter07-review.md) for the current implementation and limitations; interface sketches below are conceptual.
+
 A distributed key-value store implemented in Python, based on the design principles from *System Design Interview* Chapter 7 (Dynamo-style architecture). Features consistent hashing, tunable quorum consistency, vector clocks, gossip-based failure detection, and LSM-tree storage.
 
 ## Architecture
@@ -88,7 +90,7 @@ pip install -e ".[dev]"
 ```
 
 Requirements:
-- Python >= 3.9
+- Python >= 3.10
 - The `consistent-hashing` library (sibling directory, installed automatically)
 
 ## Quick Start
@@ -275,7 +277,7 @@ config = ClientConfig(
 | `value` | `Optional[bytes]` | The value (for get operations) |
 | `vector_clock` | `Optional[VectorClock]` | Version information |
 | `has_conflict` | `bool` | Whether conflicting versions exist |
-| `conflicting_values` | `list[tuple[bytes, VectorClock]]` | All conflicting versions |
+| `conflicting_values` | `list[tuple[Optional[bytes], VectorClock]]` | All conflicting versions |
 
 #### Consistency Levels
 
@@ -284,8 +286,8 @@ Pass as the `consistency` parameter to `put()`, `get()`, or `delete()`:
 | Level | W | R | Guarantees |
 |-------|---|---|------------|
 | `"one"` | 1 | 1 | Eventual consistency, lowest latency |
-| `"quorum"` | 2 | 2 | Strong consistency (with N=3) |
-| `"all"` | N | N | Strongest consistency, lowest availability |
+| `"quorum"` | 2 | 2 | Intersecting quorums with N=3; not linearizability |
+| `"all"` | N | N | All replicas acknowledge; lowest availability |
 
 ### `KVNode`
 

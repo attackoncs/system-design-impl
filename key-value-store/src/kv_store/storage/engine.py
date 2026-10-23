@@ -201,6 +201,30 @@ class StorageEngine:
         # Not found anywhere
         return None
 
+    async def scan(self) -> dict[str, StorageResult]:
+        """Capture newest records under the writer lock, including tombstones.
+
+        Intended for startup/repair of this reference store, not range queries
+        over production-sized datasets.
+        """
+        async with self._write_lock:
+            entries = {}
+            for table in reversed(self._sstables):
+                for entry in table.entries():
+                    entries[entry.key] = entry
+            for entry in self._memtable.entries_sorted():
+                entries[entry.key] = entry
+            return {
+                key: StorageResult(
+                    key,
+                    entry.value,
+                    entry.timestamp,
+                    entry.is_tombstone,
+                    not entry.is_tombstone,
+                )
+                for key, entry in entries.items()
+            }
+
     async def delete(self, key: str, timestamp: float) -> None:
         """Delete a key by writing a tombstone marker.
 
@@ -353,8 +377,7 @@ class StorageEngine:
                 f"(max {_MAX_KEY_SIZE_BYTES} bytes)"
             )
 
-    @staticmethod
-    def _validate_value(value: bytes) -> None:
+    def _validate_value(self, value: bytes) -> None:
         """Validate that the value does not exceed the maximum size.
 
         Args:
@@ -363,8 +386,8 @@ class StorageEngine:
         Raises:
             ValueError: If value exceeds 10 KB.
         """
-        if len(value) > _MAX_VALUE_SIZE_BYTES:
+        if len(value) > self._config.max_value_size_bytes:
             raise ValueError(
                 f"Value exceeds maximum size: {len(value)} bytes "
-                f"(max {_MAX_VALUE_SIZE_BYTES} bytes)"
+                f"(max {self._config.max_value_size_bytes} bytes)"
             )

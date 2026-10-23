@@ -6,11 +6,11 @@
 
 | 章节 | 主题 | 状态 | 说明 |
 |------|------|------|------|
-| 02 | [从零扩容](./scale-from-zero/) | ✅ 参考实验完成 | 1/8/10进程HTTP演进、无状态会话、负载均衡、缓存/读副本、分片与持久任务；11项测试 |
-| 03 | [容量估算](./capacity-estimation/) | ✅ 参考实现完成 | 显式单位Decimal QPS/存储/带宽/缓存/节点/可用性预算、场景CLI与敏感性分析；9项测试 |
+| 02 | [从零扩容](./scale-from-zero/) | ✅ 参考实验完成 | 1/8/10进程HTTP演进、无状态会话、负载均衡、缓存/读副本、分片与持久任务；19项测试 |
+| 03 | [容量估算](./capacity-estimation/) | ✅ 参考实现完成 | 显式单位Decimal QPS/存储/带宽/缓存/节点/可用性预算、场景CLI与敏感性分析；14项测试 |
 | 05 | [Rate Limiter](./rate-limiter/) | ✅ 完成 | 支持 5 种算法、Redis/内存后端、FastAPI/Flask 集成 |
 | 06 | [Consistent Hashing](./consistent-hashing/) | ✅ 完成 | 虚拟节点、O(log N) 查找、分布统计 |
-| 07 | [Key-Value Store](./key-value-store/) | ✅ 完成 | Dynamo 风格、LSM-tree 存储、仲裁一致性、Gossip 协议、gRPC |
+| 07 | [Key-Value Store](./key-value-store/) | 核心已实现，[深入审查进行中](key-value-store/docs/chapter07-review.md) | Dynamo 风格、LSM-tree 存储、仲裁一致性、Gossip 协议、gRPC |
 | 08 | [Unique ID Generator](./unique-id-generator/) | ✅ 完成 | Twitter Snowflake 算法、可配置位布局、线程安全、ID 解析 |
 | 09 | [URL Shortener](./url-shortener/) | ✅ 完成 | 可插拔哈希策略、Base-62 转换、点击追踪、标准库 HTTP 演示 |
 | 10 | [Web Crawler](./web-crawler/) | ✅ 完成 | 异步爬取、优先级与礼貌性 URL 队列、robots.txt 校验、URL 与内容去重 |
@@ -201,3 +201,5 @@ MIT
 工程组织与验证约定见 [CONTRIBUTING.md](CONTRIBUTING.md)，本轮检查、修复、性能取舍及待办见 [ENGINEERING_REVIEW.md](ENGINEERING_REVIEW.md)。可运行 `python tools/audit_code.py` 生成源码检查报告。
 
 本轮工程审查覆盖全部 27 个子项目，报告包含逐项目修改、并发回归测试与未验证的集成环境。安装各章节依赖后，运行 `python tools/run_project_tests.py --jobs 2 --output .test-tmp/review`，即可在独立进程中执行各章节测试。
+
+逐项目深入审查的完成状态、问题和修改证据见 [DEEP_REVIEW_PROGRESS.md](DEEP_REVIEW_PROGRESS.md)；此前全仓库基础检查不等于逐项深入审查全部完成。

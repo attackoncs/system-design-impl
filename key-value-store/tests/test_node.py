@@ -50,10 +50,12 @@ def node_with_mocks(config):
         mock_storage = mock_storage_cls.return_value
         mock_storage.start = unittest.mock.AsyncMock()
         mock_storage.stop = unittest.mock.AsyncMock()
+        mock_storage.scan = unittest.mock.AsyncMock(return_value={})
 
         mock_ring = mock_ring_cls.return_value
 
         mock_client = mock_client_cls.return_value
+        mock_client.close = unittest.mock.AsyncMock()
 
         mock_gossip = mock_gossip_cls.return_value
 
@@ -75,6 +77,7 @@ def node_with_mocks(config):
         mock_quorum = mock_quorum_cls.return_value
 
         mock_coordinator = mock_coordinator_cls.return_value
+        mock_coordinator.close = unittest.mock.AsyncMock()
         mock_coordinator.put = unittest.mock.AsyncMock()
         mock_coordinator.get = unittest.mock.AsyncMock()
         mock_coordinator.delete = unittest.mock.AsyncMock()

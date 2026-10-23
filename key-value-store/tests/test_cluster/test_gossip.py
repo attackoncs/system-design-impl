@@ -100,8 +100,9 @@ class TestMergeMembership:
             )
         ]
         gossip.merge_membership(remote)
-        # Own info should remain unchanged
-        assert gossip.members["node-1"].heartbeat_counter == 1
+        # Refute stale incarnations, preserving our own address and status.
+        assert gossip.members["node-1"].heartbeat_counter == 101
+        assert gossip.members["node-1"].status == kv_store.cluster.gossip.NodeStatus.ALIVE
         assert gossip.members["node-1"].address == "localhost:5001"
 
 

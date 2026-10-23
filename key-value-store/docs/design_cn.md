@@ -1,5 +1,7 @@
 # 设计文档：分布式键值存储
 
+> 第 07 章运行链已补齐真实副本 RPC、持久版本/删除标记、hint 和双向修复；原书仍有未完成项。实现覆盖、兼容性及限制见[章节审查记录](chapter07-review.md)。下文的接口示意需结合该记录阅读。
+
 ## 架构概述
 
 该分布式键值存储采用受 Amazon Dynamo 启发的分层架构。每个节点自包含且职责相同，通过 gRPC 进行通信。数据通过一致性哈希进行分区，跨 N 个节点复制并支持可调的 Quorum 一致性，通过 LSM-Tree 存储引擎实现持久化。
@@ -794,8 +796,8 @@ from typing import Optional
 class ConsistencyLevel(Enum):
     """Predefined consistency levels."""
     ONE = "one"           # W=1, R=1 (eventual consistency)
-    QUORUM = "quorum"     # W=2, R=2 with N=3 (strong consistency)
-    ALL = "all"           # W=N, R=N (strongest, lowest availability)
+    QUORUM = "quorum"     # W=2, R=2 with N=3 (intersecting quorums)
+    ALL = "all"           # W=N, R=N (all replicas, lowest availability)
 
 
 @dataclass
@@ -2195,7 +2197,7 @@ class KVClient:
 
 | 决策 | 选择 | 理由 |
 |------|------|------|
-| 语言与运行时 | Python >= 3.9, asyncio | 异步 I/O 用于并发网络操作；现代 Python 特性（类型注解、dataclass） |
+| 语言与运行时 | Python >= 3.10, asyncio | 异步 I/O 用于并发网络操作；现代 Python 特性（类型注解、dataclass） |
 | 构建系统 | hatchling (pyproject.toml) | 现代 Python 打包标准，与仓库中其他项目保持一致 |
 | 项目布局 | src 布局 | 防止从项目根目录意外导入；打包最佳实践 |
 | 分区 | 复用 `consistent-hashing` 库 | 避免重新实现；经过验证的 ConsistentHashRing，带虚拟节点和 `get_nodes()` 用于复制 |
@@ -2206,7 +2208,7 @@ class KVClient:
 | 临时故障 | Sloppy quorum + hinted handoff | 短暂故障期间保持可用性；数据不丢失 |
 | 永久故障修复 | Merkle 树反熵 | 高效不一致检测 —— 仅同步差异数据范围 |
 | 读取优化 | 每个 SSTable 带 Bloom Filter | 避免不必要的磁盘读取；可配置误报率，O(1) 否定查找 |
-| 一致性模型 | 可调 N/W/R Quorum | 灵活性：每次操作可选强一致性（W+R>N）或最终一致性（W=1,R=1） |
+| 一致性模型 | 可调 N/W/R Quorum | 灵活性：每次操作可选quorum 交集（W+R>N，但不保证线性一致性）或最终一致性（W=1,R=1） |
 | 压缩策略 | Size-tiered（大小分层） | 实现更简单；对写入密集型工作负载有良好的写入放大特性 |
 | 并发模型 | asyncio（单线程事件循环） | 避免 GIL 竞争；非常适合 I/O 密集型分布式系统操作 |
 | 数据大小限制 | Key ≤ 256B, Value ≤ 10KB | 防止内存压力；限制 MemTable 和网络消息大小 |

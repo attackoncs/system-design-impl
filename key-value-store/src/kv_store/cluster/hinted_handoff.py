@@ -57,7 +57,9 @@ class HintedHandoffManager:
         deliver_func: Optional[DeliverFunc] = None,
         handoff_interval: float = 10.0,
         is_node_alive_func: Optional[Callable[[str], bool]] = None,
+        delivery_round=None,
     ):
+        self._delivery_round = delivery_round
         self._node_id = node_id
         self._deliver_func = deliver_func
         self._handoff_interval = handoff_interval
@@ -170,6 +172,8 @@ class HintedHandoffManager:
     async def _attempt_deliveries(self) -> None:
         """Attempt to deliver hints to all target nodes that are alive."""
         # Get a snapshot of target nodes with pending hints
+        if self._delivery_round is not None:
+            await self._delivery_round()
         targets = list(self._hints.keys())
 
         for target_node_id in targets:

@@ -56,9 +56,9 @@ class KVResponse:
     value: Optional[bytes] = None
     vector_clock: Optional[replication_vector_clock.VectorClock] = None
     has_conflict: bool = False
-    conflicting_values: list[tuple[bytes, replication_vector_clock.VectorClock]] = (
-        dataclasses.field(default_factory=list)
-    )
+    conflicting_values: list[
+        tuple[Optional[bytes], replication_vector_clock.VectorClock]
+    ] = dataclasses.field(default_factory=list)
 
 
 def _vector_clock_to_proto(
@@ -235,17 +235,27 @@ class KVClient:
         )
 
         if not response.found:
-            return KVResponse(success=True, value=None, vector_clock=None)
+            return KVResponse(
+                success=True,
+                value=None,
+                vector_clock=(
+                    _proto_to_vector_clock(response.vector_clock)
+                    if response.vector_clock.entries
+                    else None
+                ),
+            )
 
         result_clock = _proto_to_vector_clock(response.vector_clock)
 
         conflicting_values: list[
-            tuple[bytes, replication_vector_clock.VectorClock]
+            tuple[Optional[bytes], replication_vector_clock.VectorClock]
         ] = []
         if response.has_conflict:
             for cv in response.conflicting_values:
                 cv_clock = _proto_to_vector_clock(cv.vector_clock)
-                conflicting_values.append((cv.value, cv_clock))
+                conflicting_values.append(
+                    (None if cv.is_tombstone else cv.value, cv_clock)
+                )
 
         return KVResponse(
             success=True,
@@ -316,7 +326,7 @@ class KVClient:
 
         while nodes_tried < total_nodes:
             # Retry loop for the current node
-            for attempt in range(self._config.retry_count):
+            for attempt in range(max(1, self._config.retry_count)):
                 try:
                     return await rpc_call(self._stub)
                 except grpc.RpcError as e:

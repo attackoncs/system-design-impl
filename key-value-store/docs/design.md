@@ -1,5 +1,7 @@
 # Design: Distributed Key-Value Store
 
+> The chapter 07 runtime now connects replica RPCs, durable causal versions/tombstones, handoff and repair. Some book requirements remain unfinished. See the [coverage and compatibility review](chapter07-review.md) for the current implementation and limitations; interface sketches below are conceptual.
+
 ## Architecture Overview
 
 The distributed key-value store follows a layered architecture inspired by Amazon Dynamo. Each node is self-contained with identical responsibilities, communicating via gRPC. Data is partitioned using consistent hashing, replicated across N nodes with tunable quorum consistency, and persisted via an LSM-tree storage engine.
@@ -794,8 +796,8 @@ from typing import Optional
 class ConsistencyLevel(Enum):
     """Predefined consistency levels."""
     ONE = "one"           # W=1, R=1 (eventual consistency)
-    QUORUM = "quorum"     # W=2, R=2 with N=3 (strong consistency)
-    ALL = "all"           # W=N, R=N (strongest, lowest availability)
+    QUORUM = "quorum"     # W=2, R=2 with N=3 (intersecting quorums)
+    ALL = "all"           # W=N, R=N (all replicas, lowest availability)
 
 
 @dataclass
@@ -2195,7 +2197,7 @@ class KVClient:
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Language & Runtime | Python >= 3.9, asyncio | Async I/O for concurrent network operations; modern Python features (type hints, dataclasses) |
+| Language & Runtime | Python >= 3.10, asyncio | Async I/O for concurrent network operations; modern Python features (type hints, dataclasses) |
 | Build System | hatchling (pyproject.toml) | Modern Python packaging standard, consistent with other projects in repo |
 | Project Layout | src layout | Prevents accidental imports from project root; packaging best practice |
 | Partitioning | Reuse `consistent-hashing` library | Avoid reimplementation; proven ConsistentHashRing with virtual nodes and `get_nodes()` for replication |
@@ -2206,7 +2208,7 @@ class KVClient:
 | Temporary Failures | Sloppy quorum + hinted handoff | Maintains availability during transient failures; data is not lost |
 | Permanent Failure Repair | Merkle tree anti-entropy | Efficient inconsistency detection — only sync differing data ranges |
 | Read Optimization | Bloom filters per SSTable | Avoids unnecessary disk reads; O(1) negative lookups with configurable FP rate |
-| Consistency Model | Tunable N/W/R quorum | Flexibility: strong consistency (W+R>N) or eventual consistency (W=1,R=1) per operation |
+| Consistency Model | Tunable N/W/R quorum | Flexibility: intersecting quorums (W+R>N), without a linearizability guarantee or eventual consistency (W=1,R=1) per operation |
 | Compaction Strategy | Size-tiered | Simpler implementation; good write amplification characteristics for write-heavy workloads |
 | Concurrency Model | asyncio (single-threaded event loop) | Avoids GIL contention; natural fit for I/O-bound distributed system operations |
 | Data Size Limits | Key ≤ 256B, Value ≤ 10KB | Prevents memory pressure; keeps MemTable and network messages bounded |

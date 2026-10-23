@@ -86,9 +86,9 @@ class GetResult:
     value: Optional[bytes] = None
     vector_clock: Optional[replication_vector_clock.VectorClock] = None
     has_conflict: bool = False
-    conflicting_values: list[tuple[bytes, replication_vector_clock.VectorClock]] = (
-        dataclasses.field(default_factory=list)
-    )
+    conflicting_values: list[
+        tuple[Optional[bytes], replication_vector_clock.VectorClock]
+    ] = dataclasses.field(default_factory=list)
 
 
 @dataclasses.dataclass
@@ -204,6 +204,10 @@ class RequestCoordinator:
         storage_engine: StorageEngineProtocol,
         membership: MembershipProtocol,
         hinted_handoff: HintedHandoffProtocol,
+        *,
+        replica_records=None,
+        hint_journal=None,
+        max_clock_entries=10,
     ) -> None:
         """Initialize the coordinator.
 
@@ -216,6 +220,20 @@ class RequestCoordinator:
             membership: Cluster membership state.
             hinted_handoff: Hinted handoff manager for failed nodes.
         """
+        self._runtime = None
+        if replica_records is not None:
+            from kv_store.replication.service import ReplicaCoordinator
+
+            self._runtime = ReplicaCoordinator(
+                node_id,
+                hash_ring,
+                quorum_manager,
+                replica_records,
+                grpc_client,
+                membership,
+                hint_journal,
+                max_clock_entries,
+            )
         self._node_id = node_id
         self._hash_ring = hash_ring
         self._quorum_manager = quorum_manager
@@ -253,6 +271,9 @@ class RequestCoordinator:
             QuorumNotMetError: If fewer than W nodes acknowledge.
             ValueError: If key/value exceeds size limits.
         """
+        if self._runtime is not None:
+            return await self._runtime.put(key, value, client_clock, consistency)
+
         # Validate key/value sizes
         self._validate_key_value(key, value)
 
@@ -351,6 +372,9 @@ class RequestCoordinator:
         Raises:
             QuorumNotMetError: If fewer than R nodes respond.
         """
+        if self._runtime is not None:
+            return await self._runtime.get(key, consistency)
+
         # Get quorum configuration
         quorum_config = self._quorum_manager.get_quorum_config(consistency)
 
@@ -463,6 +487,9 @@ class RequestCoordinator:
         Raises:
             QuorumNotMetError: If fewer than W nodes acknowledge.
         """
+        if self._runtime is not None:
+            return await self._runtime.delete(key, client_clock, consistency)
+
         # Get quorum configuration
         quorum_config = self._quorum_manager.get_quorum_config(consistency)
 
@@ -532,6 +559,14 @@ class RequestCoordinator:
             success=True,
             vector_clock=new_clock,
         )
+
+    def reopen(self):
+        if self._runtime is not None:
+            self._runtime.reopen()
+
+    async def close(self):
+        if self._runtime is not None:
+            await self._runtime.close()
 
     def _get_replica_nodes(self, key: str) -> list[str]:
         """Get N replica nodes for a key, substituting unavailable nodes.

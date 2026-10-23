@@ -8,11 +8,11 @@ Production-quality Python implementations of system design concepts from the boo
 
 | Chapter | Topic | Status | Description |
 |---------|-------|--------|-------------|
-| 02 | [Scale From Zero](./scale-from-zero/) | ✅ Reference done | 1/8/10-process HTTP scaling lab: stateless sessions, load balancing, cache, profile replicas, sharding and durable jobs; 11 tests |
-| 03 | [Capacity Estimation](./capacity-estimation/) | ✅ Reference done | Explicit-unit Decimal QPS/storage/bandwidth/cache/node/SLO budgets, scenario CLI and sensitivity analysis; 9 tests |
+| 02 | [Scale From Zero](./scale-from-zero/) | ✅ Reference done | 1/8/10-process HTTP scaling lab: stateless sessions, load balancing, cache, profile replicas, sharding and durable jobs; 19 tests |
+| 03 | [Capacity Estimation](./capacity-estimation/) | ✅ Reference done | Explicit-unit Decimal QPS/storage/bandwidth/cache/node/SLO budgets, scenario CLI and sensitivity analysis; 14 tests |
 | 05 | [Rate Limiter](./rate-limiter/) | ✅ Done | 5 algorithms, Redis/memory backends, FastAPI/Flask integration |
 | 06 | [Consistent Hashing](./consistent-hashing/) | ✅ Done | Virtual nodes, O(log N) lookup, distribution statistics |
-| 07 | [Key-Value Store](./key-value-store/) | ✅ Done | Dynamo-style, LSM-tree storage, quorum consensus, gossip protocol, gRPC |
+| 07 | [Key-Value Store](./key-value-store/) | Core implemented; [review ongoing](key-value-store/docs/chapter07-review.md) | Dynamo-style, LSM-tree storage, quorum consensus, gossip protocol, gRPC |
 | 08 | [Unique ID Generator](./unique-id-generator/) | ✅ Done | Twitter Snowflake algorithm, configurable bit layout, thread-safe, ID parsing |
 | 09 | [URL Shortener](./url-shortener/) | ✅ Done | Pluggable hash strategies, base-62 conversion, click tracking, stdlib HTTP demo |
 | 10 | [Web Crawler](./web-crawler/) | ✅ Done | Async crawling, priority/politeness frontier, robots.txt compliance, URL/content deduplication |
@@ -204,3 +204,5 @@ MIT
 See [engineering guidelines](CONTRIBUTING.md) and the [review and validation record](ENGINEERING_REVIEW.md). Run `python tools/audit_code.py` for a dependency-free source inventory and review signals.
 
 The engineering review covers all 27 projects, with per-project changes, concurrency regressions and explicit integration-test limits. Use `python tools/run_project_tests.py --jobs 2 --output .test-tmp/review` to run chapter suites in isolated interpreters after installing their dependencies.
+
+逐项目深入审查的完成状态、问题和修改证据见 [DEEP_REVIEW_PROGRESS.md](DEEP_REVIEW_PROGRESS.md)；此前全仓库基础检查不等于逐项深入审查全部完成。

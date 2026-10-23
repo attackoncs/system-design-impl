@@ -360,6 +360,23 @@ class GRPCClient:
         except grpc.RpcError as e:
             raise NodeUnavailableError(target, e) from e
 
+    async def read_replica(self, target, key):
+        from kv_store.replication.records import decode
+
+        response = await self._get_stub(target).ReadReplica(
+            kvstore_pb2.GetRequest(key=key), timeout=self._timeout
+        )
+        return decode(response.record) if response.record else []
+
+    async def merge_replica(self, target, key, versions):
+        from kv_store.replication.records import encode
+
+        response = await self._get_stub(target).MergeReplica(
+            kvstore_pb2.ReplicaRecord(key=key, record=encode(versions)),
+            timeout=self._timeout,
+        )
+        return response.success
+
     async def close(self) -> None:
         """Close all open channels and clean up resources."""
         for target, channel in self._channels.items():

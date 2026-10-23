@@ -1,5 +1,7 @@
 # 分布式键值存储
 
+> 第 07 章运行链已补齐真实副本 RPC、持久版本/删除标记、hint 和双向修复；原书仍有未完成项。实现覆盖、兼容性及限制见[章节审查记录](docs/chapter07-review.md)。下文的接口示意需结合该记录阅读。
+
 一个基于 Python 实现的分布式键值存储系统，设计灵感来源于《System Design Interview》第 7 章（Dynamo 风格架构）。支持一致性哈希、可调节仲裁一致性、向量时钟、基于 Gossip 协议的故障检测以及 LSM-tree 存储引擎。
 
 > English documentation: [README.md](./README.md)
@@ -90,7 +92,7 @@ pip install -e ".[dev]"
 ```
 
 环境要求：
-- Python >= 3.9
+- Python >= 3.10
 - `consistent-hashing` 库（同级目录，自动安装）
 
 ## 快速开始
@@ -277,7 +279,7 @@ config = ClientConfig(
 | `value` | `Optional[bytes]` | 值（用于 get 操作） |
 | `vector_clock` | `Optional[VectorClock]` | 版本信息 |
 | `has_conflict` | `bool` | 是否存在冲突版本 |
-| `conflicting_values` | `list[tuple[bytes, VectorClock]]` | 所有冲突版本 |
+| `conflicting_values` | `list[tuple[Optional[bytes], VectorClock]]` | 所有冲突版本 |
 
 #### 一致性级别
 
@@ -286,8 +288,8 @@ config = ClientConfig(
 | 级别 | W | R | 保证 |
 |------|---|---|------|
 | `"one"` | 1 | 1 | 最终一致性，最低延迟 |
-| `"quorum"` | 2 | 2 | 强一致性（N=3 时） |
-| `"all"` | N | N | 最强一致性，最低可用性 |
+| `"quorum"` | 2 | 2 | N=3 时 quorum 有交集，不保证线性一致性 |
+| `"all"` | N | N | 等待全部副本，最低可用性 |
 
 ### `KVNode` 节点
 

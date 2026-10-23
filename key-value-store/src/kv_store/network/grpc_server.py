@@ -21,10 +21,19 @@ import grpc.aio
 
 from kv_store.cluster import gossip as cluster_gossip
 from kv_store.network import kvstore_pb2, kvstore_pb2_grpc
+from kv_store.replication.coordinator import RequestCoordinator, QuorumNotMetError
 from kv_store.replication import quorum as replication_quorum
 from kv_store.replication import vector_clock as replication_vector_clock
 
 logger = logging.getLogger(__name__)
+
+
+def _error_status(error):
+    if isinstance(error, ValueError):
+        return grpc.StatusCode.INVALID_ARGUMENT
+    if isinstance(error, QuorumNotMetError):
+        return grpc.StatusCode.UNAVAILABLE
+    return grpc.StatusCode.INTERNAL
 
 
 def vector_clock_to_proto(
@@ -74,6 +83,7 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
         storage_engine,
         gossip_protocol,
         merkle_tree,
+        replica_records=None,
     ):
         """Initialize the servicer with component references.
 
@@ -84,10 +94,28 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
             gossip_protocol: GossipProtocol for membership exchange.
             merkle_tree: MerkleTree for anti-entropy sync.
         """
+        self._replica_records = replica_records
         self._coordinator = coordinator
         self._storage_engine = storage_engine
         self._gossip_protocol = gossip_protocol
         self._merkle_tree = merkle_tree
+
+    async def ReadReplica(self, request, context):
+        from kv_store.replication.records import encode
+
+        RequestCoordinator._validate_key_value(request.key, b"")
+        versions = await self._replica_records.read(request.key)
+        return kvstore_pb2.ReplicaRecord(key=request.key, record=encode(versions))
+
+    async def MergeReplica(self, request, context):
+        from kv_store.replication.records import decode
+
+        try:
+            RequestCoordinator._validate_key_value(request.key, b"")
+            await self._replica_records.merge(request.key, decode(request.record))
+        except (ValueError, TypeError) as error:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(error))
+        return kvstore_pb2.ReplicateResponse(success=True)
 
     async def Put(self, request, context):
         """Handle a Put RPC - delegate to RequestCoordinator.
@@ -110,12 +138,9 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
 
             consistency = None
             if request.consistency_level:
-                try:
-                    consistency = replication_quorum.ConsistencyLevel(
-                        request.consistency_level
-                    )
-                except ValueError:
-                    pass
+                consistency = replication_quorum.ConsistencyLevel(
+                    request.consistency_level
+                )
 
             result = await self._coordinator.put(
                 key=request.key,
@@ -132,7 +157,7 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
         except Exception as e:  # pylint: disable=broad-exception-caught
             logging.getLogger(__name__).exception("Failure isolated in %s", "Put")
             logger.error("Put RPC failed: %s", e)
-            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_code(_error_status(e))
             context.set_details(str(e))
             return kvstore_pb2.PutResponse(success=False)
 
@@ -149,12 +174,9 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
         try:
             consistency = None
             if request.consistency_level:
-                try:
-                    consistency = replication_quorum.ConsistencyLevel(
-                        request.consistency_level
-                    )
-                except ValueError:
-                    pass
+                consistency = replication_quorum.ConsistencyLevel(
+                    request.consistency_level
+                )
 
             result = await self._coordinator.get(
                 key=request.key,
@@ -165,6 +187,11 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
                 found=result.found,
                 has_conflict=result.has_conflict,
             )
+
+            if result.vector_clock is not None:
+                response.vector_clock.CopyFrom(
+                    vector_clock_to_proto(result.vector_clock)
+                )
 
             if result.found and not result.has_conflict:
                 if result.value is not None:
@@ -177,7 +204,8 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
             if result.has_conflict:
                 for value, clock in result.conflicting_values:
                     cv = kvstore_pb2.ConflictingValue(
-                        value=value,
+                        value=value or b"",
+                        is_tombstone=value is None,
                         vector_clock=vector_clock_to_proto(clock),
                     )
                     response.conflicting_values.append(cv)
@@ -187,7 +215,7 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
         except Exception as e:  # pylint: disable=broad-exception-caught
             logging.getLogger(__name__).exception("Failure isolated in %s", "Get")
             logger.error("Get RPC failed: %s", e)
-            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_code(_error_status(e))
             context.set_details(str(e))
             return kvstore_pb2.GetResponse(found=False)
 
@@ -208,12 +236,9 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
 
             consistency = None
             if request.consistency_level:
-                try:
-                    consistency = replication_quorum.ConsistencyLevel(
-                        request.consistency_level
-                    )
-                except ValueError:
-                    pass
+                consistency = replication_quorum.ConsistencyLevel(
+                    request.consistency_level
+                )
 
             result = await self._coordinator.delete(
                 key=request.key,
@@ -229,7 +254,7 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
         except Exception as e:  # pylint: disable=broad-exception-caught
             logging.getLogger(__name__).exception("Failure isolated in %s", "Delete")
             logger.error("Delete RPC failed: %s", e)
-            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_code(_error_status(e))
             context.set_details(str(e))
             return kvstore_pb2.DeleteResponse(success=False)
 
@@ -247,7 +272,20 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
             ReplicateResponse with success status.
         """
         try:
-            if request.is_tombstone:
+            if self._replica_records is not None:
+                from kv_store.replication.records import Version
+
+                await self._replica_records.merge(
+                    request.key,
+                    [
+                        Version(
+                            None if request.is_tombstone else request.value,
+                            proto_to_vector_clock(request.vector_clock),
+                            request.timestamp,
+                        )
+                    ],
+                )
+            elif request.is_tombstone:
                 await self._storage_engine.delete(request.key, request.timestamp)
             else:
                 await self._storage_engine.put(
@@ -258,7 +296,7 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
         except Exception as e:  # pylint: disable=broad-exception-caught
             logging.getLogger(__name__).exception("Failure isolated in %s", "Replicate")
             logger.error("Replicate RPC failed: %s", e)
-            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_code(_error_status(e))
             context.set_details(str(e))
             return kvstore_pb2.ReplicateResponse(success=False)
 
@@ -315,7 +353,7 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
                 "Failure isolated in %s", "GossipExchange"
             )
             logger.error("GossipExchange RPC failed: %s", e)
-            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_code(_error_status(e))
             context.set_details(str(e))
             return kvstore_pb2.GossipMessage()
 
@@ -334,7 +372,20 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
             HintedHandoffResponse with success status.
         """
         try:
-            if request.is_tombstone:
+            if self._replica_records is not None:
+                from kv_store.replication.records import Version
+
+                await self._replica_records.merge(
+                    request.key,
+                    [
+                        Version(
+                            None if request.is_tombstone else request.value,
+                            proto_to_vector_clock(request.vector_clock),
+                            request.timestamp,
+                        )
+                    ],
+                )
+            elif request.is_tombstone:
                 await self._storage_engine.delete(request.key, request.timestamp)
             else:
                 await self._storage_engine.put(
@@ -347,7 +398,7 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
                 "Failure isolated in %s", "HintedHandoff"
             )
             logger.error("HintedHandoff RPC failed: %s", e)
-            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_code(_error_status(e))
             context.set_details(str(e))
             return kvstore_pb2.HintedHandoffResponse(success=False)
 
@@ -398,7 +449,7 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
                 "Failure isolated in %s", "MerkleTreeSync"
             )
             logger.error("MerkleTreeSync RPC failed: %s", e)
-            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_code(_error_status(e))
             context.set_details(str(e))
             return kvstore_pb2.MerkleTreeSyncResponse()
 
@@ -419,6 +470,7 @@ class GRPCServer:
         host: str = "0.0.0.0",
         port: int = 50051,
         max_message_size: int = 16 * 1024 * 1024,
+        replica_records=None,
     ):
         """Initialize the gRPC server.
 
@@ -431,6 +483,7 @@ class GRPCServer:
             port: Port number to listen on.
             max_message_size: Maximum message size in bytes.
         """
+        self._replica_records = replica_records
         self._coordinator = coordinator
         self._storage_engine = storage_engine
         self._gossip_protocol = gossip_protocol
@@ -464,11 +517,14 @@ class GRPCServer:
             storage_engine=self._storage_engine,
             gossip_protocol=self._gossip_protocol,
             merkle_tree=self._merkle_tree,
+            replica_records=self._replica_records,
         )
         kvstore_pb2_grpc.add_KVStoreServiceServicer_to_server(servicer, self._server)
 
         bind_address = f"{self._host}:{self._port}"
-        self._server.add_insecure_port(bind_address)
+        self._port = self._server.add_insecure_port(bind_address)
+        if not self._port:
+            raise OSError("unable to bind gRPC server")
 
         await self._server.start()
         logger.info("gRPC server started on %s", bind_address)

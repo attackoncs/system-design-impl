@@ -19,6 +19,7 @@ class StorageConfig:
     memtable_size_bytes: int = 4 * 1024 * 1024  # 4 MB flush threshold
     bloom_filter_fp_rate: float = 0.01  # 1% false positive rate
     compaction_threshold: int = 4  # merge after N SSTables
+    max_value_size_bytes: int = 10 * 1024  # application value limit
 
 
 @dataclasses.dataclass
@@ -28,7 +29,14 @@ class ReplicationConfig:
     n_replicas: int = 3  # total replicas per key
     w_quorum: int = 2  # write quorum
     r_quorum: int = 2  # read quorum
-    vector_clock_max_entries: int = 10  # prune oldest entries beyond this
+    vector_clock_max_entries: int = 10  # bounded causal context
+
+    def __post_init__(self):
+        if (
+            type(self.vector_clock_max_entries) is not int
+            or not 1 <= self.vector_clock_max_entries <= 256
+        ):
+            raise ValueError("vector_clock_max_entries must be between 1 and 256")
 
 
 @dataclasses.dataclass
@@ -65,3 +73,13 @@ class NodeConfig:
     cluster: ClusterConfig = dataclasses.field(default_factory=ClusterConfig)
     network: NetworkConfig = dataclasses.field(default_factory=NetworkConfig)
     virtual_nodes: int = 150  # virtual nodes per physical node on hash ring
+
+    node_data_centers: dict[str, str] = dataclasses.field(default_factory=dict)
+    node_virtual_nodes: dict[str, int] = dataclasses.field(default_factory=dict)
+
+    def __post_init__(self):
+        if any(
+            type(count) is not int or count <= 0
+            for count in self.node_virtual_nodes.values()
+        ):
+            raise ValueError("node_virtual_nodes values must be positive integers")

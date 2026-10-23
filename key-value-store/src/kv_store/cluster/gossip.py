@@ -65,7 +65,9 @@ class GossipProtocol:
         gossip_fanout: int = 3,
         failure_timeout: float = 5.0,
         gossip_func: Optional[GossipFunc] = None,
+        on_membership_change=None,
     ):
+        self._on_membership_change = on_membership_change
         self._node_id = node_id
         self._address = address
         self._gossip_interval = gossip_interval
@@ -86,6 +88,11 @@ class GossipProtocol:
 
         self._running = False
         self._task: Optional[asyncio.Task] = None
+
+    def advertise(self, address: str) -> None:
+        """Publish the bound listening address (including an ephemeral port)."""
+        self._address = address
+        self._members[self._node_id].address = address
 
     @property
     def node_id(self) -> str:
@@ -215,7 +222,11 @@ class GossipProtocol:
         now = time.time()
         for remote in remote_members:
             if remote.node_id == self._node_id:
-                # Don't overwrite our own info
+                # Refute an older incarnation after a restart by advancing past
+                # the counter peers remember. Node IDs must be unique among live nodes.
+                own = self._members[self._node_id]
+                if remote.heartbeat_counter >= own.heartbeat_counter:
+                    own.heartbeat_counter = remote.heartbeat_counter + 1
                 continue
 
             local = self._members.get(remote.node_id)
@@ -238,6 +249,9 @@ class GossipProtocol:
                 # bring it back to alive
                 if local.status != NodeStatus.ALIVE:
                     local.status = NodeStatus.ALIVE
+
+        if self._on_membership_change is not None:
+            self._on_membership_change()
 
     def get_alive_nodes(self) -> list[MemberInfo]:
         """Get all nodes with ALIVE status.
