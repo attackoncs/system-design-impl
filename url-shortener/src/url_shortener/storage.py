@@ -92,6 +92,11 @@ class InMemoryStorage(StorageBackend):
     def save(self, mapping: url_shortener.models.URLMapping) -> None:
         """Save mapping with bidirectional indexing."""
         with self._lock:
+            if self._by_short_code.get(mapping.short_code) not in (
+                None,
+                mapping,
+            ) or self._by_long_url.get(mapping.long_url) not in (None, mapping):
+                raise ValueError("mapping conflicts with an existing immutable mapping")
             self._by_short_code[mapping.short_code] = mapping
             self._by_long_url[mapping.long_url] = mapping
 

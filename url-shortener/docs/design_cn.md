@@ -1,5 +1,7 @@
 # 设计文档：URL 短链服务
 
+> 第 09 章已补充 SQLite 持久化、LRU 缓存及 WSGI HTTP 入口；保存映射改为拒绝覆盖。使用方法和运行边界见[章节核对记录](chapter09-review.md)。
+
 ## 架构概述
 
 URL 短链库采用策略模式（strategy pattern），支持可插拔的哈希策略与存储后端。核心协调器（`URLShortener`）将短码生成委托给 `HashStrategy`，将持久化委托给 `StorageBackend`，实现关注点的清晰分离。

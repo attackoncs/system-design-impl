@@ -1,5 +1,7 @@
 # URL Shortener
 
+> 第 09 章已补充 SQLite 持久化、LRU 缓存及 WSGI HTTP 入口；保存映射改为拒绝覆盖。使用方法和运行边界见[章节核对记录](docs/chapter09-review.md)。
+
 A Python URL shortener library implementing the design from *System Design Interview* Chapter 9 "Design A URL Shortener". Features pluggable hash strategies (hash+collision resolution and base-62 conversion), a storage abstraction with in-memory default, click tracking analytics, and a stdlib HTTP demo server. Zero runtime dependencies.
 
 ## Features

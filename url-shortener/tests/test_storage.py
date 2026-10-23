@@ -81,8 +81,8 @@ class TestInMemoryStorage:
         assert result_temp.redirect_type == url_shortener.models.RedirectType.TEMPORARY
         assert result_temp.redirect_type == 302
 
-    def test_overwrite_short_code_updates_both_dicts(self) -> None:
-        """Overwriting a short code with a new mapping updates both dicts."""
+    def test_conflict_preserves_both_indexes(self) -> None:
+        """Conflicting writes must preserve the issued short link."""
         original = url_shortener.models.URLMapping(
             short_code="over123",
             long_url="https://example.com/original",
@@ -93,19 +93,12 @@ class TestInMemoryStorage:
             short_code="over123",
             long_url="https://example.com/replacement",
         )
-        self.storage.save(replacement)
-
-        # Short code now points to the new URL
-        result = self.storage.get_by_short_code("over123")
-        assert result is not None
-        assert result.long_url == "https://example.com/replacement"
-
-        # New URL resolves to the mapping
-        result_by_url = self.storage.get_by_long_url(
-            "https://example.com/replacement"
-        )
-        assert result_by_url is not None
-        assert result_by_url.short_code == "over123"
+        import pytest
+        with pytest.raises(ValueError):
+            self.storage.save(replacement)
+        assert self.storage.get_by_short_code("over123") == original
+        assert self.storage.get_by_long_url(original.long_url) == original
+        assert self.storage.get_by_long_url(replacement.long_url) is None
 
     def test_get_by_short_code_returns_none_for_nonexistent(self) -> None:
         """get_by_short_code returns None for non-existent code."""

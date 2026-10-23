@@ -5,6 +5,7 @@ interface, and the IDGenerator protocol for pluggable ID generation.
 """
 
 import abc
+import threading
 import zlib
 from typing import Protocol
 
@@ -50,6 +51,8 @@ def encode_base62(number: int) -> str:
     Returns:
         Base-62 encoded string (variable length).
     """
+    if type(number) is not int or number < 0:
+        raise ValueError("number must be a nonnegative integer")
     if number == 0:
         return BASE62_CHARS[0]
 
@@ -148,17 +151,19 @@ class HashCollisionStrategy(HashStrategy):
 class AutoIncrementIDGenerator:
     """Default auto-incrementing ID generator.
 
-    Thread-unsafe; suitable for single-threaded usage and testing.
+    Thread-safe within one process; not a distributed ID allocator.
     """
 
     def __init__(self, start: int = 1) -> None:
         self._counter = start
+        self._lock = threading.Lock()
 
     def next_id(self) -> int:
         """Return the next sequential ID."""
-        current = self._counter
-        self._counter += 1
-        return current
+        with self._lock:
+            current = self._counter
+            self._counter += 1
+            return current
 
 
 class Base62Strategy(HashStrategy):

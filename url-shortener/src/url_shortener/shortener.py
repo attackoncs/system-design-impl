@@ -4,6 +4,7 @@ Coordinates between hash strategies, storage backends, and click tracking to
 provide the full shorten/redirect flow.
 """
 
+from collections import OrderedDict
 import datetime
 import threading
 import urllib.parse
@@ -28,6 +29,7 @@ class URLShortener:
         storage: Optional[url_shortener.storage.StorageBackend] = None,
         default_redirect_type: models.RedirectType = models.RedirectType.TEMPORARY,
         domain: str = "http://short.url",
+        cache_capacity: int = 1024,
     ) -> None:
         """Initialize the URL shortener.
 
@@ -40,6 +42,11 @@ class URLShortener:
                 Defaults to 302.
             domain: Custom domain for constructing short URLs.
         """
+        if type(cache_capacity) is not int or cache_capacity < 0:
+            raise ValueError("cache_capacity must be a nonnegative integer")
+        self._cache_capacity = cache_capacity
+        self._cache = OrderedDict()
+        self._cache_lock = threading.Lock()
         self._strategy = strategy or url_shortener.strategies.HashCollisionStrategy()
         self._storage = storage or url_shortener.storage.InMemoryStorage()
         self._default_redirect_type = default_redirect_type
@@ -94,7 +101,18 @@ class URLShortener:
         Raises:
             ShortCodeNotFoundError: If the short code doesn't exist.
         """
-        mapping = self._storage.get_by_short_code(short_code)
+        with self._cache_lock:
+            mapping = self._cache.get(short_code)
+            if mapping is not None:
+                self._cache.move_to_end(short_code)
+        if mapping is None:
+            mapping = self._storage.get_by_short_code(short_code)
+            if mapping is not None and self._cache_capacity:
+                with self._cache_lock:
+                    self._cache[short_code] = mapping
+                    self._cache.move_to_end(short_code)
+                    while len(self._cache) > self._cache_capacity:
+                        self._cache.popitem(last=False)
         if mapping is None:
             raise url_shortener.exceptions.ShortCodeNotFoundError(
                 f"Short code '{short_code}' not found"
@@ -144,11 +162,15 @@ class URLShortener:
         Raises:
             URLValidationError: If the URL is invalid.
         """
-        if not url or not url.strip():
+        if (
+            not isinstance(url, str)
+            or not url
+            or any(ord(c) < 32 or ord(c) == 127 for c in url)
+        ):
             raise url_shortener.exceptions.URLValidationError("URL cannot be empty")
 
         parsed = urllib.parse.urlparse(url)
-        if not parsed.scheme:
+        if parsed.scheme not in ("http", "https"):
             raise url_shortener.exceptions.URLValidationError(
                 f"URL missing scheme (http/https): '{url}'"
             )

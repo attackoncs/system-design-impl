@@ -12,7 +12,7 @@
 | 06 | [Consistent Hashing](consistent-hashing/) | 完成：原书核对，108 项测试通过 |
 | 07 | [Key-Value Store](key-value-store/) | 进行中：383 项测试通过；原书剩余项见章节审查记录 |
 | 08 | [Unique ID Generator](unique-id-generator/) | 完成：原书核对，94 项测试通过 |
-| 09 | [URL Shortener](url-shortener/) | 待逐项深入审查 |
+| 09 | [URL Shortener](url-shortener/) | 完成核心链路核对：109 项测试通过；部署扩展见章节记录 |
 | 10 | [Web Crawler](web-crawler/) | 待逐项深入审查 |
 | 11 | [Notification System](notification-system/) | 待逐项深入审查 |
 | 12 | [News Feed System](news-feed-system/) | 待逐项深入审查 |
@@ -90,3 +90,9 @@
 对照原书最终 Snowflake 方案，补充配置的严格整数校验、序列耗尽时的让出 CPU 与单调时间截止期限、等待中的回拨拒绝。超时和回拨不提交序列状态。新增配置错误、超时恢复、回拨和多线程共享实例回归；完整测试 **94 passed**，Ruff E9/F 通过。
 
 本机单线程 100,000 次 generate 耗时 0.4861 秒，100,000 个 ID 无重复，约 205,710 ID/s；这是当前机器一次测量，未证明生产环境持续容量。中英文 README 和设计文档关联 [章节核对记录](unique-id-generator/docs/chapter08-review.md)，明确重启身份隔离、批量部分失败、时钟同步及高可用部署边界。
+
+## 第 09 章：短链接服务
+
+补齐 SQLite 事务持久化与唯一约束、有限容量 LRU 回源缓存、WSGI POST 和 HTTP 301/302 重定向入口。内存与 SQLite 存储拒绝覆盖已有映射；本地 ID 分配加锁，Base62 参数校验及 HTTP URL 输入限制。新增共享数据库并发去重、重启读取、冲突保留旧映射、HTTP 和缓存命中回归。完整测试 **109 passed（3.01 秒）**；Ruff E9/F 通过。中英文 README 和设计文档同步关联 [章节核对记录](url-shortener/docs/chapter09-review.md)。
+
+尚未部署负载均衡、分片/复制、全局限流和分析服务；本地 ID 分配不提供跨实例唯一性。未做生产吞吐或海量容量验证。

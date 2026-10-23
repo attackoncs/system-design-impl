@@ -1,5 +1,7 @@
 # Design: URL Shortener
 
+> 第 09 章已补充 SQLite 持久化、LRU 缓存及 WSGI HTTP 入口；保存映射改为拒绝覆盖。使用方法和运行边界见[章节核对记录](chapter09-review.md)。
+
 ## Architecture Overview
 
 The URL shortener library follows a strategy pattern with pluggable hash strategies and storage backends. The main orchestrator (`URLShortener`) delegates code generation to a `HashStrategy` and persistence to a `StorageBackend`, keeping concerns cleanly separated.
