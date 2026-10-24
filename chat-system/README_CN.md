@@ -16,7 +16,7 @@
 - Redis 共享存储、独立聊天节点、持久化事件日志、共享在线状态、会话防冲突、
   租约发现、自动重连恢复及可重试推送工作进程。
 
-架构及故障语义见 [设计文档](./docs/design.md)。
+架构及故障语义见[中文设计文档](./docs/design_cn.md)，本轮覆盖和验证见[第13章核对](./docs/chapter13-review.md)。
 
 ## 安装与验证
 
@@ -41,10 +41,10 @@ async def main():
     chat = ChatService(store)
     try:
         alice = chat.connect(chat.auth.issue("alice"), "phone")
-        channel = chat.create_direct(alice, "bob")
+        channel = await chat.async_create_direct(alice, "bob")
         await chat.send(alice, channel.channel_id, "你好", "alice-1")
         bob = chat.connect(chat.auth.issue("bob"), "laptop")
-        print(chat.sync(bob, after=0))
+        print(await chat.async_sync(bob, after=0))
     finally:
         store.close()
 
@@ -74,7 +74,8 @@ python examples/websocket_server.py
 ```
 
 响应通过 `request_id` 关联请求；实时消息和状态事件与响应分开。
-支持 `group`、`add_member`、`history`、`subscribe_presence`、`logout`，
+支持 `group`、`add_member`、`history`、`message`、`subscribe_presence`、`logout`；
+`message` 携带 `message_id`，只允许原始收件人读取单条消息，
 完整字段说明见 [英文文档](./README.md#websocket-demo)。
 
 建议每五秒发送应用层心跳，默认三十秒超时。WebSocket 协议 ping
@@ -221,3 +222,29 @@ Redis 主节点崩溃测试使用 `tools/redis_lab.py` 创建的专用实验环�
 关闭全部自建子进程。WSL 的 Redis 数据须放在 Linux 文件系统，可用
 `--control-directory` 将控制及报告文件放在 Windows 可读目录。每次崩溃测试需
 新建实验环境；未配置该环境时测试会明确跳过。
+
+
+## 2026-10-24 工程审查
+
+SQLite 的私聊唯一配对、群容量、重试去重和收件箱扇出均纳入同一写事务，支持
+多实例竞争和工作线程；WebSocket 使用 `async_*` 包装避免阻塞事件循环。
+普通同步方法仍可用于库调用；实时会话和消费队列归属一个活动事件循环。
+取消中的存储操作会等待事务线程结束，重复取消也不会提前释放发送顺序锁。
+
+本地路由按用户索引设备，在线状态按反向索引找订阅者，队列溢出导致的状态
+级联使用迭代处理；验证请求只检查相关用户。令牌仅保存摘要并按键查询。
+本地推送全服务默认最多8个并发调用，单次期限10秒（包括等待并发槽），诊断
+默认保留1000条并累计失败计数。分布式推送保留持久重试，续租期间的确认、重试
+和死信写入均校验当前锁凭据，HTTP 桥接拒绝重定向。
+
+客户端只确认最近完整有序的 `receive()` 页，不能用任意大 ID 或截断页推进
+游标；文件经过 fsync 与原子替换。请求总期限覆盖穿插的实时事件，取消后重新
+建连；创建群没有重试键，结果不确定时不会自动重复创建。细节见[传输审查](docs/transport-review.md)。
+
+`get_message` / `async_get_message` 和 WebSocket `message` 操作支持按 ID 的
+授权随机读取；新成员不能读取加入前的消息。SQLite 使用有符号整数 ID，Redis
+把消息序列限制在小于2**53的精确有序集合范围内。历史无自动过期，长期容量需
+部署规划。已有千连接/故障报告保留为历史实测，本轮未重跑该容量或 Sentinel
+主库崩溃实验，也不宣称验证五千万日活。
+
+本轮完整测试结果与明确的跳过项见[章节核对](docs/chapter13-review.md)。

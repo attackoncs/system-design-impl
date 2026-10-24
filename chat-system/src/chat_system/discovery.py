@@ -3,6 +3,8 @@ coordinator).
 """
 
 import dataclasses
+import threading
+from urllib.parse import urlsplit
 
 import chat_system.models
 
@@ -27,18 +29,42 @@ class ServiceDiscovery:
 
     def __init__(self):
         self._servers = {}
+        self._lock = threading.RLock()
 
     def register(self, server):
         """Validate capacity and insert or replace a Server by its
         server_id.
         """
-        if server.capacity <= 0 or not 0 <= server.connections <= server.capacity:
-            raise chat_system.models.ChatError("invalid capacity")
-        self._servers[server.server_id] = server
+        try:
+            chat_system.models.require_integer(server.capacity, "capacity")
+            chat_system.models.require_integer(
+                server.connections, "connections", 0, server.capacity
+            )
+            parsed = urlsplit(server.url)
+            if (
+                parsed.scheme not in {"ws", "wss"}
+                or not parsed.hostname
+                or parsed.username
+                or parsed.password
+            ):
+                raise ValueError("invalid endpoint")
+            if (
+                not isinstance(server.server_id, str)
+                or not server.server_id.strip()
+                or not isinstance(server.region, str)
+            ):
+                raise ValueError("invalid identity")
+            # Accessing port validates malformed and out-of-range values.
+            parsed.port
+        except (AttributeError, TypeError, ValueError) as error:
+            raise chat_system.models.ChatError("invalid server registration") from error
+        with self._lock:
+            self._servers[server.server_id] = server
 
     def unregister(self, server_id):
         """Remove server_id from discovery, ignoring absent registrations."""
-        self._servers.pop(server_id, None)
+        with self._lock:
+            self._servers.pop(server_id, None)
 
     def select(self, region=None):
         """Return the least-loaded available server, preferring the requested
@@ -53,7 +79,10 @@ class ServiceDiscovery:
         Raises:
             ChatError: No registered server has spare capacity.
         """
-        available = [s for s in self._servers.values() if s.connections < s.capacity]
+        with self._lock:
+            available = [
+                s for s in self._servers.values() if s.connections < s.capacity
+            ]
         if not available:
             raise chat_system.models.ChatError("no chat server available")
         return min(

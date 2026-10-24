@@ -1,52 +1,79 @@
-"""Single-event-loop chat orchestration, authenticated sessions and
-presence.
+"""Local chat orchestration with indexed sessions and nonblocking persistence.
+
+Session maps and live queues belong to one event loop. Store methods may run in
+worker threads; synchronous convenience methods remain available to library users.
 """
 
+from __future__ import annotations
+
 import asyncio
+import collections
+import copy
 import dataclasses
-import hmac
+import hashlib
 import logging
 import secrets
+import threading
 import time
-from typing import Callable, Dict
+from typing import Callable, Optional, Protocol
 
-import chat_system.models
-import chat_system.store
+from chat_system.concurrency import gather_owned, run_blocking
+from chat_system.models import (
+    AuthenticationError,
+    ChatConfig,
+    ChatError,
+    Message,
+    validate_user_id,
+)
+from chat_system.store import MessageStore, SQLiteMessageStore
+
+logger = logging.getLogger(__name__)
 
 
 class TokenAuthenticator:
-    """Provision tokens out of band; do not expose token issuance as a login
-    API.
-    """
+    """Provision random bearer tokens; only their digests are retained locally."""
 
     def __init__(self):
-        self._tokens = {}
+        self._tokens: dict[bytes, str] = {}
+        self._lock = threading.RLock()
 
-    def issue(self, user_id):
-        """Issue a random bearer token for a nonempty user identifier."""
-        if not isinstance(user_id, str) or not user_id:
-            raise chat_system.models.ChatError("invalid user")
+    @staticmethod
+    def _digest(token):
+        if (
+            not isinstance(token, str)
+            or not token.isascii()
+            or not 1 <= len(token) <= 256
+        ):
+            raise AuthenticationError("invalid token")
+        return hashlib.sha256(token.encode("ascii")).digest()
+
+    def issue(self, user_id: str) -> str:
+        validate_user_id(user_id)
         token = secrets.token_urlsafe(32)
-        self._tokens[token] = user_id
+        with self._lock:
+            self._tokens[self._digest(token)] = user_id
         return token
 
-    def authenticate(self, token):
-        """Return the token owner, or raise AuthenticationError if invalid."""
-        if not isinstance(token, str) or not token.isascii() or len(token) > 256:
-            raise chat_system.models.AuthenticationError("invalid token")
-        for known, user in self._tokens.items():
-            if hmac.compare_digest(token, known):
-                return user
-        raise chat_system.models.AuthenticationError("invalid token")
+    def authenticate(self, token) -> str:
+        digest = self._digest(token)
+        with self._lock:
+            user = self._tokens.get(digest)
+        if user is None:
+            raise AuthenticationError("invalid token")
+        return user
 
-    def revoke(self, token):
-        """Revoke a token; unknown tokens are ignored."""
-        self._tokens.pop(token, None)
+    def revoke(self, token) -> None:
+        try:
+            digest = self._digest(token)
+        except AuthenticationError:
+            return
+        with self._lock:
+            self._tokens.pop(digest, None)
 
 
 @dataclasses.dataclass(eq=False)
 class Session:
-    """A device connection with a bounded event queue and heartbeat state."""
+    """A device connection with a bounded live-event queue."""
 
     user_id: str
     device_id: str
@@ -56,63 +83,65 @@ class Session:
     closed: bool = False
 
 
+class Notifier(Protocol):
+    async def notify(self, user_id: str, message: Message) -> None: ...
+
+
 class RecordingNotifier:
-    """Reference push adapter.
+    """Bounded local diagnostic adapter; replace with an asynchronous provider."""
 
-    Replace with a provider for real delivery.
-    """
-
-    def __init__(self):
+    def __init__(self, capacity: int = 1000):
+        if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity < 1:
+            raise ValueError("capacity must be a positive integer")
+        self.capacity = capacity
         self.notifications = []
 
-    async def notify(self, user_id, message):
-        """Record a (user_id, message) pair for the reference push adapter."""
+    async def notify(self, user_id: str, message: Message) -> None:
         self.notifications.append((user_id, message))
+        if len(self.notifications) > self.capacity:
+            del self.notifications[0]
 
 
 class ChatService:
-    """Single-event-loop chat sessions, presence, persistence, and delivery."""
+    """One-loop session/presence owner with durable inboxes as source of truth."""
 
     def __init__(
         self,
-        store: chat_system.store.MessageStore = None,
+        store: Optional[MessageStore] = None,
         authenticator=None,
-        notifier=None,
-        config=None,
+        notifier: Optional[Notifier] = None,
+        config: Optional[ChatConfig] = None,
         clock: Callable[[], float] = time.monotonic,
     ):
-        self.store = (
-            store if store is not None else chat_system.store.SQLiteMessageStore()
-        )
+        self.store = store if store is not None else SQLiteMessageStore()
         self.auth = authenticator if authenticator is not None else TokenAuthenticator()
         self.notifier = notifier if notifier is not None else RecordingNotifier()
-        self.config = config or chat_system.models.ChatConfig()
+        self.config = config or ChatConfig()
         self.clock = clock
-        self._sessions: Dict[tuple, Session] = {}
-        self._subscriptions = {}
+        self._sessions: dict[tuple[str, str], Session] = {}
+        self._user_sessions: dict[str, set[Session]] = {}
+        self._subscriptions: dict[Session, set[str]] = {}
+        self._watchers: dict[str, set[Session]] = {}
+        self._presence_events = collections.deque()
+        self._publishing_presence = False
+        self._send_lock = asyncio.Lock()
+        self._push_slots = asyncio.Semaphore(self.config.push_concurrency)
+        self._async_loop = None
         self.notification_failures = []
+        self.notification_failure_count = 0
 
-    def connect(self, token, device_id):
-        """Authenticate and attach a device, replacing its previous session.
-
-        Args:
-            token: Previously issued bearer token.
-            device_id: Nonempty identifier unique to this user's device.
-
-        Returns:
-            The active Session used by subsequent operations.
-
-        Raises:
-            AuthenticationError: The token is invalid.
-            ChatError: The device is invalid or admission fails.
-        """
+    def connect(self, token, device_id: str) -> Session:
         user = self.auth.authenticate(token)
-        if not isinstance(device_id, str) or not device_id:
-            raise chat_system.models.ChatError("invalid device")
-        self.expire_sessions()
-        was_online = self.is_online(user)
+        if (
+            not isinstance(device_id, str)
+            or not device_id.strip()
+            or len(device_id) > 128
+        ):
+            raise ChatError("invalid device")
+        self._expire_user(user)
+        was_online = bool(self._user_sessions.get(user))
         previous = self._sessions.get((user, device_id))
-        if previous:
+        if previous is not None:
             self._close(previous)
         session = Session(
             user,
@@ -122,248 +151,319 @@ class ChatService:
             self.clock(),
         )
         self._sessions[(user, device_id)] = session
+        self._user_sessions.setdefault(user, set()).add(session)
         if not was_online:
             self._publish_presence(user, True)
         return session
 
-    def validate_session(self, session):
-        self.expire_sessions()
+    def validate_session(self, session: Session) -> None:
+        if not isinstance(session, Session):
+            raise AuthenticationError("invalid session")
+        self._expire_user(session.user_id)
         if (
             session.closed
             or self._sessions.get((session.user_id, session.device_id)) is not session
         ):
-            raise chat_system.models.AuthenticationError("session closed")
+            raise AuthenticationError("session closed")
         if self.auth.authenticate(session.token) != session.user_id:
-            raise chat_system.models.AuthenticationError("invalid session")
+            self.disconnect(session)
+            raise AuthenticationError("invalid session")
 
-    def heartbeat(self, session):
-        """Refresh the lease of an authenticated active session.
-
-        Args:
-            session: Session returned by connect.
-
-        Raises:
-            AuthenticationError: The session has expired or been replaced.
-        """
+    def heartbeat(self, session: Session) -> None:
         self.validate_session(session)
         session.last_heartbeat = self.clock()
 
-    def _close(self, session):
+    def _unsubscribe(self, session: Session) -> None:
+        for user in self._subscriptions.pop(session, ()):
+            watchers = self._watchers.get(user)
+            if watchers is not None:
+                watchers.discard(session)
+                if not watchers:
+                    self._watchers.pop(user, None)
+
+    def _close(self, session: Session) -> None:
+        if session.closed:
+            return
         session.closed = True
-        self._sessions.pop((session.user_id, session.device_id), None)
-        self._subscriptions.pop(session, None)
+        key = (session.user_id, session.device_id)
+        if self._sessions.get(key) is session:
+            self._sessions.pop(key)
+        devices = self._user_sessions.get(session.user_id)
+        if devices is not None:
+            devices.discard(session)
+            if not devices:
+                self._user_sessions.pop(session.user_id, None)
+        self._unsubscribe(session)
         while not session.queue.empty():
             session.queue.get_nowait()
         session.queue.put_nowait({"type": "closed", "reason": "reconnect and sync"})
 
-    def disconnect(self, session):
-        """Close a session and publish offline presence when appropriate.
-
-        Args:
-            session: Session to close; repeated disconnects are harmless.
-        """
+    def disconnect(self, session: Session) -> None:
         if self._sessions.get((session.user_id, session.device_id)) is session:
             self._close(session)
-            if not self.is_online(session.user_id):
+            if not self._has_live_session(session.user_id):
                 self._publish_presence(session.user_id, False)
 
-    def expire_sessions(self):
-        """Disconnect expired or revoked sessions and update presence."""
+    def _has_live_session(self, user_id: str) -> bool:
         now = self.clock()
-        for session in list(self._sessions.values()):
+        return any(
+            now - s.last_heartbeat < self.config.heartbeat_timeout
+            for s in self._user_sessions.get(user_id, ())
+        )
+
+    def _expire_user(self, user_id: str) -> None:
+        changed = False
+        now = self.clock()
+        for session in list(self._user_sessions.get(user_id, ())):
             try:
-                valid = self.auth.authenticate(session.token) == session.user_id
-            except chat_system.models.AuthenticationError:
+                valid = self.auth.authenticate(session.token) == user_id
+            except AuthenticationError:
                 valid = False
             if (
                 not valid
                 or now - session.last_heartbeat >= self.config.heartbeat_timeout
             ):
-                self.disconnect(session)
+                self._close(session)
+                changed = True
+        if changed and not self._has_live_session(user_id):
+            self._publish_presence(user_id, False)
 
-    def is_online(self, user_id):
-        """Return whether user_id currently has a live device session."""
-        now = self.clock()
-        return any(
-            s.user_id == user_id
-            and now - s.last_heartbeat < self.config.heartbeat_timeout
-            for s in self._sessions.values()
-        )
+    def expire_sessions(self) -> None:
+        """Periodic global sweep; request validation touches only its user."""
+        for user in list(self._user_sessions):
+            self._expire_user(user)
 
-    def subscribe_presence(self, session, user_ids):
-        """Replace a session's subscriptions and return current online states.
+    def is_online(self, user_id: str) -> bool:
+        self._expire_user(user_id)
+        return self._has_live_session(user_id)
 
-        Args:
-            session: Authenticated session receiving presence events.
-            user_ids: At most 100 nonempty user identifiers.
+    @staticmethod
+    def _user_ids(values):
+        if not isinstance(values, (list, tuple, set, frozenset)) or len(values) > 100:
+            raise ChatError("invalid user list")
+        if not all(
+            isinstance(value, str) and value.strip() and len(value) <= 128
+            for value in values
+        ):
+            raise ChatError("invalid user list")
+        return set(values)
 
-        Returns:
-            A mapping from subscribed user IDs to online booleans.
-
-        Raises:
-            ChatError: The subscription or session is invalid.
-        """
+    def subscribe_presence(self, session: Session, user_ids) -> dict[str, bool]:
         self.validate_session(session)
-        users = set(user_ids)
-        if len(users) > 100 or not all(isinstance(u, str) and u for u in users):
-            raise chat_system.models.ChatError("invalid presence subscription")
+        users = self._user_ids(user_ids)
+        self._unsubscribe(session)
         self._subscriptions[session] = users
-        return {u: self.is_online(u) for u in users}
+        for user in users:
+            self._watchers.setdefault(user, set()).add(session)
+        return {user: self.is_online(user) for user in users}
 
-    def _publish_presence(self, user, online):
-        for session, users in list(self._subscriptions.items()):
-            if user in users:
-                self._enqueue(
-                    session,
-                    {"type": "presence", "user_id": user, "online": online},
-                )
+    def _publish_presence(self, user: str, online: bool) -> None:
+        # Queue overflow may close another subscriber and publish its state.
+        # A worklist prevents recursive fanout chains from overflowing the stack.
+        self._presence_events.append((user, online))
+        if self._publishing_presence:
+            return
+        self._publishing_presence = True
+        try:
+            while self._presence_events:
+                target, state = self._presence_events.popleft()
+                for session in list(self._watchers.get(target, ())):
+                    self._expire_user(session.user_id)
+                    self._enqueue(
+                        session,
+                        {"type": "presence", "user_id": target, "online": state},
+                    )
+        finally:
+            self._publishing_presence = False
 
-    def _enqueue(self, session, event):
+    def _enqueue(self, session: Session, event: dict) -> None:
         if session.closed:
             return
         try:
-            session.queue.put_nowait(event)
+            session.queue.put_nowait(copy.deepcopy(event))
         except asyncio.QueueFull:
-            # Durable inbox is authoritative; disconnect slow clients instead of
-            # dropping silently.
             self.disconnect(session)
 
     def create_direct(self, session, recipient):
-        """Return the direct channel between the session user and recipient.
-
-        Args:
-            session: Authenticated caller session.
-            recipient: The other user's identifier.
-
-        Returns:
-            An existing or newly created two-member Channel.
-        """
         self.validate_session(session)
+        validate_user_id(recipient)
         return self.store.create_channel(session.user_id, [recipient], "direct", 2)
 
     def create_group(self, session, members):
-        """Create a group owned by the authenticated session user.
-
-        Args:
-            session: Authenticated owner session.
-            members: Initial member IDs; the owner is included automatically.
-
-        Returns:
-            The new Channel.
-
-        Raises:
-            ChatError: The member list violates the configured group limit.
-        """
         self.validate_session(session)
         return self.store.create_channel(
-            session.user_id, members, "group", self.config.max_group_members
+            session.user_id,
+            self._user_ids(members),
+            "group",
+            self.config.max_group_members,
         )
 
     def add_member(self, session, channel_id, user_id):
-        """Add a user to a group on behalf of its owner.
-
-        Args:
-            session: Authenticated group owner session.
-            channel_id: Existing group identifier.
-            user_id: Identifier of the user to add.
-
-        Returns:
-            The updated Channel.
-
-        Raises:
-            ChatError: The caller lacks ownership or the group is full.
-        """
         self.validate_session(session)
+        validate_user_id(user_id)
         return self.store.add_member(
             channel_id, session.user_id, user_id, self.config.max_group_members
         )
 
-    async def send(self, session, channel_id, content, client_message_id):
-        """Persist a message idempotently and arrange recipient delivery.
+    def _prepare_loop(self):
+        loop = asyncio.get_running_loop()
+        if loop is self._async_loop:
+            return
+        if self._async_loop is not None and (
+            self._async_loop.is_running() or self._send_lock.locked()
+        ):
+            raise RuntimeError("ChatService belongs to one active event loop")
+        # Preserve the synchronous-core convention of sequential asyncio.run
+        # calls. Live transport consumers must stay on their original loop.
+        self._send_lock = asyncio.Lock()
+        self._push_slots = asyncio.Semaphore(self.config.push_concurrency)
+        self._async_loop = loop
 
-        Args:
-            session: Authenticated sender session.
-            channel_id: Channel to which the sender belongs.
-            content: Nonempty message text within the configured length limit.
-            client_message_id: Sender-scoped retry key, at most 200 characters.
+    async def _store_call(self, session, operation, *args):
+        self._prepare_loop()
+        self.validate_session(session)
+        result = await run_blocking(operation, *args)
+        self.validate_session(session)
+        return result
 
-        Returns:
-            The persisted Message, including the original ID on an identical
-            retry.
+    async def async_create_direct(self, session, recipient):
+        validate_user_id(recipient)
+        return await self._store_call(
+            session,
+            self.store.create_channel,
+            session.user_id,
+            [recipient],
+            "direct",
+            2,
+        )
 
-        Raises:
-            ChatError: Input, channel access, or an idempotency key is invalid.
-        """
+    async def async_create_group(self, session, members):
+        users = self._user_ids(members)
+        return await self._store_call(
+            session,
+            self.store.create_channel,
+            session.user_id,
+            users,
+            "group",
+            self.config.max_group_members,
+        )
+
+    async def async_add_member(self, session, channel_id, user_id):
+        validate_user_id(user_id)
+        return await self._store_call(
+            session,
+            self.store.add_member,
+            channel_id,
+            session.user_id,
+            user_id,
+            self.config.max_group_members,
+        )
+
+    async def async_sync(self, session, after=0, limit=100):
+        read = getattr(self.store, "sync_bounded", self.store.sync)
+        return await self._store_call(session, read, session.user_id, after, limit)
+
+    async def async_history(self, session, channel_id, after=0, limit=100):
+        read = getattr(self.store, "history_bounded", self.store.history)
+        return await self._store_call(
+            session, read, channel_id, session.user_id, after, limit
+        )
+
+    def get_message(self, session, message_id):
+        self.validate_session(session)
+        return self.store.get_message(message_id, session.user_id)
+
+    async def async_get_message(self, session, message_id):
+        return await self._store_call(
+            session, self.store.get_message, message_id, session.user_id
+        )
+
+    async def send(self, session, channel_id, content, client_message_id) -> Message:
+        self._prepare_loop()
         self.validate_session(session)
         if (
             not isinstance(content, str)
             or not content.strip()
             or len(content) > self.config.max_message_length
         ):
-            raise chat_system.models.ChatError("invalid message content")
+            raise ChatError("invalid message content")
         if (
             not isinstance(client_message_id, str)
             or not 1 <= len(client_message_id) <= 200
         ):
-            raise chat_system.models.ChatError("invalid client message ID")
-        message, created, members = self.store.append(
-            channel_id, session.user_id, content, client_message_id
-        )
-        if not created:
-            return message
-        offline = []
-        for user in members:
-            for target in list(self._sessions.values()):
-                if target.user_id == user:
-                    self._enqueue(
-                        target,
-                        {
-                            "type": "message",
-                            "message": dataclasses.asdict(message),
-                        },
-                    )
-            if user != session.user_id and not self.is_online(user):
-                offline.append(user)
-        # Enqueue every live recipient before awaiting a provider to preserve
-        # live ID order.
-        for user in offline:
-            try:
-                await self.notifier.notify(user, message)
-            # Isolate this operation; record failures before continuing.
-            except Exception as error:  # pylint: disable=broad-exception-caught
-                # Persistence and sender acknowledgement must survive push
-                # provider failure.
-                logging.getLogger(__name__).exception("Failure isolated in %s", "send")
-                self.notification_failures.append(
-                    (user, message.message_id, type(error).__name__)
-                )
+            raise ChatError("invalid client message ID")
+        # Commit and local fanout are ordered together, independently of push IO.
+        async with self._send_lock:
+            self.validate_session(session)
+            message, created, members = await run_blocking(
+                self.store.append,
+                channel_id,
+                session.user_id,
+                content,
+                client_message_id,
+            )
+            self.validate_session(session)
+            if not created:
+                return message
+            offline = self._deliver_live(message, members, session.user_id)
+        await self._notify_offline(offline, message)
+        self._validate_acknowledgement(session)
         return message
 
+    def _validate_acknowledgement(self, session):
+        # Backpressure may close the sender's live queue after the commit.
+        # Its accepted send remains valid, while revoked/replaced identities do not.
+        try:
+            user = self.auth.authenticate(session.token)
+        except AuthenticationError:
+            self.disconnect(session)
+            raise
+        current = self._sessions.get((session.user_id, session.device_id))
+        if user != session.user_id or (current is not None and current is not session):
+            raise AuthenticationError("session replaced")
+
+    def _deliver_live(self, message: Message, members, sender: str) -> list[str]:
+        event = {"type": "message", "message": dataclasses.asdict(message)}
+        offline = []
+        for user in members:
+            self._expire_user(user)
+            for target in list(self._user_sessions.get(user, ())):
+                self._enqueue(target, event)
+            if user != sender and not self._has_live_session(user):
+                offline.append(user)
+        return offline
+
+    async def _notify_offline(self, users: list[str], message: Message) -> None:
+        self._prepare_loop()
+        recipients = iter(users)
+
+        async def invoke(user):
+            async with self._push_slots:
+                await self.notifier.notify(user, message)
+
+        async def deliver():
+            for user in recipients:
+                if self.is_online(user):
+                    continue
+                try:
+                    await asyncio.wait_for(invoke(user), self.config.push_timeout)
+                except Exception as error:
+                    logger.exception("Offline notification failed")
+                    self.notification_failure_count += 1
+                    self.notification_failures.append(
+                        (user, message.message_id, type(error).__name__)
+                    )
+                    if len(self.notification_failures) > self.config.failure_retention:
+                        del self.notification_failures[0]
+
+        await gather_owned(
+            *(deliver() for _ in range(min(self.config.push_concurrency, len(users))))
+        )
+
     def sync(self, session, after=0, limit=100):
-        """Return an ascending page of the session user's durable inbox.
-
-        Args:
-            session: Authenticated device session.
-            after: Exclusive message ID cursor; zero starts from the beginning.
-            limit: Maximum number of messages to return.
-
-        Returns:
-            Messages after the cursor, ordered by message ID.
-        """
         self.validate_session(session)
         return self.store.sync(session.user_id, after, limit)
 
     def history(self, session, channel_id, after=0, limit=100):
-        """Return an ascending page of an accessible channel's messages.
-
-        Args:
-            session: Authenticated channel member session.
-            channel_id: Channel whose history should be read.
-            after: Exclusive message ID cursor.
-            limit: Maximum number of messages to return.
-
-        Returns:
-            Messages visible to the caller after the cursor.
-        """
         self.validate_session(session)
         return self.store.history(channel_id, session.user_id, after, limit)

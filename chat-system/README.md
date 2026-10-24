@@ -21,7 +21,7 @@ WebSocket adapter provides actual network communication.
   and a configurable real-WebSocket capacity/fault harness.
 
 中文文档：[README_CN.md](./README_CN.md)。Architecture and guarantees:
-[docs/design.md](./docs/design.md).
+[docs/design.md](./docs/design.md). Chapter coverage and this review: [chapter13-review.md](./docs/chapter13-review.md).
 
 ## Installation and tests
 
@@ -46,10 +46,10 @@ async def main():
     chat = ChatService(store)
     try:
         alice = chat.connect(chat.auth.issue("alice"), "phone")
-        channel = chat.create_direct(alice, "bob")
+        channel = await chat.async_create_direct(alice, "bob")
         message = await chat.send(alice, channel.channel_id, "Hello", "alice-request-1")
         bob = chat.connect(chat.auth.issue("bob"), "laptop")
-        print(chat.sync(bob, after=0))
+        print(await chat.async_sync(bob, after=0))
         print(message.message_id)
     finally:
         store.close()
@@ -83,7 +83,8 @@ database path. Connect with any WebSocket client and use text JSON frames:
 
 Send requests sequentially or correlate by `request_id`. A response has
 `type: "response"`, `ok`, and `result` or `error`. Live events use `message`,
-`presence`, or `closed` as their type. Other operations are `group` (`members`),
+`presence`, or `closed` as their type. Other operations are `message` (`message_id`, only original recipients can read),
+`group` (`members`),
 `add_member` (`channel_id`, `user_id`), `history` (`channel_id`, `after`, `limit`),
 `subscribe_presence` (`user_ids`), and `logout`.
 
@@ -95,17 +96,25 @@ Each device must save its own last fully processed sync cursor. After reconnect,
 request pages with that cursor and process them before saving `next_cursor`. Live
 events can be deduplicated by message ID, but must not advance the sync cursor
 past messages that haven't been processed. A `closed` event instructs reconnect/sync.
+Only the complete last page from `ReconnectingChatClient.receive()` can be acknowledged;
+partial, reordered or invented pages cannot advance its cursor. Cursor persistence uses
+fsync and atomic replacement. A canceled request discards its connection; group creation
+has no retry key and reports uncertain outcomes instead of creating a second group.
+See [transport details](docs/transport-review.md).
+
 Network sync/history responses also cap payload bytes, so large Unicode messages
 may result in fewer messages than requested. Continue using the returned cursor.
 
 ## Boundaries and extension points
 
-- Local mode uses one process/event loop with synchronous SQLite operations.
+- Local mode uses one active event loop with thread-safe SQLite transactions.
+  The WebSocket adapter uses asynchronous store wrappers so disk IO does not block the loop.
   Distributed mode supplies shared persistence, stream routing, and leases through
   Redis. Neither mode demonstrates 50-million-user capacity.
 - `MessageStore` is replaceable in local mode; distributed mode uses `RedisBackend`.
-- `RecordingNotifier` records offline push calls; real provider delivery and durable
-  push retries are not included. Failures appear in `notification_failures`.
+- `RecordingNotifier` records offline push calls; real provider delivery needs an adapter. Local calls have a service-wide concurrency
+  cap (default 8) and a deadline (default 10 seconds); failures retain the last 1000
+  diagnostics and a cumulative count. Durable push retry is available in distributed mode.
 - Commit happens before live delivery. A crash between commit and fanout is recovered
   through sync; live events and push notifications are not guaranteed exactly once.
 - `ServiceDiscovery` is an independent in-memory selection example, not automatic
@@ -174,7 +183,9 @@ use actual HTTP POST delivery. The body contains `user_id` and `message`;
 `Idempotency-Key` is stable for a recipient/message. APNs, FCM, or email integrations
 can live behind that bridge and require independently supplied credentials.
 
-Workers use a consumer group, reclaim abandoned jobs, and persist exponential retry
+Workers renew provider-attempt locks and atomically fence completion/retry with the
+current lock token; an obsolete worker cannot acknowledge or dead-letter a newer attempt.
+HTTP provider redirects are rejected. Workers use a consumer group, reclaim abandoned jobs, and persist exponential retry
 deadlines. Five failed attempts move a job into the dead-letter stream. Configure
 `--max-attempts`, `--retry-base`, and `--reclaim-ms` as needed. External delivery is
 at least once: the provider must deduplicate by the idempotency key. Shared presence
@@ -267,3 +278,26 @@ each primary-crash test. Missing lab configuration explicitly skips that test.
 
 The repository's local Chapter 13 is the feature source. The optional transport
 uses the [websockets asyncio server API](https://websockets.readthedocs.io/en/stable/reference/asyncio/server.html).
+
+
+## 2026-10-24 engineering review
+
+Direct channel creation, group admission, sender-key deduplication and inbox fanout
+are serialized in SQLite transactions across threads and instances. A unique direct
+pair index avoids scanning every conversation. New `get_message` / `async_get_message`
+lookups require the caller's original recipient inbox entry.
+
+Live routing indexes only the channel members' devices; presence uses a reverse
+subscriber index and iterative overflow cleanup. Local token lookup uses digest keys,
+and session validation checks the relevant user rather than scanning all connections.
+Disk operations are offloaded and drained even through repeated cancellation. Metadata
+and read APIs retain synchronous convenience methods and add `async_*` variants.
+
+Text remains below 100000 characters; IDs sort messages rather than wall-clock time.
+SQLite uses signed integer IDs; Redis guards its exact sorted-set range below 2**53.
+The implementation preserves history without automatic expiry. It does not provide
+cross-region sharding or demonstrate fifty-million-DAU capacity. The existing capacity
+reports remain historical measurements, not measurements of this review's revisions.
+
+Final validation and the explicitly skipped Sentinel fault experiment are recorded in
+[the chapter audit](docs/chapter13-review.md).

@@ -4,9 +4,10 @@
 
 The local implementation follows Chapter 13's direct/group messaging, device inboxes,
 presence, and notification flows. The book separates stateful chat/presence servers
-from stateless API services and storage. Here they run in one asyncio event loop;
-the interfaces and reference registry illustrate those boundaries without pretending
-to deploy a distributed cluster.
+from stateless API services and storage. The local mode composes them in one active asyncio event loop and offloads disk
+operations to worker threads. The independent Redis mode below supplies actual
+cross-process routing, leases and discovery. [Chapter coverage](chapter13-review.md)
+separates tested behavior from deployment scale.
 
 ```text
 WebSocket clients (one session per user/device)
@@ -40,6 +41,9 @@ chat-system/
     service.py      # Authentication, sessions, fanout, presence, push integration
     discovery.py    # Reference capacity-aware registry
     transport.py    # Optional JSON/WebSocket adapter
+    concurrency.py  # Owned blocking IO and cancellation draining
+    distributed.py / redis_backend.py / redis_scripts.py
+    push.py / client.py / cluster.py
   examples/
     basic_chat.py
     websocket_server.py
@@ -52,6 +56,7 @@ chat-system/
 
 - `channels(id, owner, kind)` stores direct/group metadata.
 - `members(channel, user)` has a composite primary key.
+- `direct_pairs(first_user, second_user, channel)` uniquely indexes a direct pair.
 - `messages(id, channel, sender, content, created, client_id)` uses SQLite AUTOINCREMENT.
 - `(sender, client_id)` is unique and makes retries idempotent across devices/restarts.
 - `inbox(user, message)` holds one reference for every member, including the sender.
@@ -61,18 +66,31 @@ Message insertion and inbox fanout share a transaction. The server commits befor
 enqueueing live events or calling push. IDs are increasing in this store and are
 used for ordering, rather than wall-clock timestamps. A distributed implementation
 would replace this with per-channel sequences or a coordinated ID generator and
-durable fanout workers. SQLite operations are synchronous and intentionally small;
-a production storage adapter must avoid blocking the event loop.
+durable fanout workers. SQLite uses a shared thread-safe connection per store, guarded by a lock, WAL for
+file databases, and BEGIN IMMEDIATE for writer admission across instances. The
+WebSocket adapter calls async_create_direct/async_create_group/async_add_member,
+async_sync/async_history and async_get_message; blocking operations run in worker
+threads and finish before cancellation releases their ordering lock. The synchronous
+library API remains available. Network reads stream a byte-limited page; low-level
+sync/history retain their count-only semantics.
 
 New group members are not backfilled into previous inbox entries. History queries
 require current membership and an inbox entry, preventing accidental exposure of
-pre-join messages. Direct channel creation reuses the existing pair.
+pre-join messages. Direct channel creation reuses an indexed unique pair. Legacy duplicate direct
+channels retain their IDs/history; migration chooses one canonical pair for future
+creation without merging or deleting old history. Exact get_message lookup requires
+the original recipient inbox entry and hides missing/unauthorized IDs alike.
 
 ## Sessions, backpressure, and presence
 
 A session binds an authenticated user, device, bounded asyncio queue, and last
 heartbeat. A second login for the same user/device replaces the first. Other devices
 remain connected. The core checks session identity and credentials on each operation.
+
+Session and presence routing use per-user device indexes and reverse subscriber
+indexes. Request validation examines only the relevant user; periodic cleanup does
+the global expiry sweep. Token digests are dictionary keys. Presence overflow cascades
+use an iterative worklist; expired/revoked subscribers are closed before delivery.
 
 Each new message is enqueued to all recipient devices. Queue overflow closes the
 slow session and emits a recovery event. The durable inbox, not the volatile queue,
@@ -90,8 +108,10 @@ of which contacts can be observed belongs to the embedding application.
 
 The default push adapter records invocations. Offline recipients trigger one call
 per newly committed message. Provider exceptions are recorded and do not change the
-send result. Push retries and a durable notification outbox are future integration
-work. A crash after commit and before live/push fanout can lose the notification,
+send result. Local provider calls share a service-wide semaphore (default 8) and
+a finite deadline (10 seconds, including slot wait); failure diagnostics retain the
+last 1000 records and a cumulative count. The recording adapter is also bounded.
+Durable push retries use the distributed worker described below. A crash after commit and before live/push fanout can lose the notification,
 but the message remains retrievable through sync. This is not exactly-once network
 delivery; idempotent writes and cursor recovery are the explicit guarantees.
 
@@ -103,7 +123,7 @@ request: `login` with `token` and `device_id`. Responses use `type=response`, ec
 `type=message`, `type=presence`, or `type=closed`.
 
 Operations: `login`, `heartbeat`, `direct`, `group`, `add_member`, `send`, `sync`,
-`history`, `subscribe_presence`, `logout`. `send` includes `channel_id`, `content`,
+`history`, `message` (exact ID with recipient authorization), `subscribe_presence`, `logout`. `send` includes `channel_id`, `content`,
 `client_message_id`; `sync` includes `after` and `limit`. Successful sync returns
 messages and a `next_cursor`, retaining the input cursor when no messages exist.
 WebSocket clients serialize request/response handling separately from event handling.
@@ -113,7 +133,11 @@ endpoint. The example binds to localhost. Remote deployment requires TLS and an
 external authenticator; this demo does not provide account registration or password
 storage. Authentication has a timeout and WebSocket frame size is capped while still
 allowing a valid Unicode message. Unknown operations and malformed data return safe
-errors. Graceful server exit cancels background tasks and closes sessions.
+errors. Graceful server exit cancels and drains background tasks and closes sessions.
+A client acknowledges only a complete last receive page; a temporary file is fsynced
+and atomically replaces its cursor. Request deadlines include interleaved events.
+Canceled requests discard their connection. Group creation has no retry key, so an
+uncertain outcome is reported instead of replayed. See [transport review](transport-review.md).
 
 ## Discovery and scale
 
@@ -125,8 +149,8 @@ and global presence are necessary before horizontal deployment.
 
 ## Validation
 
-Requirements map to tasks and tests. Core tests use `asyncio.run` and fake clocks
-without sleep-based assertions. WebSocket tests use an ephemeral loopback port and
+Requirements map to tasks and tests. Core tests use `asyncio.run`, fake clocks
+and event barriers, with finite network/provider deadlines in lifecycle tests. WebSocket tests use an ephemeral loopback port and
 the optional transport dependency. File-backed restart tests verify durability;
 authorization and idempotency tests verify isolation under retries and concurrency.
 
@@ -206,3 +230,22 @@ promotion and continued chat. Capacity reports describe measured local scale onl
 
 References: [Sentinel failover](https://redis.io/docs/latest/operate/oss_and_stack/management/sentinel/)
 and [WAIT replication acknowledgement](https://redis.io/docs/latest/commands/wait/).
+
+
+## 2026-10-24 reliability changes
+
+Distributed start/close and device admission are serialized and owned through repeated
+caller cancellation. Lease loss marks a node unready and closes local devices. Push
+attempts renew a token lease; ACK, retry and dead-letter mutations require that token,
+so a reclaimed attempt cannot be overwritten by an obsolete consumer. Already-ACKed
+stream entries do not invoke the provider again. HTTP redirects are rejected rather
+than treated as successful delivery. Provider side effects still require recipient/
+message idempotency; a network timeout cannot prove that no delivery occurred.
+
+Presence probes deduplicate watched users and use bounded Redis pipelines. History
+checks recipient visibility in bounded batches instead of per-message round trips.
+SQLite IDs are signed integers; Redis sequence allocation stops before 2**53 to keep
+sorted-set ordering exact. History and streams have no automatic expiry. Neither the
+SQLite adapter nor the single Redis hash-slot deployment claims fifty-million-DAU
+capacity. This review did not repeat historical load or Sentinel-primary-crash runs;
+current tests and skipped experiments are recorded in [chapter13-review.md](chapter13-review.md).

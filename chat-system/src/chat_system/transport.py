@@ -8,6 +8,7 @@ import dataclasses
 import inspect
 import json
 import logging
+import math
 
 import chat_system.models
 
@@ -30,13 +31,29 @@ class WebSocketChatServer:
     operations.
     """
 
-    def __init__(self, service, auth_timeout=10.0, cleanup_interval=1.0):
-        if auth_timeout <= 0 or cleanup_interval <= 0:
-            raise ValueError("timeouts must be positive")
+    def __init__(
+        self, service, auth_timeout=10.0, cleanup_interval=1.0, send_timeout=10.0
+    ):
+        for value in (auth_timeout, cleanup_interval, send_timeout):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value <= 0
+            ):
+                raise ValueError("timeouts must be finite and positive")
         self.service = service
         self.auth_timeout = auth_timeout
         self.cleanup_interval = cleanup_interval
+        self.send_timeout = send_timeout
         self._owned_sessions = set()
+
+    async def _operation(self, name, *args):
+        """Prefer the nonblocking adapter of an otherwise synchronous service."""
+        operation = getattr(self.service, "async_" + name, None)
+        if operation is None:
+            operation = getattr(self.service, name)
+        return await resolve(operation(*args))
 
     async def dispatch(self, session, request):
         op = request["op"]
@@ -46,21 +63,19 @@ class WebSocketChatServer:
             return {"online": True}
         if op == "direct":
             return dataclasses.asdict(
-                await resolve(service.create_direct(session, request["recipient_id"]))
+                await self._operation("create_direct", session, request["recipient_id"])
             )
         if op == "group":
             members = request["members"]
             if not isinstance(members, list) or len(members) > 100:
                 raise chat_system.models.ChatError("invalid members")
             return dataclasses.asdict(
-                await resolve(service.create_group(session, members))
+                await self._operation("create_group", session, members)
             )
         if op == "add_member":
             return dataclasses.asdict(
-                await resolve(
-                    service.add_member(
-                        session, request["channel_id"], request["user_id"]
-                    )
+                await self._operation(
+                    "add_member", session, request["channel_id"], request["user_id"]
                 )
             )
         if op == "send":
@@ -72,13 +87,17 @@ class WebSocketChatServer:
                     request["client_message_id"],
                 )
             )
+        if op == "message":
+            return dataclasses.asdict(
+                await self._operation("get_message", session, request["message_id"])
+            )
         if op in ("sync", "history"):
             after, limit = request.get("after", 0), request.get("limit", 100)
             if op == "sync":
-                messages = await resolve(service.sync(session, after, limit))
+                messages = await self._operation("sync", session, after, limit)
             else:
-                messages = await resolve(
-                    service.history(session, request["channel_id"], after, limit)
+                messages = await self._operation(
+                    "history", session, request["channel_id"], after, limit
                 )
             # Page size is also bounded in bytes; Unicode content can be much
             # larger
@@ -118,15 +137,25 @@ class WebSocketChatServer:
 
         async def write(value):
             async with send_lock:
-                await websocket.send(json.dumps(value, ensure_ascii=False))
+                await asyncio.wait_for(
+                    websocket.send(json.dumps(value, ensure_ascii=False)),
+                    self.send_timeout,
+                )
 
         async def events():
-            while True:
-                event = await session.queue.get()
-                await write(event)
-                if event["type"] == "closed":
-                    await websocket.close(code=1000, reason="reconnect and sync")
-                    return
+            try:
+                while True:
+                    event = await session.queue.get()
+                    await write(event)
+                    if event["type"] == "closed":
+                        await websocket.close(code=1000, reason="reconnect and sync")
+                        return
+            except websockets.exceptions.ConnectionClosed:
+                return
+            except Exception:  # pylint: disable=broad-exception-caught
+                # A failed event writer must also wake the request reader.
+                logging.getLogger(__name__).exception("Chat event delivery failed")
+                await websocket.close(code=1011, reason="reconnect and sync")
 
         try:
             while True:
@@ -147,7 +176,11 @@ class WebSocketChatServer:
                             "JSON object with operation required"
                         )
                     request_id = request.get("request_id")
-                    if not (request_id is None or isinstance(request_id, (str, int))):
+                    if not (
+                        request_id is None
+                        or (isinstance(request_id, str) and len(request_id) <= 128)
+                        or (type(request_id) is int and 0 <= request_id < 2**63)
+                    ):
                         request_id = None
                         raise chat_system.models.ChatError("invalid request ID")
                     if session is None:
@@ -207,7 +240,12 @@ class WebSocketChatServer:
                         }
                     )
         except asyncio.TimeoutError:
-            await websocket.close(code=1008, reason="login timeout")
+            if session is None:
+                await websocket.close(code=1008, reason="login timeout")
+            else:
+                await websocket.close(
+                    code=1011, reason="response timeout; reconnect and sync"
+                )
         except websockets.exceptions.ConnectionClosed:
             pass
         finally:
@@ -255,5 +293,9 @@ class WebSocketChatServer:
             with contextlib.suppress(asyncio.CancelledError):
                 await cleanup
             for session in list(self._owned_sessions):
-                await resolve(self.service.disconnect(session))
+                try:
+                    await resolve(self.service.disconnect(session))
+                except Exception:  # pylint: disable=broad-exception-caught
+                    # Drain every owned session even when one backend release fails.
+                    logging.getLogger(__name__).exception("Chat session cleanup failed")
             self._owned_sessions.clear()

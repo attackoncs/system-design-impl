@@ -18,6 +18,7 @@ from chat_system.push import (
 from chat_system.redis_backend import RedisBackend
 from chat_system.service import (
     ChatService,
+    Notifier,
     RecordingNotifier,
     Session,
     TokenAuthenticator,
@@ -31,6 +32,7 @@ __all__ = [
     "ChatError",
     "Message",
     "ChatService",
+    "Notifier",
     "RecordingNotifier",
     "Session",
     "TokenAuthenticator",

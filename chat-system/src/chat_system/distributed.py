@@ -5,11 +5,13 @@ import contextlib
 import dataclasses
 import json
 import logging
+import math
 import uuid
 
 import chat_system.models
 import chat_system.redis_backend
 import chat_system.service
+from chat_system.concurrency import _wait_owned
 
 
 class DistributedChatService:
@@ -26,7 +28,19 @@ class DistributedChatService:
         poll_interval=0.2,
         config=None,
     ):
-        if capacity < 1 or node_lease <= 0 or not 0 < poll_interval < node_lease / 2:
+        if (
+            not isinstance(capacity, int)
+            or isinstance(capacity, bool)
+            or capacity < 1
+            or not isinstance(node_lease, (int, float))
+            or isinstance(node_lease, bool)
+            or not math.isfinite(node_lease)
+            or node_lease <= 0
+            or not isinstance(poll_interval, (int, float))
+            or isinstance(poll_interval, bool)
+            or not math.isfinite(poll_interval)
+            or not 0 < poll_interval < node_lease / 2
+        ):
             raise ValueError("invalid capacity or lease intervals")
         self.backend = backend
         self.store = backend
@@ -40,6 +54,9 @@ class DistributedChatService:
         self._user_sessions = {}
         self._subscriptions = {}
         self._tasks = []
+        self._lifecycle_lock = asyncio.Lock()
+        self._admission_locks = [asyncio.Lock() for _ in range(64)]
+        self._connecting = set()
         self.background_error = None
         self.cursor = "0-0"
         self.started = False
@@ -48,6 +65,24 @@ class DistributedChatService:
         """Acquire the node lease, start background tasks, and return this
         service.
         """
+        async with self._lifecycle_lock:
+            if self.started:
+                return self
+            if self._tasks:
+                raise chat_system.models.ChatError(
+                    "close the stopped node before restarting"
+                )
+            task = asyncio.create_task(self._start())
+            try:
+                return await _wait_owned(task)
+            except asyncio.CancelledError:
+                # A lease acquired by a cancelled caller still belongs to us.
+                with contextlib.suppress(Exception, asyncio.CancelledError):
+                    task.result()
+                    await _wait_owned(asyncio.create_task(self._close()))
+                raise
+
+    async def _start(self):
         await self.backend.redis.ping()
         saved = await self.backend.redis.hget(
             self.backend.key("node_cursors"), self.node_id
@@ -84,16 +119,32 @@ class DistributedChatService:
         """Stop background tasks, disconnect devices, and release the node
         lease.
         """
+        async with self._lifecycle_lock:
+            await _wait_owned(asyncio.create_task(self._close()))
+
+    async def _close(self):
         self.started = False
+        if self._connecting:
+            await asyncio.gather(*tuple(self._connecting), return_exceptions=True)
         for task in self._tasks:
             task.cancel()
         for task in self._tasks:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         self._tasks.clear()
-        for session in list(self._sessions.values()):
-            await self.disconnect(session)
-        await self.backend.remove_node(self.node_id, self.instance)
+        try:
+            errors = await asyncio.gather(
+                *(
+                    self.disconnect(session)
+                    for session in list(self._sessions.values())
+                ),
+                return_exceptions=True,
+            )
+        finally:
+            await self.backend.remove_node(self.node_id, self.instance)
+        for error in errors:
+            if isinstance(error, BaseException):
+                raise error
 
     def _local_close(self, session):
         session.closed = True
@@ -136,8 +187,32 @@ class DistributedChatService:
         """
         if not self.started:
             raise chat_system.models.ChatError("node not ready")
-        user = await self.auth.authenticate(token)
         chat_system.redis_backend.identifier(device_id)
+        task = asyncio.create_task(self._connect(token, device_id))
+        self._connecting.add(task)
+        try:
+            return await _wait_owned(task)
+        except asyncio.CancelledError:
+            # Redis can commit an admission before the socket await is cancelled.
+            # Finish that operation and release precisely the session it admitted.
+            with contextlib.suppress(Exception, asyncio.CancelledError):
+                session = task.result()
+                await _wait_owned(asyncio.create_task(self.disconnect(session)))
+            raise
+        finally:
+            self._connecting.discard(task)
+
+    async def _connect(self, token, device_id):
+        user = await self.auth.authenticate(token)
+        lock = self._admission_locks[
+            hash((user, device_id)) % len(self._admission_locks)
+        ]
+        async with lock:
+            return await self._admit(token, user, device_id)
+
+    async def _admit(self, token, user, device_id):
+        if not self.started:
+            raise chat_system.models.ChatError("node not ready")
         session = chat_system.service.Session(
             user,
             device_id,
@@ -156,6 +231,17 @@ class DistributedChatService:
         )
         if not admitted:
             raise chat_system.models.ChatError("node full or lease expired; rediscover")
+        if not self.started:
+            await self.backend.session_operation(
+                user,
+                device_id,
+                session.session_id,
+                self.node_id,
+                "close",
+                instance=self.instance,
+            )
+            self._local_close(session)
+            raise chat_system.models.ChatError("node closed during admission")
         previous = self._sessions.get((user, device_id))
         if previous:
             self._local_close(previous)
@@ -216,17 +302,15 @@ class DistributedChatService:
             session: Session to close; repeated disconnects are harmless.
         """
         if not session.closed:
-            try:
-                await self.backend.session_operation(
-                    session.user_id,
-                    session.device_id,
-                    session.session_id,
-                    self.node_id,
-                    "close",
-                    instance=self.instance,
-                )
-            finally:
-                self._local_close(session)
+            self._local_close(session)
+            await self.backend.session_operation(
+                session.user_id,
+                session.device_id,
+                session.session_id,
+                self.node_id,
+                "close",
+                instance=self.instance,
+            )
 
     async def expire_sessions(self):
         """Disconnect expired or revoked sessions and update presence."""
@@ -257,7 +341,12 @@ class DistributedChatService:
         users = {chat_system.redis_backend.identifier(user) for user in user_ids}
         if len(users) > 100:
             raise chat_system.models.ChatError("too many subscriptions")
-        snapshot = {user: await self.is_online(user) for user in users}
+        snapshot = await self.backend.online_states(users)
+        if (
+            session.closed
+            or self._sessions.get((session.user_id, session.device_id)) is not session
+        ):
+            raise chat_system.models.AuthenticationError("session closed")
         self._subscriptions[session] = snapshot
         return dict(snapshot)
 
@@ -379,8 +468,13 @@ class DistributedChatService:
         await self.validate_session(session)
         return await self.store.history(channel_id, session.user_id, after, limit)
 
+    async def get_message(self, session, message_id):
+        """Read an original recipient's message by ID for random access."""
+        await self.validate_session(session)
+        return await self.store.get_visible_message(message_id, session.user_id)
+
     async def _consume(self):
-        while True:
+        while self.started:
             try:
                 batches = await self.backend.redis.xread(
                     {self.backend.key("events"): self.cursor},
@@ -441,17 +535,27 @@ class DistributedChatService:
                 await asyncio.sleep(self.poll_interval)
 
     async def _maintenance(self):
-        while True:
+        while self.started:
             try:
                 if not await self._renew():
+                    self.started = False
                     for session in list(self._sessions.values()):
                         self._local_close(session)
                     return
                 await self.expire_sessions()
                 await self.backend.prune_sessions()
+                observed = await self.backend.online_states(
+                    user
+                    for snapshot in self._subscriptions.values()
+                    for user in snapshot
+                )
                 for session, snapshot in list(self._subscriptions.items()):
                     for user, old in list(snapshot.items()):
-                        online = await self.is_online(user)
+                        # A subscription created during the await above is already
+                        # initialized from Redis and is checked on the next tick.
+                        if user not in observed:
+                            continue
+                        online = observed[user]
                         if online != old:
                             snapshot[user] = online
                             await self._enqueue(

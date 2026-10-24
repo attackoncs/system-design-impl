@@ -114,3 +114,36 @@ for _, device in ipairs(devices) do
 end
 return 0
 """
+
+
+# A stream entry may be reclaimed while an earlier callback is still finishing.
+# Its lock token fences acknowledgements, retries, and dead letters together.
+_PUSH_LOCK = """
+if #redis.call('XPENDING',KEYS[1],ARGV[1],ARGV[2],ARGV[2],1)==0 then return 0 end
+return redis.call('SET',KEYS[2],ARGV[3],'NX','PX',ARGV[4]) and 1 or 0
+"""
+
+_PUSH_COMPLETE = """
+if redis.call('GET',KEYS[1])~=ARGV[1] then return 0 end
+if #redis.call('XPENDING',KEYS[2],ARGV[2],ARGV[3],ARGV[3],1)==0 then return 0 end
+if ARGV[4]~='' then
+    local fields={}
+    for i=5,#ARGV do fields[#fields+1]=ARGV[i] end
+    redis.call('XADD',KEYS[4],'*',unpack(fields))
+end
+redis.call('XACK',KEYS[2],ARGV[2],ARGV[3])
+redis.call('HDEL',KEYS[3],ARGV[3])
+return 1
+"""
+
+_PUSH_RETRY = """
+if redis.call('GET',KEYS[1])~=ARGV[1] then return 0 end
+if #redis.call('XPENDING',KEYS[2],ARGV[2],ARGV[3],ARGV[3],1)==0 then return 0 end
+redis.call('HSET',KEYS[3],ARGV[3],ARGV[4])
+return 1
+"""
+
+_PUSH_RENEW = """
+if redis.call('GET',KEYS[1])~=ARGV[1] then return 0 end
+return redis.call('PEXPIRE',KEYS[1],ARGV[2])
+"""

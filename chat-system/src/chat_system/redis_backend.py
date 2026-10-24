@@ -80,8 +80,14 @@ class RedisBackend:
     """
 
     def __init__(self, client, namespace="chat", wait_replicas=0, wait_timeout_ms=1000):
-        if not namespace or any(
-            c not in (string.ascii_letters + string.digits + "-_") for c in namespace
+        if (
+            not isinstance(namespace, str)
+            or not namespace
+            or len(namespace) > 200
+            or any(
+                c not in (string.ascii_letters + string.digits + "-_")
+                for c in namespace
+            )
         ):
             raise ValueError("invalid Redis namespace")
         self.redis = client
@@ -89,6 +95,8 @@ class RedisBackend:
         if (
             (not isinstance(wait_replicas, int) or isinstance(wait_replicas, bool))
             or wait_replicas < 0
+            or not isinstance(wait_timeout_ms, int)
+            or isinstance(wait_timeout_ms, bool)
             or wait_timeout_ms < 1
         ):
             raise ValueError("invalid replication confirmation settings")
@@ -370,6 +378,26 @@ class RedisBackend:
             raise chat_system.models.ChatError("message missing")
         return message_from_json(raw)
 
+    async def get_visible_message(self, message_id, user_id):
+        """Read one message only if the caller was an original recipient."""
+        if (
+            not isinstance(message_id, int)
+            or isinstance(message_id, bool)
+            or not 1 <= message_id <= 2**63 - 1
+        ):
+            raise chat_system.models.ChatError("invalid message identifier")
+        raw = await self.redis.eval(
+            "if redis.call('ZSCORE',KEYS[1],ARGV[1]) then "
+            "return redis.call('HGET',KEYS[2],ARGV[1]) end; return false",
+            2,
+            self.user_key("inbox", user_id),
+            self.key("messages"),
+            str(message_id),
+        )
+        if raw is None:
+            raise chat_system.models.ChatError("message not found")
+        return message_from_json(raw)
+
     async def sync(self, user_id, after=0, limit=100):
         self._page(after, limit)
         ids = await self.redis.zrangebyscore(
@@ -388,6 +416,8 @@ class RedisBackend:
         self._page(after, limit)
         if user_id not in (await self.get_channel(channel_id)).members:
             raise chat_system.models.ChatError("not a channel member")
+        # Batch both membership checks and message loads. All operations keep
+        # their page bound, including for new members with a long private past.
         found = []
         cursor = after
         while len(found) < limit:
@@ -400,14 +430,20 @@ class RedisBackend:
             )
             if not ids:
                 break
-            for message_id in ids:
-                if (
-                    await self.redis.zscore(self.user_key("inbox", user_id), message_id)
-                    is not None
-                ):
-                    found.append(await self.get_message(message_id))
-                    if len(found) == limit:
-                        break
+            async with self.redis.pipeline(transaction=False) as pipeline:
+                for message_id in ids:
+                    pipeline.zscore(self.user_key("inbox", user_id), message_id)
+                checks = await pipeline.execute()
+            visible = [
+                message_id
+                for message_id, score in zip(ids, checks)
+                if score is not None
+            ]
+            if visible:
+                rows = await self.redis.hmget(
+                    self.key("messages"), visible[: limit - len(found)]
+                )
+                found.extend(message_from_json(row) for row in rows)
             cursor = int(ids[-1])
         return found
 
@@ -621,6 +657,27 @@ class RedisBackend:
                 self.key("node_expiry"),
             )
         )
+
+    async def online_states(self, users):
+        """Check each distinct subscribed user once, using bounded pipelines."""
+        users = list(dict.fromkeys(users))
+        states = {}
+        for start in range(0, len(users), 100):
+            batch = users[start : start + 100]
+            async with self.redis.pipeline(transaction=False) as pipeline:
+                for user in batch:
+                    pipeline.eval(
+                        _ONLINE,
+                        4,
+                        self.user_key("devices", user),
+                        self.key("sessions"),
+                        self.key("nodes"),
+                        self.key("node_expiry"),
+                    )
+                states.update(
+                    zip(batch, (bool(value) for value in await pipeline.execute()))
+                )
+        return states
 
     async def select(self, region=None):
 
