@@ -39,10 +39,7 @@ def main():
     parser.add_argument("--http-requests", type=int, default=500)
     parser.add_argument("--output")
     args = parser.parse_args()
-    if (
-        min(args.queries, args.requests, args.http_requests) < 1
-        or args.queries > 26**5
-    ):
+    if min(args.queries, args.requests, args.http_requests) < 1 or args.queries > 26**5:
         parser.error("positive counts required; queries <= 26^5")
     store = search_autocomplete.Store()
     http = thread = None
@@ -72,9 +69,7 @@ def main():
         for _ in range(args.http_requests):
             before = time.perf_counter()
             with urllib.request.urlopen(url, timeout=5) as response:
-                assert len(json.load(response)["suggestions"]) == min(
-                    5, args.queries
-                )
+                assert len(json.load(response)["suggestions"]) == min(5, args.queries)
             network.append(time.perf_counter() - before)
         report = {
             "queries": args.queries,
@@ -85,17 +80,14 @@ def main():
             "cold_query_ms": round(cold_ms, 4),
             "local_latency": quantiles(timings),
             "http_latency": quantiles(network),
-            "local_requests_per_second": round(
-                args.requests / request_seconds, 2
-            ),
+            "local_requests_per_second": round(args.requests / request_seconds, 2),
             "environment": {
                 "platform": platform.platform(),
                 "python": platform.python_version(),
                 "logical_cpus": os.cpu_count(),
             },
             "scope": (
-                "single-host, sequential requests; HTTP service contains all"
-                " shards"
+                "single-host, sequential requests; HTTP service contains all shards"
             ),
         }
         print(json.dumps(report, indent=2))

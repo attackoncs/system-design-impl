@@ -50,7 +50,11 @@ def test_chapter_ranking_and_prefixes(store):
     assert service.suggest("zzz") == ()
     assert service.suggest("") == ()
     assert service.suggest("witter") == ()
-    assert search_autocomplete.service.relevant_shards(store.snapshot(), "tw") == [0, 1, 2]
+    assert search_autocomplete.service.relevant_shards(store.snapshot(), "tw") == [
+        0,
+        1,
+        2,
+    ]
 
 
 def test_ties_trie_and_phrase_normalization(store):
@@ -60,12 +64,13 @@ def test_ties_trie_and_phrase_normalization(store):
     service = search_autocomplete.Autocomplete(store)
     assert service.suggest("new") == (("new york", 1), ("newark", 1))
     assert service.suggest("new ") == (("new york", 1),)
-    assert search_autocomplete.Trie([("a", 3), ("ab", 2)]).suggest("a") == (("a", 3), ("ab", 2))
+    assert search_autocomplete.Trie([("a", 3), ("ab", 2)]).suggest("a") == (
+        ("a", 3),
+        ("ab", 2),
+    )
 
 
-@pytest.mark.parametrize(
-    "query", [None, 3, "", " ", "é", "hello!", "a1", "a" * 51]
-)
+@pytest.mark.parametrize("query", [None, 3, "", " ", "é", "hello!", "a1", "a" * 51])
 def test_invalid_query(store, query):
     with pytest.raises(ValueError):
         store.record("event", query, 0)
@@ -92,10 +97,7 @@ def test_deduplication_and_conflicts(store):
 
 def test_concurrent_event_retry_counted_once(store):
     with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
-        assert (
-            sum(pool.map(lambda _: store.record("same", "hello", 1), range(50)))
-            == 1
-        )
+        assert sum(pool.map(lambda _: store.record("same", "hello", 1), range(50))) == 1
     store.build(0, 2)
     assert search_autocomplete.Autocomplete(store).suggest("h") == (("hello", 1),)
 
@@ -142,7 +144,10 @@ def test_restart_and_revision_persistence(tmp_path):
     recovered = search_autocomplete.Store(path)
     try:
         assert recovered.view()[:2] == (version, revision)
-        assert search_autocomplete.Autocomplete(recovered).suggest("tw")[0] == ("twitch", 29)
+        assert search_autocomplete.Autocomplete(recovered).suggest("tw")[0] == (
+            "twitch",
+            29,
+        )
     finally:
         recovered.close()
 
@@ -208,9 +213,18 @@ def get(url):
 def test_actual_http_merge_replica_fallback_and_filter(store):
     seed(store)
     store.build(0, 200, 2)
-    with running(search_autocomplete.http.server(search_autocomplete.Autocomplete(store), shard=0)) as a, running(
-        search_autocomplete.http.server(search_autocomplete.Autocomplete(store), shard=1)
-    ) as b:
+    with (
+        running(
+            search_autocomplete.http.server(
+                search_autocomplete.Autocomplete(store), shard=0
+            )
+        ) as a,
+        running(
+            search_autocomplete.http.server(
+                search_autocomplete.Autocomplete(store), shard=1
+            )
+        ) as b,
+    ):
         coordinator = search_autocomplete.http.Coordinator(
             store, {0: ["http://127.0.0.1:1", a], 1: [b]}, timeout=0.1
         )
@@ -222,9 +236,7 @@ def test_actual_http_merge_replica_fallback_and_filter(store):
                 ] == DATA[:5]
                 store.block("twitter")
                 assert (
-                    get(endpoint + "/suggest?prefix=tw")["suggestions"][0][
-                        "query"
-                    ]
+                    get(endpoint + "/suggest?prefix=tw")["suggestions"][0]["query"]
                     == "twitch"
                 )
                 with pytest.raises(urllib.error.HTTPError) as error:
@@ -243,10 +255,21 @@ def test_missing_shard_and_mixed_generation_rejected(store):
     stale.build(0, 200, 2)
     store.build(0, 200, 2)
     current = store.build(0, 200, 2)
-    with running(search_autocomplete.http.server(search_autocomplete.Autocomplete(stale), shard=0)) as wrong, running(
-        search_autocomplete.http.server(search_autocomplete.Autocomplete(store), shard=1)
-    ) as b:
-        coordinator = search_autocomplete.http.Coordinator(store, {0: [wrong], 1: [b]}, timeout=0.1)
+    with (
+        running(
+            search_autocomplete.http.server(
+                search_autocomplete.Autocomplete(stale), shard=0
+            )
+        ) as wrong,
+        running(
+            search_autocomplete.http.server(
+                search_autocomplete.Autocomplete(store), shard=1
+            )
+        ) as b,
+    ):
+        coordinator = search_autocomplete.http.Coordinator(
+            store, {0: [wrong], 1: [b]}, timeout=0.1
+        )
         try:
             with pytest.raises(search_autocomplete.Unavailable):
                 coordinator.suggest(
@@ -276,11 +299,7 @@ def test_independent_process_replica_failure(tmp_path):
     children = []
     env = os.environ.copy()
     env["PYTHONPATH"] = str(pathlib.Path(__file__).resolve().parents[1] / "src")
-    options = (
-        {"creationflags": subprocess.CREATE_NO_WINDOW}
-        if os.name == "nt"
-        else {}
-    )
+    options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
     coordinator = search_autocomplete.http.Coordinator(
         store, {0: [f"http://127.0.0.1:{port}" for port in ports]}, timeout=0.2
     )

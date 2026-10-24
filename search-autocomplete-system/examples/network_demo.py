@@ -28,11 +28,7 @@ def fetch(port):
 
 def main():
     children = []
-    options = (
-        {"creationflags": subprocess.CREATE_NO_WINDOW}
-        if os.name == "nt"
-        else {}
-    )
+    options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
     runtime = pathlib.Path(__file__).resolve().parents[1] / ".runtime"
     runtime.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(dir=runtime) as directory:
@@ -91,10 +87,7 @@ def main():
                         fetch(port)
                         break
                     except OSError:
-                        if (
-                            child.poll() is not None
-                            or time.monotonic() > deadline
-                        ):
+                        if child.poll() is not None or time.monotonic() > deadline:
                             raise RuntimeError("demo process failed to start")
                         time.sleep(0.05)
             print("Two-shard result:", fetch(ports[3])["suggestions"])
