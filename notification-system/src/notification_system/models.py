@@ -49,6 +49,8 @@ VALID_TRANSITIONS: dict[NotificationStatus, set[NotificationStatus]] = {
     NotificationStatus.SENDING: {
         NotificationStatus.SENT,
         NotificationStatus.FAILED,
+        NotificationStatus.QUEUED,
+        NotificationStatus.UNSUBSCRIBED,
     },
     NotificationStatus.SENT: {
         NotificationStatus.DELIVERED,
@@ -72,6 +74,7 @@ class NotificationRequest:
     template_id: Optional[str] = None
     template_params: dict[str, str] = dataclasses.field(default_factory=dict)
     metadata: dict[str, str] = dataclasses.field(default_factory=dict)
+    event_id: Optional[str] = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -96,6 +99,12 @@ class NotificationTask:
         default_factory=lambda: datetime.datetime.now(datetime.timezone.utc)
     )
     scheduled_at: Optional[datetime.datetime] = None
+    # Resolved payload and endpoints are captured before accepting the request.
+    endpoints: tuple[str, ...] = ()
+    completed_endpoints: tuple[str, ...] = ()
+    rejected_endpoints: tuple[str, ...] = ()
+    endpoint: Optional[str] = None
+    receipt: Optional[str] = dataclasses.field(default=None, compare=False, repr=False)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -119,6 +128,8 @@ class ContactInfo:
     email: Optional[str] = None
     phone: Optional[str] = None
     device_tokens: list[str] = dataclasses.field(default_factory=list)
+    # Optional platform registration; unmapped legacy tokens remain usable.
+    device_channels: dict[str, Channel] = dataclasses.field(default_factory=dict)
 
 
 @dataclasses.dataclass(frozen=True)

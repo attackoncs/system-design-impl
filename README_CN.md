@@ -14,7 +14,7 @@
 | 08 | [Unique ID Generator](./unique-id-generator/) | ✅ 完成 | Twitter Snowflake 算法、可配置位布局、线程安全、ID 解析 |
 | 09 | [URL Shortener](./url-shortener/) | ✅ 完成 | 可插拔哈希策略、Base-62 转换、点击追踪、标准库 HTTP 演示 |
 | 10 | [Web Crawler](./web-crawler/) | ✅ 完成 | 持久调度恢复、自适应重爬、主机分片路由、DNS 缓存与有界下载 |
-| 11 | [Notification System](./notification-system/) | ✅ 完成 | 多渠道异步流水线、限流、去重、指数退避重试、生命周期追踪 |
+| 11 | [Notification System](./notification-system/) | ✅ 完成 | 持久通道队列、事件去重、租约恢复、计划重试与鉴权演示（模拟供应商） |
 | 12 | [News Feed System](./news-feed-system/) | ✅ 完成 | 推拉混合扇出、异步工作池、五层缓存架构、可插拔社交图谱 |
 | 13 | [Chat System](./chat-system/) | ✅ 完成 | 单聊群聊、Redis 多节点路由、Sentinel 主备切换、共享在线状态、持久化推送重试、重连同步及容量故障实测 |
 | 14 | [Search Autocomplete](./search-autocomplete-system/) | ✅ 完成 | 前缀树 Top 5、批聚合快照、即时过滤、范围分片、HTTP 副本恢复 |

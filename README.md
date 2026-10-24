@@ -16,7 +16,7 @@ Production-quality Python implementations of system design concepts from the boo
 | 08 | [Unique ID Generator](./unique-id-generator/) | ✅ Done | Twitter Snowflake algorithm, configurable bit layout, thread-safe, ID parsing |
 | 09 | [URL Shortener](./url-shortener/) | ✅ Done | Pluggable hash strategies, base-62 conversion, click tracking, stdlib HTTP demo |
 | 10 | [Web Crawler](./web-crawler/) | ✅ Done | Durable crawl recovery, adaptive recrawling, host partition routing, DNS cache and bounded downloads |
-| 11 | [Notification System](./notification-system/) | ✅ Done | Multi-channel async pipeline, rate limiting, deduplication, exponential-backoff retry, lifecycle tracking |
+| 11 | [Notification System](./notification-system/) | ✅ Done | Durable per-channel queues, event deduplication, lease recovery, scheduled retry and authenticated demo (simulated providers) |
 | 12 | [News Feed System](./news-feed-system/) | ✅ Done | Hybrid push/pull fanout, async workers, five-layer cache architecture, pluggable social graph |
 | 13 | [Chat System](./chat-system/) | ✅ Done | Direct/group chat, Redis multi-node routing, Sentinel failover, shared presence, durable push retries, reconnect sync, measured load/fault tests |
 | 14 | [Search Autocomplete](./search-autocomplete-system/) | ✅ Done | Cached top-five trie, batch snapshots, filtering, range shards, HTTP replica recovery |

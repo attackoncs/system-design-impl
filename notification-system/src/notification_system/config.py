@@ -7,8 +7,20 @@ defaults and __post_init__ validation.
 from __future__ import annotations
 
 import dataclasses
+import math
 
 import notification_system.models
+
+
+def _positive(name, value):
+    if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be positive and finite")
+
+
+def _integer(name, value, minimum=1):
+    if type(value) is not int or value < minimum:
+        rule = "non-negative" if minimum == 0 else "positive"
+        raise ValueError(f"{name} must be {rule} integer")
 
 
 @dataclasses.dataclass
@@ -17,6 +29,10 @@ class RateLimitConfig:
 
     max_count: int = 100
     window_seconds: float = 3600.0
+
+    def __post_init__(self):
+        _integer("max_count", self.max_count)
+        _positive("window_seconds", self.window_seconds)
 
 
 @dataclasses.dataclass
@@ -27,6 +43,17 @@ class RetryConfig:
     base_delay: float = 1.0
     max_delay: float = 300.0
     jitter_factor: float = 0.1
+
+    def __post_init__(self):
+        _integer("max_retries", self.max_retries, 0)
+        _positive("base_delay", self.base_delay)
+        _positive("max_delay", self.max_delay)
+        if (
+            type(self.jitter_factor) not in (int, float)
+            or not math.isfinite(self.jitter_factor)
+            or not 0 <= self.jitter_factor <= 1
+        ):
+            raise ValueError("jitter_factor must be finite and between 0 and 1")
 
 
 @dataclasses.dataclass
@@ -76,26 +103,23 @@ class NotificationConfig:
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
-        if self.queue_max_depth <= 0:
-            raise ValueError(
-                f"queue_max_depth must be positive, got {self.queue_max_depth}"
-            )
-        if self.workers_per_channel <= 0:
-            raise ValueError(
-                f"workers_per_channel must be positive, got {self.workers_per_channel}"
-            )
-        if self.dedup_window_seconds <= 0:
-            raise ValueError(
-                "dedup_window_seconds must be positive, got"
-                f" {self.dedup_window_seconds}"
-            )
-        if self.retry.max_retries < 0:
-            raise ValueError(
-                f"max_retries must be non-negative, got {self.retry.max_retries}"
-            )
-        if self.retry.base_delay <= 0:
-            raise ValueError(
-                f"base_delay must be positive, got {self.retry.base_delay}"
-            )
-        if self.retry.max_delay <= 0:
-            raise ValueError(f"max_delay must be positive, got {self.retry.max_delay}")
+        _integer("queue_max_depth", self.queue_max_depth)
+        _integer("workers_per_channel", self.workers_per_channel)
+        _positive("dedup_window_seconds", self.dedup_window_seconds)
+        _positive("log_retention_seconds", self.log_retention_seconds)
+        if not isinstance(self.retry, RetryConfig):
+            raise ValueError("retry must be RetryConfig")
+        self.retry.__post_init__()
+        if not isinstance(self.global_rate_limit, RateLimitConfig):
+            raise ValueError("global_rate_limit must be RateLimitConfig")
+        self.global_rate_limit.__post_init__()
+        if not isinstance(self.per_channel_rate_limits, dict):
+            raise ValueError("per_channel_rate_limits must be a dictionary")
+        for channel, limit in self.per_channel_rate_limits.items():
+            if not isinstance(
+                channel, notification_system.models.Channel
+            ) or not isinstance(limit, RateLimitConfig):
+                raise ValueError(
+                    "per_channel_rate_limits must map Channel to RateLimitConfig"
+                )
+            limit.__post_init__()

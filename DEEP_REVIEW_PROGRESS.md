@@ -14,7 +14,7 @@
 | 08 | [Unique ID Generator](unique-id-generator/) | 完成：原书核对，94 项测试通过 |
 | 09 | [URL Shortener](url-shortener/) | 完成核心链路核对：109 项测试通过；部署扩展见章节记录 |
 | 10 | [Web Crawler](web-crawler/) | 完成核心链路核对：213 项测试通过；部署边界见章节记录 |
-| 11 | [Notification System](notification-system/) | 待逐项深入审查 |
+| 11 | [Notification System](notification-system/) | 完成核心链路核对：447 项测试通过；外部渠道和部署边界见章节记录 |
 | 12 | [News Feed System](news-feed-system/) | 待逐项深入审查 |
 | 13 | [Chat System](chat-system/) | 待逐项深入审查 |
 | 14 | [Search Autocomplete](search-autocomplete-system/) | 待逐项深入审查 |
@@ -102,3 +102,10 @@
 继续完成持久调度恢复、原子 HTML 快照及去重、有限窗口主机调度、有界重试和自适应周期重爬；接通一致性哈希分片与持久投递回调。补齐有界 DNS TTL/LRU、保留 Host/SNI 的 HTTP(S) 连接、响应大小与总 deadline、重定向重新检查 robots。修复相同 HTML 不同基准 URL 的链接漏发现、完成确认与礼貌时间非原子、并发/取消时任务及内容声明处理。
 
 完整测试 **213 passed（12.69 秒）**，Ruff E9/F 通过。中英文 README 与设计文档同步；详见 [章节核对](web-crawler/docs/chapter10-review.md)。五年保留清理、复制/分片控制面、拓扑安全移交、动态渲染及互联网规模容量均明确为部署/扩展边界，无生产容量承诺。
+
+
+## 第 11 章：通知系统
+
+原书核对后接通持久接受、租约领取/续租/恢复、队列延迟重试和审计；事件 ID 唯一账本与接受任务同事务，终态后保留，可跨实例与重启去重。修复模板正文未应用、端点快照与平台多设备、worker/provider/claim 异常退出、队列过载丢重试、取消领取竞态和旧凭据复活任务。混合设备失败中永久拒绝独立记录，暂时失败继续重试。接受和投递前检查退订，HTTP 示例具有鉴权并使用持续事件循环及 live worker。
+
+完整项目测试 **447 passed（47.79 秒）**，Ruff E9/F、格式和 git diff --check 通过；中英文 README、设计和 [章节核对](notification-system/docs/chapter11-review.md) 已同步。Provider 使用模拟实现，不做真实第三方通知发送；SQLite 是本地至少一次参考方案，联系人/偏好/模板和跨进程限流、供应商幂等、自动扩容与容灾仍需部署集成。未宣称千万条日容量或恰好一次送达。

@@ -39,10 +39,12 @@ class SlidingWindowRateLimiter:
         self._clock = clock or time.monotonic
         # (user_id, channel) -> list of timestamps
         self._channel_windows: dict[
-            tuple[str, notification_system.models.Channel], list[float]
-        ] = collections.defaultdict(list)
+            tuple[str, notification_system.models.Channel], collections.deque[float]
+        ] = collections.defaultdict(collections.deque)
         # user_id -> list of timestamps (global across channels)
-        self._global_windows: dict[str, list[float]] = collections.defaultdict(list)
+        self._global_windows: dict[str, collections.deque[float]] = (
+            collections.defaultdict(collections.deque)
+        )
 
     def check(self, user_id: str, channel: notification_system.models.Channel) -> None:
         """Check if a notification is allowed under rate limits.
@@ -93,7 +95,7 @@ class SlidingWindowRateLimiter:
         self._channel_windows[(user_id, channel)].append(now)
         self._global_windows[user_id].append(now)
 
-    def _prune(self, timestamps: list[float], cutoff: float) -> None:
+    def _prune(self, timestamps: collections.deque[float], cutoff: float) -> None:
         """Remove timestamps older than the cutoff."""
-        while timestamps and timestamps[0] < cutoff:
-            timestamps.pop(0)
+        while timestamps and timestamps[0] <= cutoff:
+            timestamps.popleft()

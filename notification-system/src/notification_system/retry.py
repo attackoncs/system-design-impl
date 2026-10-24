@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import dataclasses
 import logging
 import random
 
@@ -57,7 +58,12 @@ class RetryHandler:
         Returns:
             Delay in seconds.
         """
-        exponential = self._config.base_delay * (2**attempt)
+        # Clamp the exponent before constructing huge integers or overflowing.
+        if attempt < 0:
+            raise ValueError("attempt must be non-negative")
+        exponential = min(
+            self._config.base_delay * (2 ** min(attempt, 1023)), self._config.max_delay
+        )
         jitter = random.uniform(0, self._config.jitter_factor * exponential)
         return min(exponential + jitter, self._config.max_delay)
 
@@ -65,6 +71,8 @@ class RetryHandler:
         self,
         task: notification_system.models.NotificationTask,
         error: notification_system.exceptions.DeliveryError,
+        *,
+        defer: bool = False,
     ) -> None:
         """Handle a failed delivery attempt.
 
@@ -76,7 +84,8 @@ class RetryHandler:
             error: The delivery error with retryable flag.
         """
         # Log the retry attempt
-        self._log.record_attempt(
+        await asyncio.to_thread(
+            self._log.record_attempt,
             notification_id=task.notification_id,
             recipient_id=task.request.recipient_id,
             channel=task.channel,
@@ -88,6 +97,9 @@ class RetryHandler:
 
         # Non-retryable errors: immediate permanent failure
         if not error.retryable:
+            await self._queue.ack(
+                task, notification_system.models.NotificationStatus.FAILED, error.reason
+            )
             self._tracker.record(
                 task.notification_id,
                 task.channel,
@@ -102,6 +114,9 @@ class RetryHandler:
 
         # Check max retries
         if task.attempt >= self._config.max_retries:
+            await self._queue.ack(
+                task, notification_system.models.NotificationStatus.FAILED, error.reason
+            )
             self._tracker.record(
                 task.notification_id,
                 task.channel,
@@ -122,15 +137,32 @@ class RetryHandler:
             delay,
             task.attempt + 1,
         )
-        await asyncio.sleep(delay)
+        if not defer:
+            await asyncio.sleep(delay)
 
         # Re-enqueue with incremented attempt counter
-        retry_task = notification_system.models.NotificationTask(
-            notification_id=task.notification_id,
-            request=task.request,
-            channel=task.channel,
+        retry_task = dataclasses.replace(
+            task,
             attempt=task.attempt + 1,
-            created_at=task.created_at,
             scheduled_at=datetime.datetime.now(datetime.timezone.utc),
         )
-        await self._queue.enqueue(retry_task)
+        await self._queue.reschedule(retry_task, delay if defer else 0.0)
+        current = self._tracker.get_current_status(task.notification_id)
+        if current == notification_system.models.NotificationStatus.SENDING:
+            self._tracker.record(
+                task.notification_id,
+                task.channel,
+                notification_system.models.NotificationStatus.QUEUED,
+            )
+
+    async def record_success(self, task):
+        """Record successful provider acceptance as well as failed attempts."""
+        await asyncio.to_thread(
+            self._log.record_attempt,
+            task.notification_id,
+            task.request.recipient_id,
+            task.channel,
+            task.request.body[:100],
+            notification_system.models.NotificationStatus.SENT,
+            task.attempt + 1,
+        )

@@ -75,7 +75,8 @@ class TestValidTransitions:
         assert notification_system.models.VALID_TRANSITIONS[notification_system.models.NotificationStatus.QUEUED] == expected
 
     def test_sending_transitions(self):
-        expected = {notification_system.models.NotificationStatus.SENT, notification_system.models.NotificationStatus.FAILED}
+        expected = {notification_system.models.NotificationStatus.SENT, notification_system.models.NotificationStatus.FAILED,
+            notification_system.models.NotificationStatus.QUEUED, notification_system.models.NotificationStatus.UNSUBSCRIBED}
         assert notification_system.models.VALID_TRANSITIONS[notification_system.models.NotificationStatus.SENDING] == expected
 
     def test_sent_transitions(self):

@@ -12,6 +12,7 @@ from notification_system.config import (
 )
 from notification_system.contacts import ContactInfoStore
 from notification_system.dedup import Deduplicator
+from notification_system.durable import SQLiteMessageQueue, SQLiteNotificationLog
 from notification_system.exceptions import (
     DeliveryError,
     DuplicateNotificationError,
@@ -74,6 +75,8 @@ __all__ = [
     "NotificationService",
     # Queue
     "MessageQueue",
+    "SQLiteMessageQueue",
+    "SQLiteNotificationLog",
     # Worker
     "Worker",
     "WorkerPool",

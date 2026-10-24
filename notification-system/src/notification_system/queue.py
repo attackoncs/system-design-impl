@@ -1,86 +1,116 @@
-"""Per-channel message queue system using asyncio.Queue.
+"""Bounded channel queues with reservations and delayed retry scheduling.
 
-Maintains separate asyncio.Queue instances for each notification channel.
-Supports configurable max depth per channel and provides depth/pending count
-queries.
+Low-level dequeue removes an item. Workers use claim/ack instead, preserving a
+capacity reservation until delivery finishes or the item is rescheduled.
 """
 
 from __future__ import annotations
 
 import asyncio
+import datetime
+import heapq
+import itertools
+import time
+import uuid
 from typing import Optional
 
-import notification_system.exceptions
-import notification_system.models
+from notification_system.exceptions import DuplicateNotificationError, QueueFullError
+from notification_system.models import Channel, NotificationTask
 
 
 class MessageQueue:
-    """Per-channel message queue system using asyncio.Queue.
+    """In-memory queues for one asyncio event loop; restart loses their data."""
 
-    Maintains separate asyncio.Queue instances for each notification channel.
-    Supports configurable max depth per channel and provides depth/pending
-    count queries.
-    """
+    lease_seconds = 30.0
 
     def __init__(self, max_depth: int = 10000) -> None:
+        if type(max_depth) is not int or max_depth <= 0:
+            raise ValueError("max_depth must be a positive integer")
         self._max_depth = max_depth
-        self._queues: dict[
-            notification_system.models.Channel,
-            asyncio.Queue[notification_system.models.NotificationTask],
-        ] = {
-            channel: asyncio.Queue(maxsize=max_depth)
-            for channel in notification_system.models.Channel
-        }
+        self._queues = {channel: [] for channel in Channel}
+        self._changed = {channel: asyncio.Event() for channel in Channel}
+        self._sequence = itertools.count()
+        self._claims: dict[str, NotificationTask] = {}
+        self._events: dict[tuple[str, Channel, str], str] = {}
 
-    async def enqueue(self, task: notification_system.models.NotificationTask) -> None:
-        """Enqueue a notification task to the appropriate channel queue.
+    def _insert(self, task: NotificationTask, delay: float = 0.0) -> None:
+        heapq.heappush(
+            self._queues[task.channel],
+            (time.monotonic() + max(0.0, delay), next(self._sequence), task),
+        )
+        self._changed[task.channel].set()
 
-        Args:
-            task: The notification task to enqueue.
+    async def enqueue(self, task: NotificationTask) -> None:
+        event_key = (task.request.recipient_id, task.channel, task.request.event_id)
+        if task.request.event_id is not None and event_key in self._events:
+            raise DuplicateNotificationError(self._events[event_key])
+        if self.is_full(task.channel):
+            raise QueueFullError(task.channel.value, self._max_depth)
+        delay = 0.0
+        if task.scheduled_at is not None:
+            delay = task.scheduled_at.timestamp() - time.time()
+        self._insert(task, delay)
+        if task.request.event_id is not None:
+            self._events[event_key] = task.notification_id
 
-        Raises:
-            QueueFullError: If the channel queue is at max capacity.
-        """
-        queue = self._queues[task.channel]
-        if queue.full():
-            raise notification_system.exceptions.QueueFullError(
-                task.channel.value, self._max_depth
-            )
-        await queue.put(task)
+    async def dequeue(self, channel: Channel) -> NotificationTask:
+        while True:
+            task = self.dequeue_nowait(channel)
+            if task is not None:
+                return task
+            changed = self._changed[channel]
+            changed.clear()
+            pending = self._queues[channel]
+            timeout = max(0.001, pending[0][0] - time.monotonic()) if pending else None
+            try:
+                await asyncio.wait_for(changed.wait(), timeout)
+            except asyncio.TimeoutError:
+                pass
 
-    async def dequeue(
-        self, channel: notification_system.models.Channel
-    ) -> notification_system.models.NotificationTask:
-        """Dequeue the next task from a channel queue (blocks if empty).
+    def dequeue_nowait(self, channel: Channel) -> Optional[NotificationTask]:
+        pending = self._queues[channel]
+        if pending and pending[0][0] <= time.monotonic():
+            return heapq.heappop(pending)[2]
+        return None
 
-        Args:
-            channel: The channel to dequeue from.
+    async def claim(self, channel: Channel) -> NotificationTask:
+        task = await self.dequeue(channel)
+        task.receipt = uuid.uuid4().hex
+        self._claims[task.receipt] = task
+        return task
 
-        Returns:
-            The next NotificationTask in FIFO order.
-        """
-        return await self._queues[channel].get()
+    async def ack(self, task: NotificationTask, status=None, details=None) -> None:
+        """Release the reservation after terminal delivery."""
+        if task.receipt is not None and task.receipt not in self._claims:
+            raise RuntimeError("Notification claim was already released")
+        self._claims.pop(task.receipt, None)
 
-    def dequeue_nowait(
-        self, channel: notification_system.models.Channel
-    ) -> Optional[notification_system.models.NotificationTask]:
-        """Non-blocking dequeue.
+    async def renew(self, task: NotificationTask) -> bool:
+        return task.receipt in self._claims
 
-        Returns None if queue is empty.
-        """
-        try:
-            return self._queues[channel].get_nowait()
-        except asyncio.QueueEmpty:
-            return None
+    async def reschedule(self, task: NotificationTask, delay: float = 0.0) -> None:
+        """Transfer an existing reservation to a delayed item without overflow."""
+        if task.receipt is not None and task.receipt not in self._claims:
+            raise RuntimeError("Notification claim was already released")
+        owned = self._claims.pop(task.receipt, None)
+        if owned is None and self.is_full(task.channel):
+            raise QueueFullError(task.channel.value, self._max_depth)
+        task.scheduled_at = datetime.datetime.now(
+            datetime.timezone.utc
+        ) + datetime.timedelta(seconds=delay)
+        self._insert(task, delay)
 
-    def depth(self, channel: notification_system.models.Channel) -> int:
-        """Current number of pending tasks in a channel queue."""
-        return self._queues[channel].qsize()
+    async def event_notification_id(self, recipient_id, channel, event_id):
+        return self._events.get((recipient_id, channel, event_id))
 
-    def is_full(self, channel: notification_system.models.Channel) -> bool:
-        """Check if a channel queue is at max capacity."""
-        return self._queues[channel].full()
+    def depth(self, channel: Channel) -> int:
+        return len(self._queues[channel])
 
-    def is_empty(self, channel: notification_system.models.Channel) -> bool:
-        """Check if a channel queue has no pending tasks."""
-        return self._queues[channel].empty()
+    def in_flight(self, channel: Channel) -> int:
+        return sum(task.channel == channel for task in self._claims.values())
+
+    def is_full(self, channel: Channel) -> bool:
+        return self.depth(channel) + self.in_flight(channel) >= self._max_depth
+
+    def is_empty(self, channel: Channel) -> bool:
+        return self.depth(channel) == 0

@@ -1,348 +1,111 @@
 # Notification System
 
-An asyncio-based notification delivery library implementing an event-driven pipeline with multi-channel support, rate limiting, deduplication, retry with exponential backoff, and full lifecycle event tracking.
+A Python 3.9+ asyncio reference implementation of chapter 11 of `System Design Interview.md`. It supports iOS push, Android push, SMS and email through a pluggable `Provider` interface. The bundled provider **simulates delivery**; it does not contact APNs, FCM, SMS or email services.
 
-**Zero runtime dependencies** — built entirely on the Python standard library.
+[中文说明](README_CN.md) · [Design](docs/design.md) · [Chapter coverage](docs/chapter11-review.md)
 
 ## Installation
 
-```bash
-# Install in development mode with test dependencies
-pip install -e .[dev]
+```powershell
+python -m pip install -e ".[dev]"
 ```
 
-Requires Python >= 3.9.
+There are no third-party runtime dependencies.
 
-## Quick Start
+## Recoverable pipeline example
+
+Run from this project directory after installation:
 
 ```python
 import asyncio
 from notification_system import (
-    NotificationService,
-    NotificationRequest,
-    Channel,
-    ContactInfo,
+    Channel, ContactInfo, NotificationLog, NotificationRequest,
+    NotificationService, NotificationStatus, SimulatedProvider,
+    SQLiteMessageQueue, SQLiteNotificationLog,
 )
 
 async def main():
-    # Create the service with default configuration
-    service = NotificationService()
-
-    # Register contact info for the recipient
-    service.contacts.set(ContactInfo(
-        user_id="user_123",
-        email="user@example.com",
-        phone="+1234567890",
-        device_tokens=["token_abc"],
-    ))
-
-    # Send a notification
-    request = NotificationRequest(
-        recipient_id="user_123",
-        channel=Channel.EMAIL,
-        title="Welcome!",
-        body="Thanks for signing up.",
+    path = "notifications.sqlite3"
+    service = NotificationService(queue=SQLiteMessageQueue(path))
+    service.contacts.set(ContactInfo("user_1", email="user@example.com"))
+    audit = NotificationLog(SQLiteNotificationLog(path))
+    pool = service.create_worker_pool(
+        {Channel.EMAIL: SimulatedProvider(Channel.EMAIL)}, audit,
+        delivery_timeout=10.0,
     )
-    notification_id = await service.send(request)
-    print(f"Sent: {notification_id}")
-
-    # Check status
-    status = service.tracker.get_current_status(notification_id)
-    print(f"Status: {status}")
-
-asyncio.run(main())
-```
-
-## API Overview
-
-### Core Classes
-
-| Class | Description |
-|-------|-------------|
-| `NotificationService` | Central orchestrator — validate → preferences → rate limit → dedup → enqueue |
-| `NotificationConfig` | System configuration (queue depth, workers, rate limits, retry, dedup) |
-| `NotificationRequest` | Immutable request dataclass (recipient, channel, title, body, template) |
-| `Channel` | Enum: `IOS_PUSH`, `ANDROID_PUSH`, `SMS`, `EMAIL` |
-| `NotificationStatus` | Lifecycle states: CREATED → QUEUED → SENDING → SENT → DELIVERED → CLICKED |
-
-### Pipeline Components
-
-| Class | Description |
-|-------|-------------|
-| `MessageQueue` | Per-channel asyncio.Queue with configurable max depth |
-| `WorkerPool` | Async worker tasks consuming from queues and invoking providers |
-| `SlidingWindowRateLimiter` | Per-user, per-channel and global rate limiting |
-| `Deduplicator` | Content-hash based dedup with configurable TTL |
-| `RetryHandler` | Exponential backoff + jitter for failed deliveries |
-
-### Supporting Components
-
-| Class | Description |
-|-------|-------------|
-| `Provider` / `SimulatedProvider` | Abstract delivery interface + test implementation |
-| `NotificationTemplate` / `TemplateRegistry` | `{placeholder}` substitution templates |
-| `NotificationSettings` | Per-user, per-channel opt-in/opt-out preferences |
-| `ContactInfoStore` | User contact info (email, phone, device tokens) |
-| `EventTracker` | State machine lifecycle tracking + analytics |
-| `NotificationLog` / `InMemoryNotificationLog` | Persistent notification attempt logging |
-
-### Exceptions
-
-All exceptions inherit from `NotificationError`:
-
-- `ValidationError` — invalid request (missing contact, opted out, bad template)
-- `QueueFullError` — channel queue at max capacity
-- `RateLimitExceededError` — rate limit exceeded for recipient
-- `DuplicateNotificationError` — duplicate content suppressed
-- `TemplateRenderError` — template missing required placeholders
-- `DeliveryError` — provider delivery failure
-
-## Configuration
-
-```python
-from notification_system import NotificationConfig, RateLimitConfig, RetryConfig, Channel
-
-config = NotificationConfig(
-    # Queue settings
-    queue_max_depth=10000,
-    workers_per_channel=3,
-
-    # Per-channel rate limits
-    per_channel_rate_limits={
-        Channel.EMAIL: RateLimitConfig(max_count=20, window_seconds=3600.0),
-        Channel.SMS: RateLimitConfig(max_count=10, window_seconds=3600.0),
-        Channel.IOS_PUSH: RateLimitConfig(max_count=50, window_seconds=3600.0),
-        Channel.ANDROID_PUSH: RateLimitConfig(max_count=50, window_seconds=3600.0),
-    },
-    global_rate_limit=RateLimitConfig(max_count=100, window_seconds=3600.0),
-
-    # Deduplication window
-    dedup_window_seconds=300.0,
-
-    # Retry settings
-    retry=RetryConfig(
-        max_retries=3,
-        base_delay=1.0,
-        max_delay=300.0,
-        jitter_factor=0.1,
-    ),
-
-    # Log retention
-    log_retention_seconds=86400.0 * 30,  # 30 days
-)
-
-service = NotificationService(config=config)
-```
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                    Public API (NotificationService)                       │
-│         validate → preferences → rate limit → dedup → enqueue            │
-├─────────────────────────────────────────────────────────────────────────┤
-│  Message Queues (per-channel)     │  Worker Pool (per-channel)           │
-│  asyncio.Queue × 4 channels      │  asyncio.Task workers × N            │
-├───────────────────────────────────┼──────────────────────────────────────┤
-│  Rate Limiter          │  Deduplicator         │  Retry Handler          │
-│  (sliding window)      │  (content-hash TTL)   │  (exp backoff + jitter) │
-├────────────────────────┼───────────────────────┼─────────────────────────┤
-│  Provider Interface (ABC)         │  Simulated Provider (testing)        │
-│  APNs / FCM / SMS / Email         │  configurable latency + failure      │
-├─────────────────────────────────────────────────────────────────────────┤
-│  Templates       │  Settings       │  Contact Info    │  Event Tracker   │
-│  (placeholder)   │  (opt-in/out)   │  (email/phone/   │  (state machine) │
-│                  │                 │   device tokens)  │                  │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-### Pipeline Flow
-
-1. **Validate** — Verify recipient has contact info for the channel
-2. **Preferences** — Check user hasn't opted out of the channel
-3. **Rate Limit** — Enforce per-channel and global frequency caps
-4. **Dedup** — Suppress duplicate content within the TTL window
-5. **Enqueue** — Place task in the per-channel asyncio.Queue
-6. **Worker Delivery** — Workers pull tasks, invoke providers, handle retries
-
-## Using Templates
-
-```python
-import asyncio
-from notification_system import (
-    NotificationService,
-    NotificationRequest,
-    NotificationTemplate,
-    Channel,
-    ContactInfo,
-)
-
-async def main():
-    service = NotificationService()
-
-    # Register a template
-    template = NotificationTemplate(
-        template_id="order_shipped",
-        title="Order {order_id} Shipped",
-        body="Hi {name}, your order is on its way!",
-    )
-    service.templates.register(template)
-
-    # Register contact info
-    service.contacts.set(ContactInfo(user_id="user_1", email="a@b.com"))
-
-    # Send using template
-    request = NotificationRequest(
-        recipient_id="user_1",
-        channel=Channel.EMAIL,
-        template_id="order_shipped",
-        template_params={"order_id": "ORD-42", "name": "Alice"},
-    )
-    nid = await service.send(request)
-    print(f"Sent: {nid}")
-
-asyncio.run(main())
-```
-
-## Running with Worker Pool
-
-```python
-import asyncio
-from notification_system import (
-    NotificationService,
-    NotificationConfig,
-    NotificationRequest,
-    NotificationLog,
-    InMemoryNotificationLog,
-    Channel,
-    ContactInfo,
-    SimulatedProvider,
-    WorkerPool,
-    RetryHandler,
-)
-
-async def main():
-    config = NotificationConfig(workers_per_channel=2)
-    service = NotificationService(config=config)
-
-    # Set up contact info
-    service.contacts.set(ContactInfo(
-        user_id="user_1",
-        email="user@example.com",
-        device_tokens=["token_1"],
-    ))
-
-    # Create providers for each channel
-    providers = {
-        channel: SimulatedProvider(channel=channel, latency_ms=20.0)
-        for channel in Channel
-    }
-
-    # Create retry handler and worker pool
-    log = NotificationLog(backend=InMemoryNotificationLog())
-    retry_handler = RetryHandler(
-        config=config.retry,
-        queue=service.queue,
-        tracker=service.tracker,
-        notification_log=log,
-    )
-    pool = WorkerPool(
-        queue=service.queue,
-        providers=providers,
-        tracker=service.tracker,
-        retry_handler=retry_handler,
-        workers_per_channel=config.workers_per_channel,
-    )
-
-    # Start workers
     await pool.start()
-
-    # Send notifications
-    nid = await service.send(NotificationRequest(
-        recipient_id="user_1",
-        channel=Channel.EMAIL,
-        title="Hello",
-        body="World",
-    ))
-    print(f"Queued: {nid}")
-
-    # Allow time for delivery
-    await asyncio.sleep(0.5)
-
-    # Check final status
-    status = service.tracker.get_current_status(nid)
-    print(f"Final status: {status}")
-
-    # Graceful shutdown
-    await pool.stop()
+    try:
+        notification_id = await service.send(NotificationRequest(
+            "user_1", Channel.EMAIL, title="Welcome", body="Hello!",
+            event_id="signup:user_1",  # stable identifier from the producer
+        ))
+        async def wait_for_acceptance():
+            while service.tracker.get_current_status(notification_id) != NotificationStatus.SENT:
+                await asyncio.sleep(0.01)
+        await asyncio.wait_for(wait_for_acceptance(), 5.0)
+        print(notification_id, audit.query(notification_id=notification_id))
+    finally:
+        await pool.stop()
 
 asyncio.run(main())
 ```
 
-## Running Tests
+`send()` accepts and queues work. Workers must be started separately. `SENT` means the provider accepted the request; delivery to the device and user clicks require callbacks. Replaying this example with the same database and `event_id` raises `DuplicateNotificationError` containing the original notification ID.
 
-```bash
-# Run all tests
-pytest
+Use `NotificationService()` for a bounded in-memory queue. Its tasks and deduplication ledger disappear when the process exits.
 
-# Run with verbose output
-pytest -v
+## Implemented behavior
 
-# Run a specific test file
-pytest tests/test_service.py
+- Validate request types, basic email/phone formats, content size and registered endpoints. Resolve templates once and snapshot rendered content, metadata and endpoints before acceptance.
+- Keep separate channel queues and configurable worker counts. Each worker sends sequentially to all registered device endpoints; other workers run concurrently. Register the platform with `contacts.add_device_token(user, token, Channel.IOS_PUSH)` or `Channel.ANDROID_PUSH`. Legacy untyped tokens remain eligible for either push channel.
+- Check preferences at acceptance and immediately before provider calls, including retries. An opt-out can suppress pending work; it cannot retract a provider call already made.
+- Apply per-user per-channel limits and a per-user cross-channel `global_rate_limit`. The latter is not a system-wide or cross-process quota. Rejected enqueue attempts do not consume quota or content deduplication entries.
+- Deduplicate explicit `event_id` by `(event_id, recipient_id, channel)`. The SQLite ledger is committed atomically with the job and acceptance audit row, survives completion/restart, and supports concurrent queue instances. First acceptance wins; even a changed replay payload raises the original ID. Distinct events may contain identical content. Without `event_id`, content-hash TTL suppression is local to one service instance.
+- Preserve queue capacity reservations while workers own tasks. Delay retries in the queue with exponential backoff and jitter, rather than sleeping in the worker. Provider exceptions and timeouts enter this retry path. Temporary queue-claim errors use interruptible backoff.
+- Retry failed devices without resending successful devices on normal retry. Permanently rejected devices are tracked separately; temporary failures continue retrying and the final aggregate result remains `FAILED` if any device was permanently rejected.
+- Recover SQLite jobs with renewable, fenced leases. Cancellation returns owned jobs; expired leases recover work after process death. Scheduled jobs use persisted `available` timestamps and do not block ready jobs.
+- Retain acceptance, attempt and terminal audit history with query/retention APIs. `tracker` is an in-memory state machine; its event history is not a durable delivery ledger.
 
-# Run property-based tests only
-pytest tests/test_properties.py
+## Authenticated HTTP demo
 
-# Run with coverage (if pytest-cov installed)
-pytest --cov=notification_system
+```powershell
+$env:NOTIFICATION_API_KEY = 'local-demo-key'
+python examples/demo_server.py --database notifications.sqlite3 --port 8000
 ```
 
-## Running the Demo Server
+The server binds to `127.0.0.1`. It starts a live asyncio worker pool on its own event-loop thread and uses simulated providers. Every endpoint requires `Authorization: Bearer local-demo-key`; JSON bodies must be objects, at most 1 MiB, with `Content-Length`.
 
-```bash
-# Start the HTTP demo server (default port 8080)
-python examples/demo_server.py
-
-# Available endpoints:
-# POST /notifications         - Send a notification
-# GET  /notifications/<id>    - Get notification status
-# GET  /analytics             - Get aggregate analytics
-# GET  /settings/<user_id>    - Get user preferences
-# PUT  /settings/<user_id>    - Update user preferences
-# POST /templates             - Register a template
-# GET  /templates             - List templates
+```powershell
+$headers = @{ Authorization = 'Bearer local-demo-key' }
+$body = @{recipient_id='user_1'; channel='email'; body='Hello'; event_id='demo-001'} | ConvertTo-Json
+Invoke-RestMethod http://127.0.0.1:8000/notifications -Method Post -Headers $headers -Body $body
 ```
 
-## Project Structure
+| Endpoint | Behavior |
+|---|---|
+| `POST /notifications` | Accept work (`202`), optional `event_id` and timezone-aware ISO `scheduled_at` |
+| `GET /notifications/<id>` | Live events and persisted audit history when SQLite is enabled |
+| `GET /analytics` | Live final-state counters and per-channel pending/in-flight counts |
+| `GET/PUT /settings/<user>` | Read/update channel preferences |
+| `GET/POST /templates` | List/register templates |
+| `POST /events` | Record verified `delivered`/`clicked` callbacks in live history |
 
-```
-notification-system/
-├── pyproject.toml
-├── README.md
-├── src/notification_system/
-│   ├── __init__.py          # Public API exports
-│   ├── config.py            # NotificationConfig dataclass
-│   ├── models.py            # Data models and enums
-│   ├── exceptions.py        # Custom exception hierarchy
-│   ├── service.py           # NotificationService orchestrator
-│   ├── queue.py             # Per-channel asyncio.Queue
-│   ├── worker.py            # WorkerPool and Worker
-│   ├── provider.py          # Provider ABC + SimulatedProvider
-│   ├── templates.py         # Template placeholder substitution
-│   ├── rate_limiter.py      # Sliding window rate limiter
-│   ├── dedup.py             # Content-hash deduplicator
-│   ├── retry.py             # Exponential backoff + jitter
-│   ├── settings.py          # Per-user opt-in/opt-out
-│   ├── contacts.py          # Contact info store
-│   ├── tracker.py           # Event lifecycle tracker
-│   └── log.py               # Notification log
-├── tests/
-├── examples/
-│   └── demo_server.py       # HTTP demo server
-└── docs/
+A shared bearer key demonstrates verified internal callers. Production deployment requires TLS, client-specific authorization, provider-specific signed callbacks and secret rotation. Callback reconstruction after restart is not implemented.
+
+## Limits and operations
+
+SQLite supplies a local durable queue, not a replicated broker. It counts scheduled and leased jobs toward channel capacity; `depth()` reports waiting/scheduled/expired-lease jobs and `in_flight()` reports live leases. Monitoring queries are synchronous snapshots. SQLite mutations and audit writes run in worker threads; it serializes writers and is not proof of million-notification daily capacity.
+
+The delivery guarantee is **at least once**. A provider can accept a request before the process dies and before local acknowledgement, causing replay. Use a stable per-endpoint idempotency key in a real provider adapter. `event_id` prevents producer re-acceptance, not duplicate provider side effects during crash recovery. Completed/rejected endpoint progress is persisted when a job is rescheduled; a crash before that checkpoint can replay an endpoint.
+
+Contacts, preferences, templates, counters and content TTL deduplication are memory-resident. Rehydrate them before starting recovered workers. Shared durable metadata, cross-process frequency caps, metadata cache invalidation, real provider adapters, external alerting, broker replication and autoscaling remain deployment work. The demo uses one HTTP request thread; concurrency is in the worker pipeline.
+
+The durable event ledger is intentionally retained after audit cleanup. Plan its retention separately before using unbounded event IDs. Queue payloads and logs contain contact/content data and need appropriate local file access and retention.
+
+## Verification
+
+```powershell
+python -m pytest tests -q
 ```
 
-## License
-
-MIT
+See [chapter review](docs/chapter11-review.md) for coverage, regression evidence and remaining deployment boundaries.

@@ -9,7 +9,12 @@ templates, and querying status.
 
 from __future__ import annotations
 
+import asyncio
+import dataclasses
+import datetime
+import json
 import logging
+import re
 import uuid
 from typing import Optional
 
@@ -81,6 +86,7 @@ class NotificationService:
         self._templates = (
             template_registry or notification_system.templates.TemplateRegistry()
         )
+        self._admission = [asyncio.Lock() for _ in range(64)]
 
     @property
     def config(self) -> notification_system.config.NotificationConfig:
@@ -112,8 +118,35 @@ class NotificationService:
         """The template registry."""
         return self._templates
 
+    def create_worker_pool(
+        self, providers, notification_log=None, *, delivery_timeout=30.0
+    ):
+        """Wire workers to this service's queue, preferences, tracker and retry policy."""
+        from notification_system.log import NotificationLog
+        from notification_system.retry import RetryHandler
+        from notification_system.worker import WorkerPool
+
+        retry = RetryHandler(
+            self._config.retry,
+            self._queue,
+            self._tracker,
+            notification_log or NotificationLog(),
+        )
+        return WorkerPool(
+            self._queue,
+            providers,
+            self._tracker,
+            retry,
+            self._config.workers_per_channel,
+            settings=self._settings,
+            delivery_timeout=delivery_timeout,
+        )
+
     async def send(
-        self, request: notification_system.models.NotificationRequest
+        self,
+        request: notification_system.models.NotificationRequest,
+        *,
+        scheduled_at: Optional[datetime.datetime] = None,
     ) -> str:
         """Send a single notification through the pipeline.
 
@@ -138,7 +171,28 @@ class NotificationService:
             DuplicateNotificationError: If duplicate detected.
             QueueFullError: If the channel queue is full.
         """
+        self._validate_request(request)
+        if scheduled_at is not None and (
+            not isinstance(scheduled_at, datetime.datetime)
+            or scheduled_at.tzinfo is None
+            or scheduled_at.utcoffset() is None
+        ):
+            raise notification_system.exceptions.ValidationError(
+                "scheduled_at must be timezone-aware"
+            )
+        async with self._admission[hash(request.recipient_id) % len(self._admission)]:
+            return await self._accept(request, scheduled_at)
+
+    async def _accept(self, request, scheduled_at):
         notification_id = uuid.uuid4().hex
+        if request.event_id is not None:
+            original = await self._queue.event_notification_id(
+                request.recipient_id, request.channel, request.event_id
+            )
+            if original is not None:
+                raise notification_system.exceptions.DuplicateNotificationError(
+                    original
+                )
 
         # 1. Validate: check contact info exists for the channel
         endpoint = self._contacts.resolve_endpoint(
@@ -149,6 +203,30 @@ class NotificationService:
                 f"No contact info for user '{request.recipient_id}' "
                 f"on channel '{request.channel.value}'",
                 field="recipient_id",
+            )
+        endpoints = self._contacts.resolve_endpoints(
+            request.recipient_id, request.channel
+        )
+        if any(
+            not isinstance(value, str) or not value.strip() or len(value) > 4096
+            for value in endpoints
+        ):
+            raise notification_system.exceptions.ValidationError(
+                "Invalid delivery endpoint", field="recipient_id"
+            )
+        if (
+            request.channel == notification_system.models.Channel.EMAIL
+            and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", endpoint)
+        ):
+            raise notification_system.exceptions.ValidationError(
+                "Invalid email address", field="recipient_id"
+            )
+        if (
+            request.channel == notification_system.models.Channel.SMS
+            and not re.fullmatch(r"\+?[0-9]{7,15}", endpoint)
+        ):
+            raise notification_system.exceptions.ValidationError(
+                "Invalid phone number", field="recipient_id"
             )
 
         # 2. Check preferences: reject if user opted out
@@ -164,42 +242,116 @@ class NotificationService:
                 f"'{request.channel.value}'"
             )
 
-        # Record CREATED event
+        # 3. Resolve content (template or direct)
+        title, body = self._resolve_content(request)
+        if len((title + body).encode("utf-8")) > 1024 * 1024:
+            raise notification_system.exceptions.ValidationError(
+                "Resolved content exceeds 1 MiB"
+            )
+        if len(endpoints) > 100:
+            raise notification_system.exceptions.ValidationError(
+                "At most 100 device endpoints are supported"
+            )
+
+        # 4. Rate limit check and record
+        self._rate_limiter.check(request.recipient_id, request.channel)
+
+        # 5. Deduplication check and record
+        content = json.dumps([title, body], separators=(",", ":"))
+        dedup_key = self._deduplicator.compute_key(
+            request.recipient_id, request.channel, content
+        )
+        original = (
+            self._deduplicator.check(dedup_key) if request.event_id is None else None
+        )
+        if original is not None:
+            raise notification_system.exceptions.DuplicateNotificationError(original)
+
+        # 6. Enqueue to the appropriate channel queue
+        task = notification_system.models.NotificationTask(
+            notification_id=notification_id,
+            request=dataclasses.replace(
+                request,
+                title=title,
+                body=body,
+                template_params=dict(request.template_params),
+                metadata=dict(request.metadata),
+            ),
+            channel=request.channel,
+            endpoints=tuple(endpoints),
+            scheduled_at=scheduled_at,
+        )
         self._tracker.record(
             notification_id,
             request.channel,
             notification_system.models.NotificationStatus.CREATED,
         )
-
-        # 3. Resolve content (template or direct)
-        title, body = self._resolve_content(request)
-
-        # 4. Rate limit check and record
-        self._rate_limiter.check(request.recipient_id, request.channel)
-        self._rate_limiter.record(request.recipient_id, request.channel)
-
-        # 5. Deduplication check and record
-        content = f"{title}:{body}"
-        self._deduplicator.check_and_record(
-            request.recipient_id, request.channel, content, notification_id
-        )
-
-        # 6. Enqueue to the appropriate channel queue
-        task = notification_system.models.NotificationTask(
-            notification_id=notification_id,
-            request=request,
-            channel=request.channel,
-        )
-        await self._queue.enqueue(task)
-
-        # Record QUEUED event
+        # Set the local state before making the task visible to workers.
         self._tracker.record(
             notification_id,
             request.channel,
             notification_system.models.NotificationStatus.QUEUED,
         )
-
+        try:
+            await self._queue.enqueue(task)
+        except Exception:
+            self._tracker.record(
+                notification_id,
+                request.channel,
+                notification_system.models.NotificationStatus.FAILED,
+            )
+            raise
+        # Rejections must not consume quota or poison content deduplication.
+        self._rate_limiter.record(request.recipient_id, request.channel)
+        if request.event_id is None:
+            self._deduplicator.record(dedup_key, notification_id)
         return notification_id
+
+    @staticmethod
+    def _validate_request(request):
+        if not isinstance(request, notification_system.models.NotificationRequest):
+            raise notification_system.exceptions.ValidationError(
+                "Expected NotificationRequest"
+            )
+        if not isinstance(request.channel, notification_system.models.Channel):
+            raise notification_system.exceptions.ValidationError(
+                "Invalid channel", field="channel"
+            )
+        if (
+            not isinstance(request.recipient_id, str)
+            or not request.recipient_id.strip()
+            or len(request.recipient_id) > 256
+        ):
+            raise notification_system.exceptions.ValidationError(
+                "Invalid recipient_id", field="recipient_id"
+            )
+        for name in ("title", "body"):
+            if not isinstance(getattr(request, name), str):
+                raise notification_system.exceptions.ValidationError(
+                    f"{name} must be a string", field=name
+                )
+        if request.template_id is not None and not isinstance(request.template_id, str):
+            raise notification_system.exceptions.ValidationError(
+                "template_id must be a string", field="template_id"
+            )
+        if request.event_id is not None and (
+            not isinstance(request.event_id, str)
+            or not request.event_id.strip()
+            or len(request.event_id) > 256
+        ):
+            raise notification_system.exceptions.ValidationError(
+                "event_id must be a nonempty string of at most 256 characters",
+                field="event_id",
+            )
+        for name in ("template_params", "metadata"):
+            value = getattr(request, name)
+            if not isinstance(value, dict) or any(
+                not isinstance(k, str) or not isinstance(v, str)
+                for k, v in value.items()
+            ):
+                raise notification_system.exceptions.ValidationError(
+                    f"{name} must map strings to strings", field=name
+                )
 
     async def send_batch(
         self, requests: list[notification_system.models.NotificationRequest]
