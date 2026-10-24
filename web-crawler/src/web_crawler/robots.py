@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import time
 import urllib.parse
 import urllib.robotparser
@@ -24,6 +26,7 @@ class RobotsChecker:
         user_agent: str = "WebCrawler/1.0",
         cache_ttl: float = 3600.0,
     ) -> None:
+        self._locks = [asyncio.Lock() for _ in range(64)]
         self._fetcher = fetcher
         self._user_agent = user_agent
         self._cache_ttl = cache_ttl
@@ -45,10 +48,19 @@ class RobotsChecker:
         host = parsed.netloc.lower()
         robots_url = f"{parsed.scheme}://{host}/robots.txt"
 
-        parser = await self._get_parser(host, robots_url)
+        origin = f"{parsed.scheme}://{host}"
+        index = int.from_bytes(hashlib.sha256(origin.encode()).digest()[:4], "big") % 64
+        async with self._locks[index]:
+            parser = await self._get_parser(origin, robots_url)
         if parser is None:
             return True  # If robots.txt unavailable, allow all
         return parser.can_fetch(self._user_agent, url)
+
+    def crawl_delay(self, url: str) -> float:
+        parsed = urllib.parse.urlparse(url)
+        key = f"{parsed.scheme}://{parsed.netloc.lower()}"
+        parser, _ = self._cache.get(key, (None, 0))
+        return float(parser.crawl_delay(self._user_agent) or 0) if parser else 0.0
 
     async def _get_parser(
         self, host: str, robots_url: str

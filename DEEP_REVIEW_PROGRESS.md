@@ -13,7 +13,7 @@
 | 07 | [Key-Value Store](key-value-store/) | 进行中：383 项测试通过；原书剩余项见章节审查记录 |
 | 08 | [Unique ID Generator](unique-id-generator/) | 完成：原书核对，94 项测试通过 |
 | 09 | [URL Shortener](url-shortener/) | 完成核心链路核对：109 项测试通过；部署扩展见章节记录 |
-| 10 | [Web Crawler](web-crawler/) | 待逐项深入审查 |
+| 10 | [Web Crawler](web-crawler/) | 完成核心链路核对：213 项测试通过；部署边界见章节记录 |
 | 11 | [Notification System](notification-system/) | 待逐项深入审查 |
 | 12 | [News Feed System](news-feed-system/) | 待逐项深入审查 |
 | 13 | [Chat System](chat-system/) | 待逐项深入审查 |
@@ -96,3 +96,9 @@
 补齐 SQLite 事务持久化与唯一约束、有限容量 LRU 回源缓存、WSGI POST 和 HTTP 301/302 重定向入口。内存与 SQLite 存储拒绝覆盖已有映射；本地 ID 分配加锁，Base62 参数校验及 HTTP URL 输入限制。新增共享数据库并发去重、重启读取、冲突保留旧映射、HTTP 和缓存命中回归。完整测试 **109 passed（3.01 秒）**；Ruff E9/F 通过。中英文 README 和设计文档同步关联 [章节核对记录](url-shortener/docs/chapter09-review.md)。
 
 尚未部署负载均衡、分片/复制、全局限流和分析服务；本地 ID 分配不提供跨实例唯一性。未做生产吞吐或海量容量验证。
+
+## 第 10 章：网页爬虫
+
+继续完成持久调度恢复、原子 HTML 快照及去重、有限窗口主机调度、有界重试和自适应周期重爬；接通一致性哈希分片与持久投递回调。补齐有界 DNS TTL/LRU、保留 Host/SNI 的 HTTP(S) 连接、响应大小与总 deadline、重定向重新检查 robots。修复相同 HTML 不同基准 URL 的链接漏发现、完成确认与礼貌时间非原子、并发/取消时任务及内容声明处理。
+
+完整测试 **213 passed（12.69 秒）**，Ruff E9/F 通过。中英文 README 与设计文档同步；详见 [章节核对](web-crawler/docs/chapter10-review.md)。五年保留清理、复制/分片控制面、拓扑安全移交、动态渲染及互联网规模容量均明确为部署/扩展边界，无生产容量承诺。

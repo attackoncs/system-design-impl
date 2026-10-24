@@ -15,7 +15,7 @@ Production-quality Python implementations of system design concepts from the boo
 | 07 | [Key-Value Store](./key-value-store/) | Core implemented; [review ongoing](key-value-store/docs/chapter07-review.md) | Dynamo-style, LSM-tree storage, quorum consensus, gossip protocol, gRPC |
 | 08 | [Unique ID Generator](./unique-id-generator/) | ✅ Done | Twitter Snowflake algorithm, configurable bit layout, thread-safe, ID parsing |
 | 09 | [URL Shortener](./url-shortener/) | ✅ Done | Pluggable hash strategies, base-62 conversion, click tracking, stdlib HTTP demo |
-| 10 | [Web Crawler](./web-crawler/) | ✅ Done | Async crawling, priority/politeness frontier, robots.txt compliance, URL/content deduplication |
+| 10 | [Web Crawler](./web-crawler/) | ✅ Done | Durable crawl recovery, adaptive recrawling, host partition routing, DNS cache and bounded downloads |
 | 11 | [Notification System](./notification-system/) | ✅ Done | Multi-channel async pipeline, rate limiting, deduplication, exponential-backoff retry, lifecycle tracking |
 | 12 | [News Feed System](./news-feed-system/) | ✅ Done | Hybrid push/pull fanout, async workers, five-layer cache architecture, pluggable social graph |
 | 13 | [Chat System](./chat-system/) | ✅ Done | Direct/group chat, Redis multi-node routing, Sentinel failover, shared presence, durable push retries, reconnect sync, measured load/fault tests |

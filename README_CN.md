@@ -13,7 +13,7 @@
 | 07 | [Key-Value Store](./key-value-store/) | 核心已实现，[深入审查进行中](key-value-store/docs/chapter07-review.md) | Dynamo 风格、LSM-tree 存储、仲裁一致性、Gossip 协议、gRPC |
 | 08 | [Unique ID Generator](./unique-id-generator/) | ✅ 完成 | Twitter Snowflake 算法、可配置位布局、线程安全、ID 解析 |
 | 09 | [URL Shortener](./url-shortener/) | ✅ 完成 | 可插拔哈希策略、Base-62 转换、点击追踪、标准库 HTTP 演示 |
-| 10 | [Web Crawler](./web-crawler/) | ✅ 完成 | 异步爬取、优先级与礼貌性 URL 队列、robots.txt 校验、URL 与内容去重 |
+| 10 | [Web Crawler](./web-crawler/) | ✅ 完成 | 持久调度恢复、自适应重爬、主机分片路由、DNS 缓存与有界下载 |
 | 11 | [Notification System](./notification-system/) | ✅ 完成 | 多渠道异步流水线、限流、去重、指数退避重试、生命周期追踪 |
 | 12 | [News Feed System](./news-feed-system/) | ✅ 完成 | 推拉混合扇出、异步工作池、五层缓存架构、可插拔社交图谱 |
 | 13 | [Chat System](./chat-system/) | ✅ 完成 | 单聊群聊、Redis 多节点路由、Sentinel 主备切换、共享在线状态、持久化推送重试、重连同步及容量故障实测 |

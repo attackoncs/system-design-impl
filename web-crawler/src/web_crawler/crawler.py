@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import urllib.parse
 from typing import Optional
 
 import web_crawler.config
@@ -21,6 +22,7 @@ import web_crawler.frontier
 import web_crawler.models
 import web_crawler.parser
 import web_crawler.robots
+from web_crawler.state import SQLiteCrawlState
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +40,37 @@ class Crawler:
         self,
         config: Optional[web_crawler.config.CrawlerConfig] = None,
         fetcher: Optional[web_crawler.fetcher.Fetcher] = None,
+        *,
+        partition=None,
+        route_url=None,
     ) -> None:
         self._config = config or web_crawler.config.CrawlerConfig()
-        self._fetcher = fetcher or web_crawler.fetcher.URLLibFetcher()
+        self._partition, self._route_url = partition, route_url
+        if partition is not None and route_url is None:
+            raise ValueError(
+                "partitioned crawling requires a route_url(owner, entry) callback"
+            )
+        self._fetcher = fetcher or web_crawler.fetcher.URLLibFetcher(
+            max_response_bytes=self._config.max_response_bytes,
+            max_redirects=self._config.max_redirects,
+        )
         self._frontier = web_crawler.frontier.URLFrontier(
             per_host_delay=self._config.per_host_delay
         )
+        self._state = None
+        if self._config.state_path:
+            self._state = SQLiteCrawlState(
+                self._config.state_path,
+                per_host_delay=self._config.per_host_delay,
+                recrawl_interval=self._config.recrawl_interval_seconds,
+                max_retries=self._config.max_retries,
+                retry_delay=self._config.retry_delay_seconds,
+            )
+            self._frontier = self._state
+        self._running = False
+        self._content_lock = asyncio.Lock()
+        self._content_pending = {}
+        self._claims = {}
         self._url_seen = web_crawler.dedup.URLSeen()
         self._content_seen = web_crawler.dedup.ContentSeen()
         self._robots = web_crawler.robots.RobotsChecker(
@@ -64,44 +91,59 @@ class Crawler:
         self._results: list[web_crawler.models.CrawlResult] = []
         self._pages_crawled = 0
 
-    async def crawl(self, seed_urls: list[str]) -> list[web_crawler.models.CrawlResult]:
-        """Run the crawl loop starting from seed URLs.
-
-        Enqueues seed URLs with HIGH priority at depth 0, then enters
-        the main loop: dequeue from frontier, create async tasks, wait
-        for completion. Stops when max_pages is reached or frontier is empty.
-
-        Args:
-            seed_urls: Initial URLs to begin crawling from.
-
-        Returns:
-            List of CrawlResult for all processed URLs.
-        """
-        # Enqueue seed URLs
-        for url in seed_urls:
-            self._enqueue_url(url, priority=web_crawler.models.Priority.HIGH, depth=0)
-
-        tasks: set[asyncio.Task] = set()
+    async def _io(self, operation, *args, **kwargs):
+        """Drain an already-started database operation before releasing ownership."""
+        task = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
         try:
-            while not self._frontier.is_empty() or tasks:
-                if self._pages_crawled >= self._config.max_pages:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await task
+            raise
+
+    async def _queue_call(self, method, *args, **kwargs):
+        operation = getattr(self._frontier, method)
+        if self._state is not None:
+            return await self._io(operation, *args, **kwargs)
+        return operation(*args, **kwargs)
+
+    async def crawl(self, seed_urls: list[str]) -> list[web_crawler.models.CrawlResult]:
+        """Run one finite batch; durable due recrawls are promoted on each run.
+
+        max_pages bounds attempts in this batch, including errors/duplicates.
+        Pending work remains available for a later run. Concurrent calls on one
+        crawler are rejected; state files also reject concurrent owners.
+        """
+        if self._running:
+            raise RuntimeError("crawler is already running")
+        self._running = True
+        tasks = set()
+        self._results, self._pages_crawled, self._attempted = [], 0, 0
+        # Completed fingerprints live on disk in durable mode; transient claims
+        # are only shared by tasks in this batch.
+        if self._state is not None:
+            self._content_seen = web_crawler.dedup.ContentSeen()
+        try:
+            if self._state is not None:
+                await self._io(self._state.open)
+            for url in seed_urls:
+                await self._enqueue_url(url, web_crawler.models.Priority.HIGH, 0)
+            while not await self._queue_call("is_empty") or tasks:
+                if self._attempted >= self._config.max_pages:
                     break
                 while (
-                    not self._frontier.is_empty()
-                    and len(tasks) < self._config.max_concurrent
-                    and self._pages_crawled + len(tasks) < self._config.max_pages
+                    len(tasks) < self._config.max_concurrent
+                    and self._attempted + len(tasks) < self._config.max_pages
                 ):
-                    entry = self._frontier.get()
+                    entry = await self._queue_call("get", reserve=True)
                     if entry is None:
                         break
                     tasks.add(asyncio.create_task(self._process_url(entry)))
                 if not tasks:
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(0.05)
                     continue
                 done, pending = await asyncio.wait(
                     tasks, return_when=asyncio.FIRST_COMPLETED
                 )
-                # Keep all tasks owned until their exceptions have been observed.
                 await asyncio.gather(*done)
                 tasks = pending
         finally:
@@ -109,94 +151,135 @@ class Crawler:
                 task.cancel()
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
+            if self._state is not None and self._state._lock_file is not None:
+                await self._io(self._state.close)
+            self._running = False
+        return list(self._results)
 
-        return self._results
-
-    async def _process_url(self, entry: web_crawler.models.FrontierEntry) -> None:
-        """Process a single URL through the full pipeline.
-
-        Pipeline steps:
-        1. Check robots.txt
-        2. Fetch the URL
-        3. Content deduplication
-        4. Parse and validate HTML
-        5. Extract links
-        6. Build success result and increment pages_crawled
-        7. Invoke content hooks
-        8. Filter and enqueue new links
-
-        Args:
-            entry: The frontier entry containing URL and metadata.
-        """
-
-        async with self._semaphore:
-            url = entry.url
-            depth = entry.depth
-
-            # 1. Check robots.txt
-            if not await self._robots.is_allowed(url):
-                result = web_crawler.models.CrawlResult(
-                    url=url,
-                    status=web_crawler.models.CrawlStatus.DISALLOWED,
-                    depth=depth,
-                )
-                self._results.append(result)
-                return
-
-            # 2. Fetch
+    async def _process_url(self, entry):
+        acknowledged, result = False, None
+        try:
             try:
-                response = await self._fetcher.fetch(
-                    url,
-                    headers={"User-Agent": self._config.user_agent},
-                    timeout=self._config.request_timeout,
-                )
-            except web_crawler.exceptions.FetchError as e:
+                result, html = await self._process_entry(entry)
+            except Exception as error:
+                logger.exception("URL processing failed: %s", entry.url)
                 result = web_crawler.models.CrawlResult(
-                    url=url,
-                    status=web_crawler.models.CrawlStatus.ERROR,
-                    depth=depth,
-                    error_message=e.reason,
+                    entry.url,
+                    web_crawler.models.CrawlStatus.ERROR,
+                    depth=entry.depth,
+                    error_message=str(error),
                 )
-                self._results.append(result)
-                return
+                html = None
+            if self._state is not None:
+                await self._io(self._state.finish, entry, result, html)
+            else:
+                self._frontier.complete(entry)
+            acknowledged = True
+            self._results.append(result)
+            self._attempted += 1
+            if result.status == web_crawler.models.CrawlStatus.SUCCESS:
+                self._pages_crawled += 1
+        finally:
+            self._release_content(
+                entry.url,
+                acknowledged
+                and result.status == web_crawler.models.CrawlStatus.SUCCESS,
+            )
+            if not acknowledged:
+                if self._state is not None:
+                    await self._io(self._state.retry, entry)
+                else:
+                    self._frontier.complete(entry)
+                    self._frontier.put(entry)
 
-            # 3. Content deduplication
-            fingerprint = self._content_seen.compute_fingerprint(response.body)
-            if self._content_seen.is_seen(fingerprint):
-                result = web_crawler.models.CrawlResult(
-                    url=url,
-                    status=web_crawler.models.CrawlStatus.DUPLICATE,
+    async def _process_entry(self, entry):
+        status = web_crawler.models.CrawlStatus
+        url, depth = entry.url, entry.depth
+        if self._partition is not None and not self._partition.owns(url):
+            await self._route(entry)
+            return web_crawler.models.CrawlResult(
+                url, status.FILTERED, depth=depth
+            ), None
+        async with self._semaphore:
+            if not await asyncio.wait_for(
+                self._robots.is_allowed(url), self._config.request_timeout
+            ):
+                return web_crawler.models.CrawlResult(
+                    url, status.DISALLOWED, depth=depth
+                ), None
+            # The robots download is itself a request. Reserve the host while
+            # spacing it from the page fetch, and respect advertised Crawl-delay.
+            await asyncio.sleep(
+                max(self._config.per_host_delay, self._robots.crawl_delay(url))
+            )
+            try:
+                response = await asyncio.wait_for(
+                    self._fetcher.fetch(
+                        url,
+                        headers={"User-Agent": self._config.user_agent},
+                        timeout=self._config.request_timeout,
+                    ),
+                    self._config.request_timeout,
+                )
+            except web_crawler.exceptions.FetchError as error:
+                return web_crawler.models.CrawlResult(
+                    url, status.ERROR, depth=depth, error_message=error.reason
+                ), None
+            headers = {name.lower(): value for name, value in response.headers.items()}
+            # Cross-origin redirects re-enter routing, filtering and robots checks.
+            if 300 <= response.status_code < 400:
+                location = headers.get("location")
+                if location:
+                    await self._enqueue_url(
+                        urllib.parse.urljoin(response.url, location),
+                        entry.priority,
+                        depth + 1,
+                    )
+                return web_crawler.models.CrawlResult(
+                    url,
+                    status.FILTERED,
                     http_status=response.status_code,
-                    content_fingerprint=fingerprint,
                     depth=depth,
                     headers=response.headers,
-                )
-                self._results.append(result)
-                return
-            self._content_seen.add(fingerprint)
-
-            # 4. Parse and validate HTML
-            content_type = response.headers.get("Content-Type", "")
-            if not self._parser.is_html(content_type, response.body):
-                result = web_crawler.models.CrawlResult(
-                    url=url,
-                    status=web_crawler.models.CrawlStatus.ERROR,
+                ), None
+            if not 200 <= response.status_code < 300:
+                return web_crawler.models.CrawlResult(
+                    url,
+                    status.ERROR,
+                    http_status=response.status_code,
+                    depth=depth,
+                    error_message=f"HTTP {response.status_code}",
+                ), None
+            if not self._parser.is_html(headers.get("content-type", ""), response.body):
+                return web_crawler.models.CrawlResult(
+                    url,
+                    status.ERROR,
                     http_status=response.status_code,
                     depth=depth,
                     error_message="Non-HTML content",
-                    headers=response.headers,
-                )
-                self._results.append(result)
-                return
-
-            # 5. Extract links
-            html_text = response.body.decode("utf-8", errors="replace")
-            links = self._link_extractor.extract(html_text, url)
-
-            # 6. Build success result
+                ), None
+            fingerprint = self._content_seen.compute_fingerprint(response.body)
+            duplicate = await self._claim_content(fingerprint, url)
+            html = response.body.decode("utf-8", errors="replace")
+            links = self._link_extractor.extract(html, response.url)
+            if duplicate:
+                # Identical bytes at different base URLs can have distinct
+                # relative link targets. Deduplicate storage, not discovery.
+                for link in links:
+                    await self._enqueue_url(
+                        link, web_crawler.models.Priority.MEDIUM, depth + 1
+                    )
+                return web_crawler.models.CrawlResult(
+                    url,
+                    status.DUPLICATE,
+                    http_status=response.status_code,
+                    content_fingerprint=fingerprint,
+                    depth=depth,
+                    links=links,
+                ), None
             result = web_crawler.models.CrawlResult(
-                url=url,
-                status=web_crawler.models.CrawlStatus.SUCCESS,
+                url,
+                status.SUCCESS,
                 http_status=response.status_code,
                 content_length=len(response.body),
                 content_fingerprint=fingerprint,
@@ -204,41 +287,56 @@ class Crawler:
                 depth=depth,
                 headers=response.headers,
             )
-            self._results.append(result)
-            self._pages_crawled += 1
-
-            # 7. Invoke content hooks
-            await self._invoke_hooks(result, html_text)
-
-            # 8. Filter and enqueue new links
+            await self._invoke_hooks(result, html)
             for link in links:
-                if self._url_filter.accept(link):
-                    self._enqueue_url(
-                        link, web_crawler.models.Priority.MEDIUM, depth + 1
-                    )
+                await self._enqueue_url(
+                    link, web_crawler.models.Priority.MEDIUM, depth + 1
+                )
+            return result, html
 
-    def _enqueue_url(
-        self, url: str, priority: web_crawler.models.Priority, depth: int
-    ) -> None:
-        """Enqueue a URL if not already seen and within max_depth.
+    async def _claim_content(self, fingerprint, url):
+        while True:
+            async with self._content_lock:
+                if self._content_seen.is_seen(fingerprint):
+                    return True
+                pending = self._content_pending.get(fingerprint)
+                if pending is None:
+                    if self._state is not None and await self._io(
+                        self._state.content_seen, fingerprint
+                    ):
+                        self._content_seen.add(fingerprint)
+                        return True
+                    pending = asyncio.get_running_loop().create_future()
+                    self._content_pending[fingerprint] = pending
+                    self._claims[url] = fingerprint
+                    return False
+            # A failed/cancelled owner releases the claim; retry the lookup.
+            await asyncio.shield(pending)
 
-        Checks max_depth enforcement and URL deduplication before
-        adding to the frontier.
+    def _release_content(self, url, committed):
+        fingerprint = self._claims.pop(url, None)
+        if fingerprint is not None:
+            if committed:
+                self._content_seen.add(fingerprint)
+            pending = self._content_pending.pop(fingerprint)
+            pending.set_result(None)
 
-        Args:
-            url: The URL to enqueue.
-            priority: Crawl priority for this URL.
-            depth: The depth level of this URL from seed.
-        """
-        if depth > self._config.max_depth:
+    async def _route(self, entry):
+        result = self._route_url(self._partition.owner_for_url(entry.url), entry)
+        if inspect.isawaitable(result):
+            await result
+
+    async def _enqueue_url(self, url, priority, depth):
+        if depth > self._config.max_depth or not self._url_filter.accept(url):
             return
-        if self._url_seen.is_seen(url):
-            return
-        self._url_seen.add(url)
-        entry = web_crawler.models.FrontierEntry(
-            url=url, priority=priority, depth=depth
-        )
-        self._frontier.put(entry)
+        entry = web_crawler.models.FrontierEntry(url, priority, depth)
+        if self._state is not None:
+            # Do not route here: persist remote discoveries before handing them
+            # to another worker, so a crash cannot lose the handoff.
+            await self._queue_call("put", entry)
+        elif not self._url_seen.is_seen(url):
+            self._url_seen.add(url)
+            self._frontier.put(entry)
 
     async def _invoke_hooks(
         self, result: web_crawler.models.CrawlResult, content: str
@@ -256,22 +354,15 @@ class Crawler:
         """
         for hook in self._config.content_hooks:
             try:
-                if inspect.iscoroutinefunction(hook):
-                    await hook(
-                        url=result.url,
-                        status=result.http_status,
-                        headers=result.headers,
-                        content=content,
-                        links=result.links,
-                    )
-                else:
-                    hook(
-                        url=result.url,
-                        status=result.http_status,
-                        headers=result.headers,
-                        content=content,
-                        links=result.links,
-                    )
+                outcome = hook(
+                    url=result.url,
+                    status=result.http_status,
+                    headers=result.headers,
+                    content=content,
+                    links=result.links,
+                )
+                if inspect.isawaitable(outcome):
+                    await outcome
             # Isolate this operation; record failures before continuing.
             except Exception as e:  # pylint: disable=broad-exception-caught
                 logging.getLogger(__name__).exception(

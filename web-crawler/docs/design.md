@@ -1,5 +1,7 @@
 # Design: Web Crawler
 
+> Chapter 10 now includes durable recovery, adaptive recrawling, host partition routing, DNS caching and bounded downloads. See the coverage and deployment limits in the [chapter review](chapter10-review.md)。
+
 ## Architecture Overview
 
 The web crawler library follows a pipeline architecture with pluggable components at each stage. The main orchestrator (`Crawler`) coordinates the crawl loop: dequeue URL → check robots → fetch → parse → deduplicate → extract links → filter → enqueue. Each stage is backed by an abstract interface, enabling custom implementations for testing and extensibility.

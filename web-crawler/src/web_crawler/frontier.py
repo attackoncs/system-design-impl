@@ -30,6 +30,7 @@ class URLFrontier:
         # Per-host last access timestamps (monotonic)
         self._host_last_access: dict[str, float] = {}
         self._size = 0
+        self._active_hosts = set()
 
     def put(self, entry: web_crawler.models.FrontierEntry) -> None:
         """Add a URL to the frontier.
@@ -49,7 +50,7 @@ class URLFrontier:
         self._counter += 1
         self._size += 1
 
-    def get(self) -> Optional[web_crawler.models.FrontierEntry]:
+    def get(self, *, reserve=False) -> Optional[web_crawler.models.FrontierEntry]:
         """Dequeue the next URL respecting priority and politeness.
 
         Returns the highest-priority URL whose host's politeness delay has
@@ -64,15 +65,19 @@ class URLFrontier:
 
             # Check politeness: has enough time passed for this host?
             last_access = self._host_last_access.get(entry.host, 0.0)
-            if now - last_access >= self._per_host_delay:
+            if (
+                entry.host not in self._active_hosts
+                and now - last_access >= self._per_host_delay
+            ):
                 # This entry is ready
                 result = entry
+                if reserve:
+                    self._active_hosts.add(entry.host)
                 self._host_last_access[entry.host] = now
                 # Remove from back queue
                 if entry.host in self._back_queues:
                     back_q = self._back_queues[entry.host]
-                    if back_q and back_q[0] is entry:
-                        back_q.popleft()
+                    back_q.remove(entry)
                     if not back_q:
                         del self._back_queues[entry.host]
                 self._size -= 1
@@ -86,6 +91,11 @@ class URLFrontier:
             heapq.heappush(self._front_queue, item)
 
         return result
+
+    def complete(self, entry):
+        """Release a reserved host and start its post-request delay."""
+        self._active_hosts.discard(entry.host)
+        self._host_last_access[entry.host] = time.monotonic()
 
     def is_empty(self) -> bool:
         """Check if the frontier has no pending URLs."""

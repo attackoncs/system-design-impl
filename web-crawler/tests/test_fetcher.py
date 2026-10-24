@@ -65,7 +65,7 @@ class TestURLLibFetcherErrorHandling:
 
     Validates Requirements 9.1, 9.2, 3.7:
     - Fetcher interface returns response (status code, headers, body)
-    - Default implementation uses urllib.request.urlopen
+    - Default implementation uses a private urllib opener
     - HTTP errors are converted to FetchError
     """
 
@@ -82,7 +82,9 @@ class TestURLLibFetcherErrorHandling:
             hdrs=unittest.mock.MagicMock(),
             fp=None,
         )
-        with unittest.mock.patch("urllib.request.urlopen", side_effect=http_error):
+        with unittest.mock.patch.object(
+            fetcher._opener, "open", side_effect=http_error
+        ):
             with pytest.raises(web_crawler.exceptions.FetchError) as exc_info:
                 await fetcher.fetch("http://example.com/missing")
 
@@ -99,7 +101,9 @@ class TestURLLibFetcherErrorHandling:
             hdrs=unittest.mock.MagicMock(),
             fp=None,
         )
-        with unittest.mock.patch("urllib.request.urlopen", side_effect=http_error):
+        with unittest.mock.patch.object(
+            fetcher._opener, "open", side_effect=http_error
+        ):
             with pytest.raises(web_crawler.exceptions.FetchError) as exc_info:
                 await fetcher.fetch("http://example.com/error")
 
@@ -111,7 +115,7 @@ class TestURLLibFetcherErrorHandling:
         FetchError.
         """
         url_error = urllib.error.URLError(reason="Name or service not known")
-        with unittest.mock.patch("urllib.request.urlopen", side_effect=url_error):
+        with unittest.mock.patch.object(fetcher._opener, "open", side_effect=url_error):
             with pytest.raises(web_crawler.exceptions.FetchError) as exc_info:
                 await fetcher.fetch("http://nonexistent.invalid/page")
 
@@ -121,7 +125,7 @@ class TestURLLibFetcherErrorHandling:
     async def test_url_error_connection_refused(self, fetcher):
         """URLError from connection refused is converted to FetchError."""
         url_error = urllib.error.URLError(reason="Connection refused")
-        with unittest.mock.patch("urllib.request.urlopen", side_effect=url_error):
+        with unittest.mock.patch.object(fetcher._opener, "open", side_effect=url_error):
             with pytest.raises(web_crawler.exceptions.FetchError) as exc_info:
                 await fetcher.fetch("http://localhost:9999/page")
 
@@ -130,7 +134,9 @@ class TestURLLibFetcherErrorHandling:
 
     async def test_timeout_error_raises_fetch_error(self, fetcher):
         """TimeoutError is converted to FetchError with timeout message."""
-        with unittest.mock.patch("urllib.request.urlopen", side_effect=TimeoutError()):
+        with unittest.mock.patch.object(
+            fetcher._opener, "open", side_effect=TimeoutError()
+        ):
             with pytest.raises(web_crawler.exceptions.FetchError) as exc_info:
                 await fetcher.fetch("http://slow.example.com/page")
 
@@ -141,13 +147,16 @@ class TestURLLibFetcherErrorHandling:
         """Successful fetch returns FetchResponse with correct fields."""
         mock_response = unittest.mock.MagicMock()
         mock_response.status = 200
+        mock_response.geturl.return_value = "http://example.com/page"
         mock_response.getheaders.return_value = [
             ("Content-Type", "text/html"),
             ("Content-Length", "13"),
         ]
         mock_response.read.return_value = b"<html></html>"
 
-        with unittest.mock.patch("urllib.request.urlopen", return_value=mock_response):
+        with unittest.mock.patch.object(
+            fetcher._opener, "open", return_value=mock_response
+        ):
             result = await fetcher.fetch("http://example.com/page")
 
         assert isinstance(result, web_crawler.fetcher.FetchResponse)
@@ -163,11 +172,12 @@ class TestURLLibFetcherErrorHandling:
         """Custom headers are passed to the request."""
         mock_response = unittest.mock.MagicMock()
         mock_response.status = 200
+        mock_response.geturl.return_value = "http://example.com/page"
         mock_response.getheaders.return_value = []
         mock_response.read.return_value = b""
 
-        with unittest.mock.patch(
-            "urllib.request.urlopen", return_value=mock_response
+        with unittest.mock.patch.object(
+            fetcher._opener, "open", return_value=mock_response
         ) as mock_urlopen:
             await fetcher.fetch(
                 "http://example.com",
@@ -183,13 +193,14 @@ class TestURLLibFetcherErrorHandling:
         """Timeout parameter is passed to urlopen."""
         mock_response = unittest.mock.MagicMock()
         mock_response.status = 200
+        mock_response.geturl.return_value = "http://example.com/page"
         mock_response.getheaders.return_value = []
         mock_response.read.return_value = b""
 
-        with unittest.mock.patch(
-            "urllib.request.urlopen", return_value=mock_response
+        with unittest.mock.patch.object(
+            fetcher._opener, "open", return_value=mock_response
         ) as mock_urlopen:
             await fetcher.fetch("http://example.com", timeout=10.0)
 
             call_args = mock_urlopen.call_args
-            assert call_args[1]["timeout"] == 10.0 or call_args[0][1] == 10.0
+            assert call_args[1]["timeout"] == pytest.approx(10.0, abs=0.1)

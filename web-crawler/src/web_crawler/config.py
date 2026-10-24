@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import math
 from typing import Callable, List, Optional
 
 
@@ -47,29 +48,49 @@ class CrawlerConfig:
     # Hook configuration
     content_hooks: List[Callable] = dataclasses.field(default_factory=list)
 
+    # Optional durable scheduling. Each file has exactly one active crawler.
+    state_path: Optional[str] = None
+    recrawl_interval_seconds: Optional[float] = None
+    max_retries: int = 2
+    retry_delay_seconds: float = 1.0
+    max_response_bytes: int = 10 * 1024 * 1024
+    max_redirects: int = 5
+
     def __post_init__(self) -> None:
-        """Validate configuration values."""
-        if self.max_pages <= 0:
-            raise ValueError(f"max_pages must be positive, got {self.max_pages}")
-        if self.max_depth <= 0:
-            raise ValueError(f"max_depth must be positive, got {self.max_depth}")
-        if self.max_concurrent <= 0:
-            raise ValueError(
-                f"max_concurrent must be positive, got {self.max_concurrent}"
-            )
-        if self.per_host_delay <= 0:
-            raise ValueError(
-                f"per_host_delay must be positive, got {self.per_host_delay}"
-            )
-        if self.request_timeout <= 0:
-            raise ValueError(
-                f"request_timeout must be positive, got {self.request_timeout}"
-            )
-        if self.max_url_length <= 0:
-            raise ValueError(
-                f"max_url_length must be positive, got {self.max_url_length}"
-            )
-        if self.robots_cache_ttl <= 0:
-            raise ValueError(
-                f"robots_cache_ttl must be positive, got {self.robots_cache_ttl}"
-            )
+        for name in (
+            "max_pages",
+            "max_depth",
+            "max_concurrent",
+            "max_url_length",
+            "max_response_bytes",
+        ):
+            value = getattr(self, name)
+            if type(value) is not int or value <= 0:
+                raise ValueError(f"{name} must be a positive integer")
+        for name in ("max_retries", "max_redirects"):
+            value = getattr(self, name)
+            if type(value) is not int or value < 0:
+                raise ValueError(f"{name} must be a nonnegative integer")
+        for name in (
+            "per_host_delay",
+            "request_timeout",
+            "robots_cache_ttl",
+            "retry_delay_seconds",
+        ):
+            value = getattr(self, name)
+            if (
+                type(value) not in (int, float)
+                or not math.isfinite(value)
+                or value <= 0
+            ):
+                raise ValueError(f"{name} must be finite and positive")
+        if self.recrawl_interval_seconds is not None:
+            value = self.recrawl_interval_seconds
+            if (
+                type(value) not in (int, float)
+                or not math.isfinite(value)
+                or value <= 0
+            ):
+                raise ValueError("recrawl_interval_seconds must be finite and positive")
+            if not self.state_path:
+                raise ValueError("recrawling requires state_path")

@@ -1,5 +1,7 @@
 # Web Crawler
 
+> Chapter 10 now includes durable recovery, adaptive recrawling, host partition routing, DNS caching and bounded downloads. See the coverage and deployment limits in the [chapter review](docs/chapter10-review.md)。
+
 An asyncio-based Python web crawler library implementing the design from System Design Interview Chapter 10 "Design A Web Crawler". Features a pipeline architecture with URL frontier (priority + politeness), robots.txt compliance, content deduplication, link extraction, and pluggable components — all with zero runtime dependencies (stdlib only).
 
 ## Features
@@ -15,6 +17,35 @@ An asyncio-based Python web crawler library implementing the design from System 
 - **Content processing hooks** — sync and async callbacks for each crawled page
 - **Zero runtime dependencies** — uses only Python standard library
 - **Structured results** — typed `CrawlResult` with status, links, fingerprint, and metadata
+
+
+## Durable crawling and recovery
+
+```python
+from web_crawler import Crawler, CrawlerConfig
+
+crawler = Crawler(CrawlerConfig(
+    state_path="crawl.db", recrawl_interval_seconds=3600,
+    max_pages=100, max_response_bytes=2 * 1024 * 1024,
+))
+results = await crawler.crawl(["https://example.com/"])
+# Schedule later batches externally; due recrawls activate on each call.
+results = await crawler.crawl([])
+```
+
+A state file has one active process owner. Completed HTML snapshots, fingerprints,
+job acknowledgements and host delays commit together; unfinished work recovers
+on restart. `max_pages` bounds attempts per batch, including failed, duplicate
+and disallowed URLs. Results contain only that batch. Without `state_path`, the
+frontier remains in memory. Storage retention, replication and production-scale
+capacity require separate deployment work.
+
+For multiple workers, inject `ConsistentHashPartition` and a
+`route_url(owner, entry)` callback that acknowledges durable, idempotent acceptance.
+Each owner needs its own state file. Ring changes require coordinated handoff.
+See the [chapter review](docs/chapter10-review.md),
+[partition contract](docs/partition-review.md) and
+[DNS and downloader limits](docs/transport-review.md).
 
 ## Architecture
 

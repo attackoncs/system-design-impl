@@ -1,5 +1,8 @@
 """Web Crawler - An asyncio-based web crawling library."""
 
+from web_crawler.state import SQLiteCrawlState
+from web_crawler.archive import SQLiteArchive
+from web_crawler.partition import ConsistentHashPartition
 from web_crawler.config import CrawlerConfig
 from web_crawler.crawler import Crawler
 from web_crawler.dedup import ContentSeen, URLSeen
@@ -19,6 +22,9 @@ from web_crawler.robots import RobotsChecker
 
 __all__ = [
     "Crawler",
+    "SQLiteCrawlState",
+    "SQLiteArchive",
+    "ConsistentHashPartition",
     "CrawlerConfig",
     "CrawlResult",
     "CrawlStatus",
