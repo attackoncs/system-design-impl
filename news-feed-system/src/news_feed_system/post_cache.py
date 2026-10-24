@@ -1,34 +1,21 @@
-"""Two-tier post cache with hot and normal tiers.
-
-Provides a content cache for posts with automatic promotion and demotion
-between hot (popular/recent) and normal tiers based on access patterns. New
-posts are placed in the hot cache. When the hot cache reaches capacity, the
-least recently used entries are demoted to the normal cache. Posts in the
-normal cache that are accessed frequently are promoted to the hot cache.
-"""
+"""Bounded hot/normal LRU tiers backed by an authoritative post store."""
 
 from __future__ import annotations
 
 import collections
-from typing import Optional
+import datetime
+import threading
 
-import news_feed_system.models
+from news_feed_system.models import Post
+from news_feed_system.storage import InMemoryPostStore, PostStore, snapshot as _snapshot
 
 
 class PostCache:
-    """Two-tier LRU cache for posts with hot/normal tier management.
+    """Write through to storage; cache eviction never deletes source posts.
 
-    The hot cache holds popular and recently published posts. The normal
-    cache holds less frequently accessed posts. Posts are promoted from
-    normal to hot when their access count exceeds the configured threshold,
-    and demoted from hot to normal via LRU eviction when the hot cache
-    reaches capacity.
-
-    Args:
-        hot_capacity: Maximum number of posts in the hot cache tier.
-        normal_capacity: Maximum number of posts in the normal cache tier.
-        access_threshold: Number of accesses required to promote a post
-            from normal to hot tier.
+    All tier moves are protected together. Public values are snapshots so
+    mutating a caller's media or sharing list cannot change accepted content.
+    The default store is process-local; pass SQLitePostStore for restart recovery.
     """
 
     def __init__(
@@ -36,191 +23,121 @@ class PostCache:
         hot_capacity: int = 1000,
         normal_capacity: int = 10000,
         access_threshold: int = 5,
+        *,
+        store: PostStore | None = None,
     ) -> None:
-        if hot_capacity <= 0:
-            raise ValueError(f"hot_capacity must be positive, got {hot_capacity}")
-        if normal_capacity <= 0:
-            raise ValueError(f"normal_capacity must be positive, got {normal_capacity}")
-        if access_threshold <= 0:
-            raise ValueError(
-                f"access_threshold must be positive, got {access_threshold}"
-            )
-
+        for name, value in (
+            ("hot_capacity", hot_capacity),
+            ("normal_capacity", normal_capacity),
+            ("access_threshold", access_threshold),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"{name} must be a positive integer")
         self._hot_capacity = hot_capacity
         self._normal_capacity = normal_capacity
         self._access_threshold = access_threshold
-
-        # OrderedDict for LRU: most recently used at the end
-        self._hot: collections.OrderedDict[str, news_feed_system.models.Post] = (
-            collections.OrderedDict()
-        )
-        self._normal: collections.OrderedDict[str, news_feed_system.models.Post] = (
-            collections.OrderedDict()
-        )
-
-        # Track access counts for posts in the normal tier
+        self._store = store if store is not None else InMemoryPostStore()
+        self._hot: collections.OrderedDict[str, Post] = collections.OrderedDict()
+        self._normal: collections.OrderedDict[str, Post] = collections.OrderedDict()
         self._access_counts: dict[str, int] = {}
+        self._lock = threading.RLock()
+
+    @property
+    def store(self) -> PostStore:
+        return self._store
 
     @property
     def hot_capacity(self) -> int:
-        """Maximum capacity of the hot cache tier."""
         return self._hot_capacity
 
     @property
     def normal_capacity(self) -> int:
-        """Maximum capacity of the normal cache tier."""
         return self._normal_capacity
 
     @property
     def access_threshold(self) -> int:
-        """Access count threshold for promotion from normal to hot."""
         return self._access_threshold
 
     @property
     def hot_size(self) -> int:
-        """Current number of posts in the hot tier."""
-        return len(self._hot)
+        with self._lock:
+            return len(self._hot)
 
     @property
     def normal_size(self) -> int:
-        """Current number of posts in the normal tier."""
-        return len(self._normal)
+        with self._lock:
+            return len(self._normal)
 
-    def put(self, post: news_feed_system.models.Post) -> None:
-        """Add a new post to the cache.
+    def put(self, post: Post) -> None:
+        snapshot = _snapshot(post)
+        self._store.put(snapshot)
+        with self._lock:
+            self._cache_put(snapshot)
 
-        New posts are always placed in the hot cache. If the post already
-        exists in either tier, it is moved to the hot cache. When the hot
-        cache is at capacity, the least recently used entry is demoted to
-        the normal cache.
-
-        Args:
-            post: The Post to cache.
-        """
+    def _cache_put(self, post: Post) -> None:
         post_id = post.post_id
-
-        # Remove from normal if it exists there
-        if post_id in self._normal:
-            del self._normal[post_id]
-            self._access_counts.pop(post_id, None)
-
-        # If already in hot, just update and move to end (most recent)
-        if post_id in self._hot:
-            self._hot.move_to_end(post_id)
-            self._hot[post_id] = post
-            return
-
-        # Need to add to hot; check if we need to evict
-        if len(self._hot) >= self._hot_capacity:
+        self._normal.pop(post_id, None)
+        self._access_counts.pop(post_id, None)
+        if post_id not in self._hot and len(self._hot) >= self._hot_capacity:
             self._demote_lru_from_hot()
-
         self._hot[post_id] = post
+        self._hot.move_to_end(post_id)
 
-    def get(self, post_id: str) -> Optional[news_feed_system.models.Post]:
-        """Retrieve a post by post_id.
+    def get(self, post_id: str) -> Post | None:
+        with self._lock:
+            if post_id in self._hot:
+                self._hot.move_to_end(post_id)
+                return _snapshot(self._hot[post_id])
+            if post_id in self._normal:
+                self._normal.move_to_end(post_id)
+                count = self._access_counts.get(post_id, 0) + 1
+                self._access_counts[post_id] = count
+                post = self._normal[post_id]
+                if count >= self._access_threshold:
+                    self._normal.pop(post_id)
+                    self._cache_put(post)
+                return _snapshot(post)
+        # Storage can block; keep unrelated cache hits available during I/O.
+        post = self._store.get(post_id)
+        if post is None:
+            return None
+        snapshot = _snapshot(post)
+        with self._lock:
+            self._cache_put(snapshot)
+        return _snapshot(snapshot)
 
-        Checks the hot cache first, then the normal cache. Accessing a
-        post in the hot cache marks it as most recently used. Accessing a
-        post in the normal cache increments its access count and may
-        trigger promotion to the hot cache.
-
-        Args:
-            post_id: The ID of the post to retrieve.
-
-        Returns:
-            The cached Post, or None if not found in either tier.
-        """
-        # Check hot cache first
-        if post_id in self._hot:
-            self._hot.move_to_end(post_id)
-            return self._hot[post_id]
-
-        # Check normal cache
-        if post_id in self._normal:
-            self._normal.move_to_end(post_id)
-
-            # Increment access count
-            count = self._access_counts.get(post_id, 0) + 1
-            self._access_counts[post_id] = count
-
-            # Check if promotion threshold is met
-            if count >= self._access_threshold:
-                return self._promote_to_hot(post_id)
-
-            return self._normal[post_id]
-
-        # Cache miss
-        return None
+    def get_by_author(
+        self,
+        author_id: str,
+        limit: int = 20,
+        before: tuple[datetime.datetime, str] | None = None,
+    ) -> list[Post]:
+        posts = self._store.get_by_author(author_id, limit=limit, before=before)
+        with self._lock:
+            for post in reversed(posts):
+                self._cache_put(_snapshot(post))
+        return [_snapshot(post) for post in posts]
 
     def _demote_lru_from_hot(self) -> None:
-        """Demote the least recently used entry from hot to normal cache."""
-        if not self._hot:
-            return
-
-        # Pop the LRU item (first item in OrderedDict)
         post_id, post = self._hot.popitem(last=False)
-
-        # Add to normal cache; evict LRU from normal if at capacity
         if len(self._normal) >= self._normal_capacity:
             evicted_id, _ = self._normal.popitem(last=False)
             self._access_counts.pop(evicted_id, None)
-
         self._normal[post_id] = post
-        # Reset access count for demoted post
         self._access_counts[post_id] = 0
 
-    def _promote_to_hot(self, post_id: str) -> news_feed_system.models.Post:
-        """Promote a post from normal to hot cache.
-
-        Args:
-            post_id: The ID of the post to promote.
-
-        Returns:
-            The promoted Post.
-        """
-        post = self._normal.pop(post_id)
-        self._access_counts.pop(post_id, None)
-
-        # Make room in hot if needed
-        if len(self._hot) >= self._hot_capacity:
-            self._demote_lru_from_hot()
-
-        self._hot[post_id] = post
-        return post
-
     def __len__(self) -> int:
-        """Return total number of posts across both tiers."""
-        return len(self._hot) + len(self._normal)
+        with self._lock:
+            return len(self._hot) + len(self._normal)
 
     def contains(self, post_id: str) -> bool:
-        """Check if a post exists in either tier.
-
-        Args:
-            post_id: The ID of the post to check.
-
-        Returns:
-            True if the post is in either the hot or normal cache.
-        """
-        return post_id in self._hot or post_id in self._normal
+        with self._lock:
+            return post_id in self._hot or post_id in self._normal
 
     def is_hot(self, post_id: str) -> bool:
-        """Check if a post is in the hot tier.
-
-        Args:
-            post_id: The ID of the post to check.
-
-        Returns:
-            True if the post is in the hot cache tier.
-        """
-        return post_id in self._hot
+        with self._lock:
+            return post_id in self._hot
 
     def is_normal(self, post_id: str) -> bool:
-        """Check if a post is in the normal tier.
-
-        Args:
-            post_id: The ID of the post to check.
-
-        Returns:
-            True if the post is in the normal cache tier.
-        """
-        return post_id in self._normal
+        with self._lock:
+            return post_id in self._normal

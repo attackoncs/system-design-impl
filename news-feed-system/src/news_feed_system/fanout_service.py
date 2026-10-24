@@ -14,15 +14,16 @@ Feed filtering is applied before fanout:
 
 from __future__ import annotations
 
-import collections
 import logging
-from typing import Dict, List, Optional, Set
+from typing import List, Optional, Set
 
 import news_feed_system.config
 import news_feed_system.models
+import news_feed_system.policy
 import news_feed_system.post_cache
 import news_feed_system.queue
 import news_feed_system.social_graph_cache
+from news_feed_system.concurrency import run_sync
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,8 @@ class FanoutService:
         post_cache: Post cache for storing celebrity posts.
         queue: Message queue for enqueuing fanout tasks.
         config: Fanout configuration (celebrity_threshold, batch_size, etc.).
+        mute_store: Optional policy store. SQLite stores restore mutes on startup;
+            their writes should be offloaded by asynchronous callers.
     """
 
     def __init__(
@@ -47,15 +50,19 @@ class FanoutService:
         post_cache: news_feed_system.post_cache.PostCache,
         queue: news_feed_system.queue.MessageQueue,
         config: Optional[news_feed_system.config.FanoutConfig] = None,
+        *,
+        mute_store: Optional[news_feed_system.policy.MuteStore] = None,
     ) -> None:
         self._social_graph = social_graph
         self._post_cache = post_cache
         self._queue = queue
         self._config = config or news_feed_system.config.FanoutConfig()
 
-        # user_id -> set of muted user_ids
-        # mute_lists[follower_id] = {author_id, ...}
-        self._mute_lists: Dict[str, Set[str]] = collections.defaultdict(set)
+        self._mute_store = (
+            news_feed_system.policy.InMemoryMuteStore()
+            if mute_store is None
+            else mute_store
+        )
 
     @property
     def celebrity_threshold(self) -> int:
@@ -76,7 +83,7 @@ class FanoutService:
             user_id: The user who wants to mute someone.
             muted_id: The user to be muted.
         """
-        self._mute_lists[user_id].add(muted_id)
+        self._mute_store.add(user_id, muted_id)
         logger.debug("User %s muted %s", user_id, muted_id)
 
     def remove_mute(self, user_id: str, muted_id: str) -> None:
@@ -86,7 +93,7 @@ class FanoutService:
             user_id: The user who wants to unmute someone.
             muted_id: The user to be unmuted.
         """
-        self._mute_lists[user_id].discard(muted_id)
+        self._mute_store.remove(user_id, muted_id)
         logger.debug("User %s unmuted %s", user_id, muted_id)
 
     def get_mute_list(self, user_id: str) -> Set[str]:
@@ -98,7 +105,17 @@ class FanoutService:
         Returns:
             A set of muted user IDs (may be empty).
         """
-        return set(self._mute_lists[user_id])
+        return self._mute_store.get_muted(user_id)
+
+    def can_view(self, user_id: str, post: news_feed_system.models.Post) -> bool:
+        """Apply shared mute and selective-sharing policy at read/send time.
+
+        The caller additionally checks the current social relationship. This
+        policy is reused for push fanout, feed reads and notification delivery.
+        """
+        if self._mute_store.is_muted(user_id, post.author_id):
+            return False
+        return post.selective_sharing is None or user_id in post.selective_sharing
 
     # ------------------------------------------------------------------
     # Celebrity classification (Requirement 3.1, 3.2, 3.6)
@@ -144,7 +161,7 @@ class FanoutService:
 
         if celebrity:
             # Celebrity fanout-on-read: store in PostCache, skip push
-            self._post_cache.put(post)
+            await run_sync(self._post_cache.put, post)
             logger.debug(
                 "Celebrity fanout: stored post %s for author %s in PostCache",
                 post.post_id,
@@ -199,15 +216,15 @@ class FanoutService:
         )
 
         result: List[str] = []
+        seen: Set[str] = set()
         for follower_id in followers:
-            # Mute filter: skip followers who have muted the author
-            if author_id in self._mute_lists.get(follower_id, set()):
+            if follower_id in seen:
                 continue
-
-            # Selective sharing filter: skip followers not in the allowlist
+            seen.add(follower_id)
+            if self._mute_store.is_muted(follower_id, author_id):
+                continue
             if sharing_set is not None and follower_id not in sharing_set:
                 continue
-
             result.append(follower_id)
 
         return result

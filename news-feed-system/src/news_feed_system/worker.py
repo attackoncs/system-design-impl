@@ -1,38 +1,45 @@
-"""Fanout workers for async news feed distribution.
-
-FanoutWorker consumes FanoutTask items from a MessageQueue and appends
-FeedEntry records to each target user's NewsFeedCache. WorkerPool manages a
-configurable number of concurrent worker asyncio tasks with graceful shutdown
-support.
-"""
+"""Direct fanout consumers with bounded retries and cancellation recovery."""
 
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
-from typing import List, Optional
+import math
+from typing import Optional
 
 import news_feed_system.models
 import news_feed_system.news_feed_cache
 import news_feed_system.queue
 
 logger = logging.getLogger(__name__)
-
-# Sentinel object used to signal workers to stop.
+# Kept for callers that explicitly supply an asyncio.Queue to FanoutWorker.
 _STOP_SENTINEL = object()
 
 
+def _validate_retries(max_retries: int, retry_delay_seconds: float) -> None:
+    if (
+        isinstance(max_retries, bool)
+        or not isinstance(max_retries, int)
+        or max_retries < 0
+    ):
+        raise ValueError("max_retries must be a non-negative integer")
+    if (
+        isinstance(retry_delay_seconds, bool)
+        or not isinstance(retry_delay_seconds, (int, float))
+        or not math.isfinite(retry_delay_seconds)
+        or retry_delay_seconds <= 0
+    ):
+        raise ValueError("retry_delay_seconds must be finite and positive")
+
+
 class FanoutWorker:
-    """Async worker that consumes FanoutTask items and writes to NewsFeedCache.
+    """Claim one job at a time, acknowledge success, and recover failures.
 
-    Each worker runs as an asyncio task, continuously dequeuing FanoutTask
-    items and appending a FeedEntry to every target user's news feed cache.
-    Workers stop cleanly when a sentinel value is received.
-
-    Args:
-        queue: The MessageQueue to consume FanoutTask items from.
-        cache: The NewsFeedCache to write FeedEntry items into.
-        worker_id: Optional identifier for logging purposes.
+    The default queue retains pending and claimed capacity reservations.
+    Cache writes must be idempotent by (reader, post_id), since a partial
+    batch is retried after failure or cancellation. An explicitly supplied
+    asyncio.Queue remains supported for legacy callers and sentinel shutdown.
     """
 
     def __init__(
@@ -40,78 +47,121 @@ class FanoutWorker:
         queue: news_feed_system.queue.MessageQueue,
         cache: news_feed_system.news_feed_cache.NewsFeedCache,
         worker_id: int = 0,
+        *,
+        max_retries: int = 3,
+        retry_delay_seconds: float = 0.05,
     ) -> None:
+        _validate_retries(max_retries, retry_delay_seconds)
         self._queue = queue
         self._cache = cache
         self._worker_id = worker_id
+        self._max_retries = max_retries
+        self._retry_delay = retry_delay_seconds
         self._task: Optional[asyncio.Task] = None
+        self._stop = asyncio.Event()
 
-    async def _run(self, sentinel_queue: asyncio.Queue) -> None:
-        """Main worker loop.
+    async def _process(self, task: news_feed_system.models.FanoutTask) -> None:
+        entry = news_feed_system.models.FeedEntry(
+            post_id=task.post_id, author_id=task.author_id, timestamp=task.timestamp
+        )
+        for index, user_id in enumerate(task.target_user_ids, 1):
+            result = self._cache.append(user_id, entry)
+            if inspect.isawaitable(result):
+                await result
+            elif index % 32 == 0:
+                # Large batches should not monopolize the event loop.
+                await asyncio.sleep(0)
 
-        Dequeues items from the shared sentinel_queue (which wraps the
-        MessageQueue) and processes each FanoutTask until the sentinel is
-        received.
+    def _release_completed_claim(self, task: asyncio.Task) -> None:
+        if not task.cancelled() and task.exception() is None:
+            self._queue.retry(task.result())
 
-        Args:
-            sentinel_queue: An asyncio.Queue that yields either FanoutTask
-                            items or the _STOP_SENTINEL object.
-        """
+    async def _next_claim(self) -> Optional[news_feed_system.queue.QueueClaim]:
+        claim_task = asyncio.create_task(self._queue.claim())
+        stop_task = asyncio.create_task(self._stop.wait())
+        try:
+            await asyncio.wait(
+                (claim_task, stop_task), return_when=asyncio.FIRST_COMPLETED
+            )
+            stop_task.cancel()
+            await asyncio.gather(stop_task, return_exceptions=True)
+            if claim_task.done():
+                return claim_task.result()
+            claim_task.cancel()
+            await asyncio.gather(claim_task, return_exceptions=True)
+            self._release_completed_claim(claim_task)
+            return None
+        except asyncio.CancelledError:
+            claim_task.cancel()
+            stop_task.cancel()
+            await asyncio.gather(claim_task, stop_task, return_exceptions=True)
+            self._release_completed_claim(claim_task)
+            raise
+
+    async def _run(self) -> None:
+        while not self._stop.is_set():
+            claim = await self._next_claim()
+            if claim is None:
+                break
+            try:
+                await self._process(claim.task)
+            except asyncio.CancelledError:
+                self._queue.retry(claim)
+                raise
+            except Exception as exc:
+                logger.exception(
+                    "Fanout worker %d failed post %s (attempt %d)",
+                    self._worker_id,
+                    claim.task.post_id,
+                    claim.attempts,
+                )
+                if claim.attempts <= self._max_retries:
+                    delay = min(
+                        self._retry_delay * (2 ** min(claim.attempts - 1, 20)), 30
+                    )
+                    self._queue.retry(claim, delay)
+                else:
+                    self._queue.fail(claim, str(exc))
+            else:
+                self._queue.ack(claim)
+
+    async def _run_legacy(self, source: asyncio.Queue) -> None:
         while True:
-            item = await sentinel_queue.get()
+            item = await source.get()
             try:
                 if item is _STOP_SENTINEL:
-                    logger.debug("Worker %d received stop sentinel", self._worker_id)
                     return
-
-                task: news_feed_system.models.FanoutTask = item
-                entry = news_feed_system.models.FeedEntry(
-                    post_id=task.post_id,
-                    author_id=task.author_id,
-                    timestamp=task.timestamp,
-                )
-                for user_id in task.target_user_ids:
-                    self._cache.append(user_id, entry)
-
-                logger.debug(
-                    "Worker %d processed task post_id=%s for %d users",
-                    self._worker_id,
-                    task.post_id,
-                    len(task.target_user_ids),
-                )
+                await self._process(item)
             finally:
-                sentinel_queue.task_done()
+                source.task_done()
 
-    def start(self, sentinel_queue: asyncio.Queue) -> asyncio.Task:
-        """Start the worker as an asyncio task.
-
-        Args:
-            sentinel_queue: The shared queue (with sentinel support) to
-                            consume from.
-
-        Returns:
-            The asyncio.Task running this worker.
-        """
-        self._task = asyncio.create_task(self._run(sentinel_queue))
+    def start(self, sentinel_queue: Optional[asyncio.Queue] = None) -> asyncio.Task:
+        if self._task is not None and not self._task.done():
+            raise RuntimeError("FanoutWorker is already running")
+        self._stop.clear()
+        runner = (
+            self._run() if sentinel_queue is None else self._run_legacy(sentinel_queue)
+        )
+        self._task = asyncio.create_task(
+            runner, name=f"fanout-worker-{self._worker_id}"
+        )
         return self._task
+
+    def request_stop(self) -> None:
+        """Finish the current job and stop claiming further work."""
+        self._stop.set()
 
     @property
     def task(self) -> Optional[asyncio.Task]:
-        """The underlying asyncio.Task, or None if not started."""
         return self._task
 
 
 class WorkerPool:
-    """Manages a pool of FanoutWorker asyncio tasks.
+    """Manage direct consumers without an unbounded intermediary queue.
 
-    Provides start/stop lifecycle management with graceful shutdown: on stop,
-    a sentinel is enqueued so all workers drain in-flight tasks before
-    terminating.
-
-    Args:
-        queue: The MessageQueue that workers consume from.
-        cache: The NewsFeedCache that workers write to.
-        num_workers: Number of concurrent worker tasks to run.
+    stop() finishes claimed jobs, leaves pending/retry jobs in MessageQueue,
+    and cancels slow workers after the timeout, returning their claims.
+    Call queue.join() before stop() when every accepted job must finish.
     """
 
     def __init__(
@@ -119,101 +169,79 @@ class WorkerPool:
         queue: news_feed_system.queue.MessageQueue,
         cache: news_feed_system.news_feed_cache.NewsFeedCache,
         num_workers: int = 4,
+        *,
+        max_retries: int = 3,
+        retry_delay_seconds: float = 0.05,
     ) -> None:
-        if num_workers <= 0:
-            raise ValueError(f"num_workers must be positive, got {num_workers}")
+        if (
+            isinstance(num_workers, bool)
+            or not isinstance(num_workers, int)
+            or num_workers <= 0
+        ):
+            raise ValueError("num_workers must be a positive integer")
+        _validate_retries(max_retries, retry_delay_seconds)
         self._queue = queue
         self._cache = cache
         self._num_workers = num_workers
-        self._workers: List[FanoutWorker] = []
-        # Internal asyncio.Queue that wraps the MessageQueue items and also
-        # accepts the sentinel for shutdown signalling.
-        self._sentinel_queue: asyncio.Queue = asyncio.Queue()
+        self._max_retries = max_retries
+        self._retry_delay = retry_delay_seconds
+        self._workers: list[FanoutWorker] = []
         self._running = False
-        self._pump_task: Optional[asyncio.Task] = None
-
-    async def _pump(self) -> None:
-        """Pump items from MessageQueue into the internal sentinel_queue.
-
-        Runs until cancelled (on stop). This decouples the MessageQueue (which
-        only holds FanoutTask) from the sentinel mechanism.
-        """
-        while True:
-            try:
-                item = await self._queue.dequeue()
-                await self._sentinel_queue.put(item)
-            except asyncio.CancelledError:
-                return
+        self._stopping = False
 
     async def start(self) -> None:
-        """Start the worker pool.
-
-        Creates and starts ``num_workers`` FanoutWorker asyncio tasks and
-        a pump task that forwards items from the MessageQueue into the
-        internal sentinel queue.
-
-        Raises:
-            RuntimeError: If the pool is already running.
-        """
         if self._running:
             raise RuntimeError("WorkerPool is already running")
-
-        self._running = True
         self._workers = [
-            FanoutWorker(self._queue, self._cache, worker_id=i)
+            FanoutWorker(
+                self._queue,
+                self._cache,
+                worker_id=i,
+                max_retries=self._max_retries,
+                retry_delay_seconds=self._retry_delay,
+            )
             for i in range(self._num_workers)
         ]
-
-        # Start the pump that forwards MessageQueue items to sentinel_queue.
-        self._pump_task = asyncio.create_task(self._pump())
-
-        # Start all workers.
         for worker in self._workers:
-            worker.start(self._sentinel_queue)
+            worker.start()
+        self._running = True
 
-        logger.debug("WorkerPool started with %d workers", self._num_workers)
-
-    async def stop(self) -> None:
-        """Stop the worker pool gracefully.
-
-        Cancels the pump task (no new items will be forwarded), then enqueues
-        one sentinel per worker. Every worker consumes one marker and exits after finishing any in-flight task.
-        Finally, waits for all worker tasks to complete.
-
-        Raises:
-            RuntimeError: If the pool is not running.
-        """
-        if not self._running:
-            raise RuntimeError("WorkerPool is not running")
-
-        # Stop the pump so no new items are forwarded.
-        if self._pump_task is not None:
-            self._pump_task.cancel()
-            try:
-                await self._pump_task
-            except asyncio.CancelledError:
-                pass
-            self._pump_task = None
-
-        # One marker per worker; task_done balances every queued marker.
-        for _ in self._workers:
-            await self._sentinel_queue.put(_STOP_SENTINEL)
-
-        # Wait for all workers to finish.
-        worker_tasks = [w.task for w in self._workers if w.task is not None]
-        if worker_tasks:
-            await asyncio.gather(*worker_tasks, return_exceptions=True)
-
-        self._running = False
-        self._workers = []
-        logger.debug("WorkerPool stopped")
+    async def stop(self, *, timeout: float = 30.0) -> None:
+        if not self._running or self._stopping:
+            raise RuntimeError("WorkerPool is not running or is already stopping")
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout)
+            or timeout <= 0
+        ):
+            raise ValueError("timeout must be finite and positive")
+        self._stopping = True
+        tasks = [worker.task for worker in self._workers if worker.task is not None]
+        for worker in self._workers:
+            worker.request_stop()
+        try:
+            _, pending = await asyncio.wait(tasks, timeout=timeout)
+            for task in pending:
+                task.cancel()
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.error("Fanout worker exited unexpectedly: %r", result)
+        except asyncio.CancelledError:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+        finally:
+            self._workers = []
+            self._running = False
+            self._stopping = False
 
     @property
     def is_running(self) -> bool:
-        """True if the pool has been started and not yet stopped."""
         return self._running
 
     @property
     def num_workers(self) -> int:
-        """The configured number of worker tasks."""
         return self._num_workers

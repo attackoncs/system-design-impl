@@ -3,6 +3,7 @@ implementation.
 """
 
 import abc
+import threading
 from typing import Optional
 
 
@@ -26,15 +27,19 @@ class InMemoryAuthenticator(Authenticator):
 
     def __init__(self) -> None:
         self._tokens: dict[str, str] = {}  # token -> user_id
+        self._lock = threading.RLock()
 
     def register_token(self, token: str, user_id: str) -> None:
         """Register a token for a user."""
-        self._tokens[token] = user_id
+        with self._lock:
+            self._tokens[token] = user_id
 
     def revoke_token(self, token: str) -> None:
         """Revoke a token."""
-        self._tokens.pop(token, None)
+        with self._lock:
+            self._tokens.pop(token, None)
 
     async def validate_token(self, token: str) -> Optional[str]:
         """Validate token against the in-memory store."""
-        return self._tokens.get(token)
+        with self._lock:
+            return self._tokens.get(token)

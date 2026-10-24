@@ -1,48 +1,45 @@
-"""Per-user sliding-window limits for publishing feed posts."""
+"""Per-user monotonic sliding-window admission with atomic recording."""
+
+from __future__ import annotations
 
 import collections
+import threading
 import time
+from collections.abc import Callable
 
-import news_feed_system.config
-import news_feed_system.exceptions
+from news_feed_system.config import RateLimitConfig
+from news_feed_system.exceptions import RateLimitError
 
 
 class SlidingWindowRateLimiter:
-    """Sliding window rate limiter for post publishing frequency.
-
-    Tracks timestamps of post publications per user. On each check, prunes
-    expired timestamps and verifies the count is within limits.
-    """
+    """Process-local limiter; rejected attempts do not consume capacity."""
 
     def __init__(
-        self,
-        config: news_feed_system.config.RateLimitConfig,
-        clock: callable = None,
+        self, config: RateLimitConfig, clock: Callable[[], float] | None = None
     ) -> None:
         self._config = config
         self._clock = clock or time.monotonic
-        self._windows: dict[str, list[float]] = collections.defaultdict(list)
+        self._windows: dict[str, collections.deque[float]] = {}
+        self._lock = threading.RLock()
+        self._last_cleanup = self._clock()
 
     def check_and_record(self, user_id: str) -> None:
-        """Check rate limit and record the publish event.
-
-        Args:
-            user_id: The publishing user's ID.
-
-        Raises:
-            RateLimitError: If the user has exceeded the rate limit.
-        """
-        now = self._clock()
-        cutoff = now - self._config.window_seconds
-        timestamps = self._windows[user_id]
-
-        # Prune expired entries
-        while timestamps and timestamps[0] < cutoff:
-            timestamps.pop(0)
-
-        if len(timestamps) >= self._config.max_posts:
-            raise news_feed_system.exceptions.RateLimitError(
-                user_id, self._config.max_posts, self._config.window_seconds
-            )
-
-        timestamps.append(now)
+        with self._lock:
+            now = self._clock()
+            cutoff = now - self._config.window_seconds
+            # Retire inactive users once per window instead of retaining every ID forever.
+            if now - self._last_cleanup >= self._config.window_seconds:
+                self._windows = {
+                    key: values
+                    for key, values in self._windows.items()
+                    if values and values[-1] > cutoff
+                }
+                self._last_cleanup = now
+            timestamps = self._windows.setdefault(user_id, collections.deque())
+            while timestamps and timestamps[0] <= cutoff:
+                timestamps.popleft()
+            if len(timestamps) >= self._config.max_posts:
+                raise RateLimitError(
+                    user_id, self._config.max_posts, self._config.window_seconds
+                )
+            timestamps.append(now)

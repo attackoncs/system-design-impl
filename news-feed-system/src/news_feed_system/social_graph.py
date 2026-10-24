@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import abc
 import collections
+import threading
 from typing import Dict, Set
 
 
@@ -47,27 +48,41 @@ class InMemorySocialGraph(SocialGraph):
     """In-memory implementation of the social graph for testing."""
 
     def __init__(self) -> None:
+        self._lock = threading.RLock()
         # user_id -> set of follower_ids
         self._followers: Dict[str, Set[str]] = collections.defaultdict(set)
         # user_id -> set of following_ids
         self._following: Dict[str, Set[str]] = collections.defaultdict(set)
 
     async def add_follow(self, follower_id: str, followee_id: str) -> None:
-        self._followers[followee_id].add(follower_id)
-        self._following[follower_id].add(followee_id)
+        with self._lock:
+            self._followers[followee_id].add(follower_id)
+            self._following[follower_id].add(followee_id)
 
     async def remove_follow(self, follower_id: str, followee_id: str) -> None:
-        self._followers[followee_id].discard(follower_id)
-        self._following[follower_id].discard(followee_id)
+        with self._lock:
+            for index, key, value in (
+                (self._followers, followee_id, follower_id),
+                (self._following, follower_id, followee_id),
+            ):
+                values = index.get(key)
+                if values is not None:
+                    values.discard(value)
+                    if not values:
+                        del index[key]
 
     async def get_followers(self, user_id: str) -> list[str]:
-        return list(self._followers[user_id])
+        with self._lock:
+            return sorted(self._followers.get(user_id, ()))
 
     async def get_following(self, user_id: str) -> list[str]:
-        return list(self._following[user_id])
+        with self._lock:
+            return sorted(self._following.get(user_id, ()))
 
     async def get_follower_count(self, user_id: str) -> int:
-        return len(self._followers[user_id])
+        with self._lock:
+            return len(self._followers.get(user_id, ()))
 
     async def is_following(self, follower_id: str, followee_id: str) -> bool:
-        return follower_id in self._followers[followee_id]
+        with self._lock:
+            return follower_id in self._followers.get(followee_id, ())
