@@ -4,6 +4,10 @@
 
 要求 Python 3.10+，不依赖额外 Python 包或外部服务。本章使用单节点 SQLite 原始日志传输，不代表复制队列高可用，也不代表原书十亿事件规模已验证。
 
+2026-10-26核心审查补充有界复用查询扇出、严格HTTP/RPC与绝对网络预算、工作线程完整关闭、
+历史位置校验和有限恢复任务。逐项映射见[章节记录](docs/chapter22-review.md)，
+最终测试/测量见[验证报告](benchmarks/results.md)，历史结果保留原日期。
+
 ## 运行
 
 在本目录执行：
@@ -11,8 +15,8 @@
 ```powershell
 $env:PYTHONPATH = 'src'
 python examples/network_demo.py
-python -m unittest discover -s tests -v
-python tools/benchmark.py --output benchmarks/results.json
+python -W error::ResourceWarning -m unittest discover -s tests -v
+python tools/benchmark.py --output benchmarks/review-2026-10-26.json
 ```
 
 实验自动选择本机端口、生成私有凭据、启动并清理自有的 6 个进程，日志保留在忽略提交的 `.runtime/lab-*`。若系统临时目录受限，先创建 `.runtime/tmp`，把 `TEMP` 和 `TMP` 设置到该目录的绝对路径。
@@ -71,6 +75,17 @@ python -m ad_click.cli ingest-file --config .runtime/secrets.json --source click
 
 ## 正确性与运维
 
+API持有一个`QueryService`，默认8个扇出线程、最多8个已接收查询及共享5秒查询网络预算。
+私有配置可设`query_workers/query_capacity/query_timeout`，满载503。每个必需分区的
+lineage/位置/计数均验证后才归并；先合并完整候选再用精确heap选Top N，不提前截断局部排名。
+
+各HTTP角色默认32个活跃handler、128监听积压、1MiB请求/8MiB响应、10秒绝对socket预算。
+CLI可设`--concurrency`（1..256）与`--request-timeout`（大于0且最多3600秒）。正文前鉴权，
+拒绝重复framing/JSON字段、非有限数和未知query字段。RPC直连、不走环境代理或重定向，
+HTTPS保持正常证书校验。socket期限不能强杀已接受的DNS/SQLite/CPU工作，容量保留到其退出。
+关闭先排空handler再释放查询执行器；聚合worker绑定成功后才启动，退出join已接收轮询。
+失败写通用重试日志并保留持久消费位置，不把私有异常正文暴露为worker状态。
+
 - 事件 ID 去重和原始数据不自动过期。IP 统一规范化，国家码统一大写。不会把一个用户的正常多次点击合并掉。
 - 热门广告按事件 ID 哈希分散到多个分区；每个分区返回全部候选计数，再全局按广告求和、排序，不能先截断局部 Top N。
 - 每个工作进程在同一事务提交计数、去重和检查点；事务前崩溃全部回滚，事务后恢复从持久位置继续。队列身份或分区不匹配时停止处理。
@@ -83,6 +98,11 @@ python -m ad_click.cli reconcile --config .runtime/secrets.json
 python -m ad_click.cli rebuild --config .runtime/secrets.json --partition 0 --output .runtime/rebuilt-0.sqlite
 ```
 
-对账用独立批计数计算到每个工作进程固定检查点，比较完整维度哈希；不一致时 CLI 退出码为 1。重建把有限原始日志重放到新数据库，拒绝覆盖文件；不会自动替换在线数据。批对账当前在内存中保存维度，适合本参考实现的有限数据量。
+对账用独立批计数计算到每个工作进程固定检查点，比较完整维度哈希；不一致时CLI退出码1。
+重建把有限原始日志重放到新数据库，拒绝覆盖文件，不自动替换在线数据。恢复默认共享60秒
+I/O预算、扫描200000条事件；对账另限每分区100000个不同维度，属于有界内存参考工具。
 
 生产边界：单日志节点和工作进程 SQLite 尚无复制/自动故障转移；测试保留本地磁盘，不覆盖机器或磁盘丢失。分区数固定，无在线扩分区；达到容量需显式迁移。维度行可接近事件数量；原始数据和去重键没有自动清理。尚无欺诈识别、财务结算、TLS、多租户权限、自动隐私生命周期或生产分布式批处理。更多语义见 [设计文档](docs/design.md) 和 [英文说明](README.md)。
+
+原书的第二输出队列/database writer和物理分布式MapReduce DAG未实现。当前原子效果只涵盖
+一个worker同库事务中的输入位置、去重和计数；不宣称任意外部sink、跨机器或新lineage的金融恰好一次。

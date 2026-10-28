@@ -1,5 +1,42 @@
 # Ad Click Event Aggregation: reference design
 
+## Core review — 2026-10-26
+
+Source: [chapter 22](<../../System Design Interview.md>), lines 9664–10506.
+[Coverage and remaining book features](chapter22-review.md) and
+[final executed evidence](../benchmarks/results.md) distinguish the executable
+reference from production extensions. The historical October 20 numbers are not
+the current regression count or a controlled performance baseline.
+
+Responsibilities are separated into schema/record/checkpoint modules, the local
+aggregator, `QueryService`, bounded recovery, and HTTP/lifecycle composition.
+Raw input normalization and page validation happen before writer transactions;
+already accepted positions are verified on replay rather than blindly skipped.
+Checkpoint files follow validated remote acknowledgements and preserve source
+identity, with atomic replacement and ownership locks. A stale lock after process
+death requires operator inspection; Windows directory-fsync/power-cut guarantees
+are not inferred from process tests.
+
+One query executor is owned by each API server, default workers/capacity/timeout
+8/8/5s. Queries share one I/O deadline across metadata and all workers, validate
+responses and retain admission until actual accepted work exits. Cancellation
+closes sockets; it cannot forcibly stop DNS, SQL or arbitrary CPU work. Exact
+heap selection follows the full global merge. A worker returns no truncated
+local candidate list. Recovery has one shared 60s I/O budget, 200000-event default,
+and reconciliation a 100000-dimension cap per partition.
+
+HTTP uses bounded non-daemon handlers (default32, backlog128), strict framing and
+JSON, authentication before body reads, and absolute socket deadlines (default10s).
+Responses and outbound reads cap at8MiB; requests cap at1MiB. Direct HTTP requests
+neither use environment proxies nor follow redirects. Shutdown drains accepted
+handlers before closing the query executor. The poller starts only after bind,
+logs sanitized failures, retries its durable position and joins on close.
+
+There is no second output queue/database writer, distributed physical DAG,
+replicated log, dynamic partition reassignment or external-sink financial
+exactly-once contract. The local checkpoint/count transaction remains the safety
+boundary; service availability and capacity still depend on one raw-log owner.
+
 ## Process and persistence boundaries
 
 The runnable lab has six independent processes: one ingress/raw-log HTTP service, four partition aggregation HTTP services, and one query/reduce HTTP service. The query and workers never open the ingress database. Each worker owns a different SQLite database and pulls pages over HTTP. No in-memory queue or shared Python object substitutes for transport.
@@ -34,7 +71,7 @@ All valid late events are still counted, including events older than the allowan
 
 One bucket row contains `(minute, ad_id, user_id, ip, country, count, revision)` with a composite primary key. Secondary indexes cover advertisement, country, user and IP by minute. Filters are exact AND conditions; IPv6 spelling variants canonicalize to the same value. No dimension cube of every filter combination is materialized, but high-cardinality dimensions can still produce nearly one row per event. This trades storage for arbitrary supported dimension intersections.
 
-Each worker sums its buckets into **all** matching advertisement totals, up to 10,000 candidate ads. The query process fetches partitions concurrently, sums each ad across them, then sorts by descending count and ascending ad ID for deterministic ties. It also enforces a global 10,000-candidate limit and a requested Top N in 1–1000. Budget errors return 422, not an approximate/truncated answer. Local top-N truncation is incorrect with salted hot keys: hot=6 on each of four shards wins globally with 24 even when each shard's local winner has 9. A real network test covers this counterexample.
+Each worker sums its buckets into **all** matching advertisement totals, up to 10,000 candidate ads. The query process fetches partitions concurrently, sums each ad across them, then uses an exact heap selection by descending count and ascending ad ID for deterministic ties. It also enforces a global 10,000-candidate limit and a requested Top N in 1–1000. Budget errors return 422, not an approximate/truncated answer. Local top-N truncation is incorrect with salted hot keys: hot=6 on each of four shards wins globally with 24 even when each shard's local winner has 9. A real network test covers this counterexample.
 
 Count and checkpoint come from one read transaction per worker. The overall response is a vector of such snapshots, not an atomic snapshot across all partitions. Lag compares a source-head snapshot taken before worker reads and is floored at zero if a worker advances past it. Lag=0 is not a linearizable freshness guarantee. Missing/errored workers, missing configured partitions, and inconsistent lineage return 503. The system never reports partial Top N as a successful query.
 

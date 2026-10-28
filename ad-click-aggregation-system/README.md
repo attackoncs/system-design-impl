@@ -4,6 +4,11 @@ A standard-library Python reference implementation with an actual six-process HT
 
 Requires Python 3.10+. No external Python dependencies or external services are needed. This chapter uses its own single-owner SQLite raw-log transport; it does not claim replicated broker HA or the book's billion-event scale.
 
+The 2026-10-26 core review adds bounded reusable query fan-out, strict HTTP/RPC
+framing and deadlines, complete worker shutdown, verified replay positions and
+bounded administrative recovery. See the [chapter mapping](docs/chapter22-review.md)
+and [final verification](benchmarks/results.md); older measurements retain their dates.
+
 ## Run and verify
 
 From this directory:
@@ -11,8 +16,8 @@ From this directory:
 ```powershell
 $env:PYTHONPATH = 'src'
 python examples/network_demo.py
-python -m unittest discover -s tests -v
-python tools/benchmark.py --output benchmarks/results.json
+python -W error::ResourceWarning -m unittest discover -s tests -v
+python tools/benchmark.py --output benchmarks/review-2026-10-26.json
 ```
 
 The demo and network tests allocate unused localhost ports, create private credentials, launch their own six processes, and stop only those processes on exit. Logs/databases remain under ignored `.runtime/lab-*` for inspection. On environments with a restricted system temp directory, create `.runtime/tmp` and set `TEMP`/`TMP` to that absolute path before testing.
@@ -82,6 +87,24 @@ print(http_json('http://127.0.0.1:9821/query', c['read_token'],
 
 ## Semantics and operations
 
+The API owns one `QueryService`: by default eight fan-out threads, eight admitted
+queries and a shared five-second query budget. Private configuration can set
+`query_workers`, `query_capacity`, `query_timeout`. Saturation returns 503. All
+configured workers are required; responses validate partition/lineage, checkpoints,
+counts and candidate budgets before reduction. Exact heap Top N operates only
+after merging every candidate; it never truncates local winners first.
+
+Every HTTP role defaults to 32 active handlers, a 128-connection listen backlog,
+one-MiB request/eight-MiB response limits and a ten-second absolute socket budget.
+CLI `--concurrency` accepts 1..256, `--request-timeout` accepts (0,3600] seconds.
+Authentication precedes body reads; duplicate framing/JSON keys, nonfinite numbers
+and unknown query fields fail. Outbound requests connect directly, verify normal
+HTTPS certificates and do not forward credentials through proxies or redirects.
+Socket deadlines cannot kill accepted DNS, SQLite or CPU work: admission remains
+occupied until that work exits. Shutdown drains handlers, then their query executor;
+aggregation workers bind successfully before starting and are joined on exit.
+Worker failures log a generic retry status while preserving the durable cursor.
+
 - Event-time minute buckets remain correct under out-of-order delivery. Watermarks advance monotonically using max event time/recorded acceptance time minus allowed lateness, and idle caught-up workers advance from wall clock. Valid late records always correct old buckets. `closed=true` is a watermark observation, **not immutable finality**.
 - Each result includes `lineage`, `checkpoints`, `lag`, `watermark`, `closed` and `late_corrections_allowed`. It combines per-partition snapshots, not a single cross-partition transaction. Checkpoint vectors identify revisions. Lag is an estimate from separate snapshots.
 - Salted partitioning spreads one hot ad across workers. Global Top N first merges all candidate totals; local top-N truncation would be wrong. Any required worker/source failure or missing topology returns 503; partial results are not successful responses.
@@ -93,8 +116,13 @@ python -m ad_click.cli reconcile --config .runtime/secrets.json
 python -m ad_click.cli rebuild --config .runtime/secrets.json --partition 0 --output .runtime/rebuilt-0.sqlite
 ```
 
-Reconciliation independently re-counts raw dimensions through each worker's captured checkpoint and hashes them against an atomic online audit. A mismatch returns CLI exit status 1. Rebuild reuses the stream processor into a new database through a captured raw head; it refuses to overwrite files. Neither command automatically replaces online data. Administrative batch work loads dimensions into memory and is intended for this bounded reference workload.
+Reconciliation independently re-counts raw dimensions through each worker's captured checkpoint and hashes them against an atomic online audit. A mismatch returns CLI exit status 1. Rebuild reuses the stream processor into a new database through a captured raw head; it refuses to overwrite files. Neither command automatically replaces online data. Recovery defaults to a shared 60-second I/O budget and 200,000 scanned events; reconciliation additionally caps a partition's distinct dimensions at 100,000. Administrative work retains bounded state in memory, not a distributed batch engine.
 
 ## Limits
 
 Single raw-log owner and per-worker SQLite files are not replicated or automatically failed over. Recovery tests retain local disks. Worker placement and partition count are static; no online resharding is supplied. Raw records, dimensions and dedup keys have no automatic retention cleanup; capacity requires explicit migration, not deletion that would break historical deduplication. Full dimension storage can approach one row per event. There is no fraud detection, financial settlement, TLS, tenant isolation, automatic privacy lifecycle or production distributed batch engine. Deploy only on trusted local networks; production requires those separate designs. See [design](docs/design.md) for precise invariants and tradeoffs.
+
+The book's second output queue/database-writer and physical distributed MapReduce
+DAG are not implemented. Atomic effects here cover a worker's input positions,
+deduplication and counts in one SQLite transaction; they do not establish financial
+exactly-once behavior across arbitrary sinks, machines or new source lineages.

@@ -1,59 +1,64 @@
+"""Partition-local aggregation: input positions and output commit together."""
+
+import hashlib
 import time
 
-from .common import Database, Error, digest, event, integer, query
+from .aggregation_schema import initialize
+from .common import Database, Error, dumps, integer, query
+from .records import prepare_batch, timestamp
 
 
 class Aggregator(Database):
     def __init__(self, path, partition, lateness=120, clock=time.time):
-        super().__init__(path)
-        self.partition, self.lateness, self.clock = partition, lateness, clock
         integer(partition, "partition", 0, 63)
         integer(lateness, "lateness", 0, 86400)
-        self.initialize("""
-        CREATE TABLE IF NOT EXISTS checkpoint(id INTEGER PRIMARY KEY CHECK(id=1), partition INTEGER,
-            lineage TEXT, seq INTEGER, watermark REAL, late INTEGER, max_event REAL);
-        CREATE TABLE IF NOT EXISTS seen(event_id TEXT PRIMARY KEY, hash TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS buckets(minute INTEGER, ad_id TEXT, user_id TEXT, ip TEXT, country TEXT,
-            count INTEGER NOT NULL, revision INTEGER NOT NULL,
-            PRIMARY KEY(minute,ad_id,user_id,ip,country));
-        CREATE INDEX IF NOT EXISTS by_ad ON buckets(ad_id,minute);
-        CREATE INDEX IF NOT EXISTS by_country ON buckets(country,minute);
-        CREATE INDEX IF NOT EXISTS by_user ON buckets(user_id,minute);
-        CREATE INDEX IF NOT EXISTS by_ip ON buckets(ip,minute);
-        """)
-        with self.transaction(True) as db:
-            db.execute(
-                "INSERT OR IGNORE INTO checkpoint VALUES(1,?,'',0,0,0,0)", (partition,)
-            )
-            if (
-                db.execute("SELECT partition FROM checkpoint").fetchone()[0]
-                != partition
-            ):
-                raise Error(409, "worker database belongs to another partition")
+        if not callable(clock):
+            raise ValueError("clock must be callable")
+        super().__init__(path)
+        self.partition, self.lateness, self.clock = partition, lateness, clock
+        initialize(self, partition)
 
     def apply(self, batch, before_commit=None):
-        """Output, dedup keys and input position commit in one SQLite transaction."""
-        if batch["partition"] != self.partition:
-            raise Error(409, "wrong partition")
+        """Freeze/verify CPU work first, then atomically accept a contiguous page.
+
+        Old positions are validated too. Full offset receipts cover all positions
+        accepted since migration; older receipts fall back to stored event IDs.
+        """
+        batch = prepare_batch(batch, self.partition)
         with self.transaction(True) as db:
             cp = dict(db.execute("SELECT * FROM checkpoint").fetchone())
             if cp["lineage"] and cp["lineage"] != batch["lineage"]:
                 raise Error(409, "queue lineage changed; explicit rebuild required")
             cp["lineage"] = batch["lineage"]
+            floor = db.execute(
+                "SELECT value FROM worker_meta WHERE key='position_floor'"
+            ).fetchone()[0]
             for entry in batch["entries"]:
-                if entry["seq"] <= cp["seq"]:
-                    continue
-                if entry["seq"] != cp["seq"] + 1:
-                    raise Error(409, "input offset gap")
-                value = event(entry["event"], entry["accepted"])
-                fingerprint = digest(value)
-                if fingerprint != entry["hash"]:
-                    raise Error(409, "raw log checksum mismatch")
+                value, fingerprint, seq = entry["event"], entry["hash"], entry["seq"]
                 seen = db.execute(
                     "SELECT hash FROM seen WHERE event_id=?", (value["event_id"],)
                 ).fetchone()
                 if seen and seen[0] != fingerprint:
                     raise Error(409, "conflicting replay event")
+                if seq <= cp["seq"]:
+                    receipt = db.execute(
+                        "SELECT event_id,hash,accepted FROM input_positions WHERE seq=?",
+                        (seq,),
+                    ).fetchone()
+                    if receipt:
+                        if tuple(receipt) != (
+                            value["event_id"],
+                            fingerprint,
+                            entry["accepted"],
+                        ):
+                            raise Error(409, "source position content changed")
+                    elif seq >= floor or not seen:
+                        raise Error(
+                            409, "historical source position cannot be verified"
+                        )
+                    continue
+                if seq != cp["seq"] + 1:
+                    raise Error(409, "input offset gap")
                 minute = value["click_timestamp"] // 60 * 60
                 if not seen:
                     late = minute + 60 <= cp["watermark"]
@@ -62,8 +67,7 @@ class Aggregator(Database):
                     )
                     db.execute(
                         """INSERT INTO buckets VALUES(?,?,?,?,?,1,1)
-                        ON CONFLICT(minute,ad_id,user_id,ip,country) DO UPDATE SET
-                        count=count+1,revision=revision+1""",
+                    ON CONFLICT(minute,ad_id,user_id,ip,country) DO UPDATE SET count=count+1,revision=revision+1""",
                         (
                             minute,
                             value["ad_id"],
@@ -73,7 +77,11 @@ class Aggregator(Database):
                         ),
                     )
                     cp["late"] += int(late)
-                cp["seq"] = entry["seq"]
+                db.execute(
+                    "INSERT INTO input_positions VALUES(?,?,?,?)",
+                    (seq, value["event_id"], fingerprint, entry["accepted"]),
+                )
+                cp["seq"] = seq
                 cp["max_event"] = max(cp["max_event"], value["click_timestamp"])
                 cp["watermark"] = max(
                     cp["watermark"],
@@ -96,9 +104,10 @@ class Aggregator(Database):
 
     def idle(self):
         with self.transaction(True) as db:
+            now = timestamp(self.clock(), "clock")
             db.execute(
-                "UPDATE checkpoint SET watermark=max(watermark,?)",
-                (self.clock() - self.lateness,),
+                "UPDATE checkpoint SET watermark=max(watermark,?) WHERE lineage<>''",
+                (max(0, now - self.lateness),),
             )
 
     def status(self):
@@ -111,7 +120,7 @@ class Aggregator(Database):
             return result
 
     def totals(self, body):
-        q = query(body, self.clock())
+        q = query(body, timestamp(self.clock(), "clock"))
         where = ["minute>=?", "minute<?"]
         args = [q["from"], q["to"]]
         for key, value in {
@@ -136,19 +145,30 @@ class Aggregator(Database):
                 "closed": q["to"] <= cp["watermark"],
             }
 
-    def audit(self):
-        # Hash dimensions as well as totals: equal grand totals can hide allocation bugs.
+    def audit(self, max_rows=1_000_000):
+        """Hash one consistent snapshot without retaining every dimension row."""
+        integer(max_rows, "audit row budget", 1, 1_000_000)
+        hasher = hashlib.sha256()
+        hasher.update(b"[")
+        count = total = 0
         with self.transaction() as db:
             cp = dict(db.execute("SELECT * FROM checkpoint").fetchone())
-            rows = [
-                list(r)
-                for r in db.execute(
-                    "SELECT minute,ad_id,user_id,ip,country,count FROM buckets ORDER BY minute,ad_id,user_id,ip,country"
-                )
-            ]
-            return {
-                "checkpoint": cp,
-                "digest": digest(rows),
-                "bucket_rows": len(rows),
-                "count": sum(r[-1] for r in rows),
-            }
+            rows = db.execute(
+                "SELECT minute,ad_id,user_id,ip,country,count FROM buckets ORDER BY minute,ad_id,user_id,ip,country LIMIT ?",
+                (max_rows + 1,),
+            )
+            for row in rows:
+                if count >= max_rows:
+                    raise Error(413, "audit row budget exceeded")
+                if count:
+                    hasher.update(b",")
+                hasher.update(dumps(list(row)).encode())
+                count += 1
+                total += row[-1]
+        hasher.update(b"]")
+        return {
+            "checkpoint": cp,
+            "digest": hasher.hexdigest(),
+            "bucket_rows": count,
+            "count": total,
+        }

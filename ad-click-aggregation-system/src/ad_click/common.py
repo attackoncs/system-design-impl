@@ -4,7 +4,6 @@ import ipaddress
 import json
 from pathlib import Path
 import sqlite3
-from urllib.request import Request, urlopen
 
 
 class Error(Exception):
@@ -124,18 +123,26 @@ class Database:
             db.close()
 
 
-def http_json(url, token, body=None, timeout=5):
-    data = None if body is None else dumps(body).encode()
-    request = Request(
+def http_json(
+    url,
+    token,
+    body=None,
+    timeout=5,
+    *,
+    deadline=None,
+    cancel=None,
+    max_bytes=8 * 1024 * 1024,
+):
+    """Direct bounded compatibility adapter; never follows a credentialed redirect."""
+    from .transport import request
+
+    return request(
         url,
-        data=data,
-        headers={
-            "Authorization": "Bearer " + token,
-            "Content-Type": "application/json",
-        },
+        "GET" if body is None else "POST",
+        body,
+        token,
+        timeout=timeout,
+        deadline=deadline,
+        cancel=cancel,
+        max_bytes=max_bytes,
     )
-    with urlopen(request, timeout=timeout) as response:
-        raw = response.read(8 * 1024 * 1024 + 1)
-        if len(raw) > 8 * 1024 * 1024:
-            raise Error(413, "response exceeded 8 MiB")
-        return json.loads(raw)

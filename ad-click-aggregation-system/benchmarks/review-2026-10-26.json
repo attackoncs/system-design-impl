@@ -1,0 +1,26 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "processes": 6,
+  "partitions": 4,
+  "events": 3000,
+  "hot_fraction": 0.7,
+  "publish_seconds": 0.533,
+  "publish_events_per_second": 5631.68,
+  "all_processed_seconds": 0.778,
+  "batch_accept_p95_ms": 43.45,
+  "query_requests": 40,
+  "query_clients": 4,
+  "query_p50_ms": 60.902,
+  "query_p95_ms": 78.452,
+  "query_requests_per_second": 65.8,
+  "partition_counts": {
+    "0": 751,
+    "1": 738,
+    "2": 745,
+    "3": 766
+  },
+  "reconciliation_matches": true,
+  "sqlite_bytes": 1687552,
+  "scope": "Real localhost HTTP ingest + durable partitioned queue + four workers + API; single raw-log owner, no broker replication; fixed-range uncached queries"
+}
