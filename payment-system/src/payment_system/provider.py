@@ -1,17 +1,16 @@
 from abc import ABC, abstractmethod
-import json
+from .persistence import ClockedDatabase
+from .contracts import freeze, receipt_copy
 import time
 import uuid
 
 from .common import (
-    Database,
     Error,
     digest,
     dumps,
     http_json,
     identifier,
     money,
-    signature,
 )
 
 
@@ -29,10 +28,17 @@ class MockHTTPProvider(PaymentProvider):
     def __init__(self, config):
         self.url, self.token = config["provider_url"], config["provider_token"]
 
-    def query(self, operation):
-        return http_json(self.url + "/operations/" + identifier(operation), self.token)
+    def query(self, operation, *, deadline=None, cancel=None):
+        return receipt_copy(
+            http_json(
+                self.url + "/operations/" + identifier(operation),
+                self.token,
+                deadline=deadline,
+                cancel=cancel,
+            )
+        )
 
-    def create(self, operation):
+    def create(self, operation, *, deadline=None, cancel=None):
         body = {
             k: operation[k]
             for k in (
@@ -45,15 +51,23 @@ class MockHTTPProvider(PaymentProvider):
                 "destination",
             )
         }
-        return http_json(self.url + "/operations", self.token, body)
+        return receipt_copy(
+            http_json(
+                self.url + "/operations",
+                self.token,
+                body,
+                deadline=deadline,
+                cancel=cancel,
+            )
+        )
 
 
-class MockPSP(Database):
+class MockPSP(ClockedDatabase):
     """Synthetic provider with an independent ledger, hosted tokens and callback queue."""
 
     def __init__(self, path, config, clock=time.time):
-        super().__init__(path)
-        self.config, self.clock = config, clock
+        super().__init__(path, clock)
+        self.config = freeze(config)
         self.initialize("""
         CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY,hash TEXT,merchant TEXT,kind TEXT,parent TEXT,amount INTEGER,
             currency TEXT,provider_id TEXT,status TEXT,revision INTEGER,checkout TEXT,token TEXT UNIQUE,expires REAL);
@@ -61,6 +75,16 @@ class MockPSP(Database):
         CREATE TABLE IF NOT EXISTS control(id INTEGER PRIMARY KEY CHECK(id=1),lose_response INTEGER,webhooks_down INTEGER,query_down INTEGER,statement_delta INTEGER);
         INSERT OR IGNORE INTO control VALUES(1,0,0,0,0);
         """)
+        with self.transaction(True) as db:
+            fields = {row["name"] for row in db.execute("PRAGMA table_info(webhooks)")}
+            for name, declaration in [
+                ("lease", "REAL NOT NULL DEFAULT 0"),
+                ("token", "TEXT NOT NULL DEFAULT ''"),
+            ]:
+                if name not in fields:
+                    db.execute(
+                        "ALTER TABLE webhooks ADD COLUMN " + name + " " + declaration
+                    )
 
     @staticmethod
     def receipt(row):
@@ -84,12 +108,13 @@ class MockPSP(Database):
         payload = self.receipt(row)
         id = "event_" + row["id"] + "_" + str(row["revision"])
         db.execute(
-            "INSERT OR IGNORE INTO webhooks VALUES(?,?,'pending',0,?,'')",
+            "INSERT OR IGNORE INTO webhooks(id,payload,status,attempts,due,error) VALUES(?,?,'pending',0,?,'')",
             (id, dumps(payload), self.clock()),
         )
 
     def control(self, body=None):
-        with self.transaction(True) as db:
+        body = freeze(body)
+        with self.transaction(body is not None) as db:
             if body is not None:
                 if not isinstance(body, dict) or set(body) != {
                     "lose_response",
@@ -122,6 +147,7 @@ class MockPSP(Database):
             return dict(db.execute("SELECT * FROM control").fetchone())
 
     def create(self, body):
+        body = freeze(body)
         if not isinstance(body, dict) or set(body) != {
             "id",
             "merchant",
@@ -148,6 +174,17 @@ class MockPSP(Database):
             "test-bank-decline",
         ):
             raise ValueError("test token references only; no card/bank numbers")
+        allowed = {
+            "payin": ("hosted",),
+            "payout": ("test-bank-ok", "test-bank-decline"),
+            "refund": ("test-refund",),
+        }
+        if body["destination"] not in allowed[body["kind"]]:
+            raise ValueError("destination does not match provider operation kind")
+        if body["kind"] == "refund":
+            identifier(body["parent"])
+        elif body["parent"] is not None:
+            raise ValueError("only refunds may have a parent")
         with self.transaction(True) as db:
             old = db.execute(
                 "SELECT * FROM operations WHERE id=?", (body["id"],)
@@ -219,6 +256,7 @@ class MockPSP(Database):
         return result
 
     def get(self, id):
+        identifier(id)
         if self.control()["query_down"]:
             raise Error(503, "mock query endpoint unavailable")
         with self.transaction(True) as db:
@@ -244,6 +282,15 @@ class MockPSP(Database):
             ).fetchone()
             if not row:
                 raise Error(404, "mock checkout session missing")
+            if row["status"] == "PENDING" and row["expires"] <= self.clock():
+                db.execute(
+                    "UPDATE operations SET status='FAILED',revision=revision+1 WHERE id=?",
+                    (row["id"],),
+                )
+                row = db.execute(
+                    "SELECT * FROM operations WHERE id=?", (row["id"],)
+                ).fetchone()
+                self.queue_event(db, row)
             if choice is not None:
                 if choice not in ("test-success", "test-decline"):
                     raise ValueError(
@@ -282,45 +329,10 @@ class MockPSP(Database):
                     row["amount"] += delta
             return {"operations": rows, "snapshot": digest(rows), "simulated": True}
 
-    def dispatch_once(self):
-        if self.control()["webhooks_down"]:
-            return False
-        with self.transaction() as db:
-            row = db.execute(
-                "SELECT * FROM webhooks WHERE status='pending' AND due<=? ORDER BY due,id LIMIT 1",
-                (self.clock(),),
-            ).fetchone()
-        if not row:
-            return False
-        body = {"event_id": row["id"], "receipt": json.loads(row["payload"])}
-        timestamp = int(self.clock())
-        try:
-            http_json(
-                self.config["api_url"] + "/webhooks/mock",
-                body=body,
-                headers={
-                    "X-Timestamp": str(timestamp),
-                    "X-Signature": signature(
-                        self.config["webhook_secret"], timestamp, dumps(body).encode()
-                    ),
-                },
-            )
-            with self.transaction(True) as db:
-                db.execute(
-                    "UPDATE webhooks SET status='done',attempts=attempts+1,error='' WHERE id=?",
-                    (row["id"],),
-                )
-        except Exception as exc:
-            with self.transaction(True) as db:
-                db.execute(
-                    "UPDATE webhooks SET attempts=attempts+1,due=?,error=? WHERE id=?",
-                    (
-                        self.clock() + min(30, 0.1 * 2 ** min(row["attempts"], 8)),
-                        str(exc)[:300],
-                        row["id"],
-                    ),
-                )
-        return True
+    def dispatch_once(self, *, deadline=None, cancel=None):
+        from .provider_delivery import dispatch_once
+
+        return dispatch_once(self, deadline=deadline, cancel=cancel)
 
     def status(self):
         with self.transaction() as db:

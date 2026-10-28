@@ -1,15 +1,20 @@
 import html
 import hmac
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import json
+from http.server import BaseHTTPRequestHandler
+from .server_runtime import Server
+from .transport import loads, length
+from .routes import target, validate_route
 import sqlite3
 import time
-from urllib.parse import urlsplit
 
 from .common import Error, dumps, signature
 
 
-def server(role, config, store, host, port):
+def server(role, config, store, host, port, *, concurrency=32, request_timeout=15):
+    config = loads(dumps(config))
+    if role not in ("api", "provider", "receiver"):
+        raise ValueError("invalid HTTP role")
+
     class Handler(BaseHTTPRequestHandler):
         # Apply before parsing headers, including clients that send no request.
         timeout = 10.0
@@ -19,6 +24,11 @@ def server(role, config, store, host, port):
 
         def auth(self, kind):
             supplied = self.headers.get("Authorization", "")
+            if (
+                len(self.headers.get_all("Authorization", [])) != 1
+                or not supplied.isascii()
+            ):
+                raise Error(401, "one ASCII role credential required")
             if kind == "merchant":
                 for merchant, token in config["merchants"].items():
                     if hmac.compare_digest(supplied, "Bearer " + token):
@@ -27,17 +37,44 @@ def server(role, config, store, host, port):
                 return None
             raise Error(401, "valid role credential required")
 
-        def body(self, raw=False):
-            size = int(self.headers.get("Content-Length", "0"))
-            if not 0 < size <= 1024 * 1024:
-                raise Error(413, "JSON body requires 1..1048576 bytes")
+        def body(self, raw=False, maximum=1024 * 1024):
+            sizes = self.headers.get_all("Content-Length", [])
+            if len(sizes) != 1 or self.headers.get_all("Transfer-Encoding", []):
+                raise ValueError(
+                    "one Content-Length without Transfer-Encoding required"
+                )
+            size = length(sizes[0])
+            if not 0 < size <= maximum:
+                raise Error(413, "JSON body exceeds request budget")
+            types = self.headers.get_all("Content-Type", [])
+            if (
+                len(types) != 1
+                or types[0].split(";", 1)[0].strip().lower() != "application/json"
+            ):
+                raise ValueError("application/json body required")
             data = self.rfile.read(size)
             if len(data) != size:
                 raise ValueError("truncated request")
-            return data if raw else json.loads(data)
+            value = data if raw else loads(data)
+            if not raw and not isinstance(value, dict):
+                raise ValueError("JSON object required")
+            return value
 
         def dispatch(self):
-            path, method = urlsplit(self.path).path, self.command
+            path, params = target(self.requestline.split()[1])
+            method = self.command
+            validate_route(role, path, method)
+            if params:
+                raise ValueError("query parameters unsupported")
+            sizes = self.headers.get_all("Content-Length", [])
+            if len(sizes) > 1 or (
+                method == "GET"
+                and (
+                    self.headers.get_all("Transfer-Encoding", [])
+                    or any(length(size) != 0 for size in sizes)
+                )
+            ):
+                raise ValueError("ambiguous or unused request body")
             if path == "/health" and method == "GET":
                 return {"role": role, "simulated_payments_only": True}
             if role == "receiver":
@@ -89,25 +126,50 @@ def server(role, config, store, host, port):
                 raise Error(404, "unknown provider route")
             if path == "/webhooks/mock" and method == "POST":
                 raw = self.body(True)
-                stamp = int(self.headers.get("X-Timestamp", "0"))
+                for name in ("X-Timestamp", "X-Signature"):
+                    if len(self.headers.get_all(name, [])) != 1:
+                        raise Error(401, "one signature and timestamp required")
+                stamp_text = self.headers.get("X-Timestamp", "")
+                supplied = self.headers.get("X-Signature", "")
+                if (
+                    not stamp_text.isascii()
+                    or not stamp_text.isdecimal()
+                    or len(stamp_text) > 16
+                    or not supplied.isascii()
+                    or len(supplied) != 64
+                ):
+                    raise Error(401, "invalid webhook authentication")
+                stamp = int(stamp_text)
                 if abs(time.time() - stamp) > 300 or not hmac.compare_digest(
                     self.headers.get("X-Signature", ""),
                     signature(config["webhook_secret"], stamp, raw),
                 ):
                     raise Error(401, "webhook signature or timestamp invalid")
-                body = json.loads(raw)
+                body = loads(raw)
                 if not isinstance(body, dict) or set(body) != {"event_id", "receipt"}:
                     raise ValueError("invalid callback envelope")
                 return store.apply(body["receipt"], body["event_id"])
             if path.startswith("/internal/"):
                 self.auth("internal")
+                if path.startswith("/internal/checkouts/") and method == "GET":
+                    return store.checkout(path.rsplit("/", 1)[1])
                 if path.startswith("/internal/operation/") and method == "GET":
                     return store.operation(path.split("/")[-1])
                 if method == "POST":
-                    body = self.body()
+                    body = self.body(
+                        maximum=8 * 1024 * 1024
+                        if path == "/internal/reconcile"
+                        else 1024 * 1024
+                    )
+                    if path == "/internal/checkouts":
+                        return store.create_checkout(body)
                     if path == "/internal/claim":
-                        return {"job": store.claim()}
+                        if body:
+                            raise ValueError("empty claim body required")
+                        return {"job": store.claim(lease_seconds=30)}
                     if path == "/internal/finish":
+                        if "job" not in body or set(body) - {"job", "pending", "error"}:
+                            raise ValueError("invalid job completion")
                         return {
                             "finished": store.finish_job(
                                 body["job"],
@@ -116,15 +178,23 @@ def server(role, config, store, host, port):
                             )
                         }
                     if path == "/internal/apply":
+                        if set(body) != {"receipt"}:
+                            raise ValueError("receipt required")
                         return store.apply(body["receipt"])
                     if path == "/internal/reconcile":
-                        return store.reconcile(body["run"], body["statement"])
+                        if set(body) != {"run", "statement", "job"}:
+                            raise ValueError("leased reconciliation required")
+                        return store.reconcile(
+                            body["run"], body["statement"], job=body["job"]
+                        )
                 raise Error(404, "unknown internal route")
             if path.startswith("/admin/"):
                 self.auth("admin")
                 if path == "/admin/status" and method == "GET":
                     return store.status()
                 if path == "/admin/reconcile" and method == "POST":
+                    if self.body():
+                        raise ValueError("empty reconcile body required")
                     return store.schedule_reconcile()
                 if path == "/admin/retry-job" and method == "POST":
                     body = self.body()
@@ -138,6 +208,8 @@ def server(role, config, store, host, port):
                 if path.startswith("/admin/reconciliations/") and method == "GET":
                     return store.reconciliation(path.split("/")[-1])
                 if path.startswith("/admin/retry/") and method == "POST":
+                    if self.body():
+                        raise ValueError("empty retry body required")
                     return store.retry(path.split("/")[-1])
                 raise Error(404, "unknown administrator route")
             merchant = self.auth("merchant")
@@ -145,6 +217,11 @@ def server(role, config, store, host, port):
                 return store.wallet(merchant)
             if path == "/v1/ledger" and method == "GET":
                 return store.ledger(merchant)
+            if path.startswith("/v1/payments/") and method == "GET":
+                value = store.operation(path.rsplit("/", 1)[1], merchant)
+                if value["kind"] != "payin":
+                    raise Error(404, "payment missing")
+                return value
             if path.startswith("/v1/operations/") and method == "GET":
                 return store.operation(path.split("/")[-1], merchant)
             if method == "POST" and path in (
@@ -161,13 +238,12 @@ def server(role, config, store, host, port):
             raise Error(404, "unknown merchant route")
 
         def handle_request(self):
-            self.connection.settimeout(10)
             self.content_type = "application/json"
             try:
                 value, status = self.dispatch(), 200
             except Error as exc:
                 value, status = {"error": str(exc)}, exc.status
-            except (ValueError, TypeError, KeyError) as exc:
+            except (ValueError, TypeError, KeyError, RecursionError) as exc:
                 value, status = {"error": str(exc)}, 400
             except (OSError, TimeoutError, sqlite3.OperationalError):
                 value, status = (
@@ -176,15 +252,22 @@ def server(role, config, store, host, port):
                 )
             except Exception:
                 value, status = {"error": "internal failure"}, 500
+            self.close_connection = True
             raw = value if isinstance(value, bytes) else dumps(value).encode()
             self.send_response(status)
             self.send_header("Content-Type", self.content_type)
             self.send_header("Content-Length", str(len(raw)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
             self.end_headers()
-            self.wfile.write(raw)
+            try:
+                self.wfile.write(raw)
+            except OSError:
+                pass
 
         do_GET = handle_request
         do_POST = handle_request
 
-    return ThreadingHTTPServer((host, port), Handler)
+    return Server(
+        (host, port), Handler, concurrency=concurrency, request_timeout=request_timeout
+    )

@@ -1,4 +1,5 @@
-from .common import Database, Error, digest, dumps
+from .common import Database, Error, digest, dumps, identifier, money
+from .contracts import freeze
 
 
 class Receiver(Database):
@@ -13,6 +14,21 @@ class Receiver(Database):
         """)
 
     def receive(self, body):
+        body = freeze(body)
+        if not isinstance(body, dict) or set(body) != {
+            "event_id",
+            "operation",
+            "merchant",
+            "status",
+            "amount",
+            "currency",
+        }:
+            raise ValueError("invalid internal terminal event")
+        for field in ("event_id", "operation", "merchant"):
+            identifier(body[field])
+        money(body["amount"])
+        if body["currency"] != "USD" or body["status"] not in ("SUCCEEDED", "FAILED"):
+            raise ValueError("invalid terminal event state")
         id = body["event_id"]
         with self.transaction(True) as db:
             row = db.execute("SELECT * FROM events WHERE id=?", (id,)).fetchone()

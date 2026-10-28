@@ -1,13 +1,10 @@
 from contextlib import contextmanager
 import hashlib
 import hmac
-from io import BytesIO
 import json
 from pathlib import Path
 import re
 import sqlite3
-from urllib.error import HTTPError
-from urllib.request import Request, urlopen
 
 
 class Error(Exception):
@@ -81,29 +78,26 @@ class Database:
             db.close()
 
 
-def http_json(url, token=None, body=None, method=None, headers=None):
-    req = Request(
+def http_json(
+    url,
+    token=None,
+    body=None,
+    method=None,
+    headers=None,
+    *,
+    timeout=5,
+    deadline=None,
+    cancel=None,
+):
+    from .transport import request
+
+    return request(
         url,
-        data=None if body is None else dumps(body).encode(),
-        method=method,
-        headers={
-            "Content-Type": "application/json",
-            **({"Authorization": "Bearer " + token} if token else {}),
-            **(headers or {}),
-        },
+        method or ("GET" if body is None else "POST"),
+        body=body,
+        token=token,
+        headers=headers,
+        timeout=timeout,
+        deadline=deadline,
+        cancel=cancel,
     )
-    try:
-        response = urlopen(req, timeout=5)
-    except HTTPError as exc:
-        try:
-            data = exc.read(1024 * 1024)
-        finally:
-            exc.close()
-        raise HTTPError(
-            exc.url, exc.code, exc.msg, exc.headers, BytesIO(data)
-        ) from None
-    with response:
-        data = response.read(8 * 1024 * 1024 + 1)
-        if len(data) > 8 * 1024 * 1024:
-            raise Error(413, "response exceeds reference budget")
-        return json.loads(data)

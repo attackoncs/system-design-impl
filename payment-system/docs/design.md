@@ -86,4 +86,66 @@ See `../benchmarks/REPORT.md` for reproducible commands and actual results. Test
 
 Loopback-only HTTP and separate generated bearer tokens isolate the local exercise. This is not production TLS, key rotation, user checkout authorization, PCI compliance or real transaction processing. Merchant registration is static configuration. Checkout tokens are bearer capabilities. Mock control endpoints require admin credentials.
 
-SQLite serializes writes and has no authority replica/automatic failover. The single demo worker polls rather than using a high-throughput broker; pending checkouts can increase queue/query load. PSP history is capped at 10,000 operations and HTTP responses at 8 MiB; ledger responses fail explicitly above 100 transactions, and status exposes the first 100 open reviews. Backups, partitions, reconciliation pagination, review pagination, production SLOs, multi-order checkout, chargebacks, tax, fee allocation, multiple currencies and real PSP integrations remain outside this reference.
+SQLite serializes writes and has no authority replica/automatic failover. The single demo worker polls rather than using a high-throughput broker; pending checkouts can increase queue/query load. PSP history is capped at 10,000 operations and HTTP responses at 8 MiB; ledger responses fail explicitly above 100 transactions, and status exposes the first 100 open reviews. Backups, partitions, reconciliation pagination, review pagination, production SLOs, atomic multi-merchant external charges, chargebacks, tax, fee allocation, multiple currencies and real PSP integrations remain outside this reference.
+
+## Chapter 27 engineering review — 2026-10-27
+
+Added trusted checkout orchestration: `POST /internal/checkouts` accepts
+`{checkout_id,orders}` with1..20 orders. Each order contains merchant,order_id,
+amount (integer USD cents) and currency. The internal credential is required;
+a merchant token cannot create orders for other merchants. All operation IDs and
+jobs are persisted in one SQL transaction; a bad later order rolls the whole
+acceptance back. Reusing the checkout ID with changed content returns409.
+`GET /internal/checkouts/{id}` returns the current independent order states.
+External authorizations/settlements are independent: this is not one atomic
+cross-merchant PSP charge. `GET /v1/payments/{id}` is a pay-in-only alias for the
+existing owned operation view.
+
+The Store facade separates schema, operation transitions, jobs, ledger,
+reconciliation, checkout orchestration and value contracts. Values are frozen
+before writer waits; one finite clock is sampled after acquiring each writer.
+Ledger duplicate IDs verify the full original posting rather than silently
+ignoring different accounts, amounts or provider identities. Provider-version
+fingerprints persist independently of UNKNOWN state, so a previously observed
+revision cannot change content and release a hold. Conflicts enter review.
+Pre-upgrade revisions without a stored fingerprint cannot be retroactively
+verified; their current state checks and independent reconciliation still apply.
+
+The worker owns four executor threads by default (`worker_concurrency=1..16`).
+HTTP claims use30-second leases, and each job shares a20-second total I/O budget.
+Only an explicit provider404 permits creation with the original operation ID.
+The returned receipt must match that claimed operation before application.
+Finishing checks token and expiry, even if no replacement worker has claimed it.
+Unknown outcomes retain funds and the original retry identity. Callback dispatch
+uses separate15-second fenced claims and5-second I/O budgets; stale acknowledgements
+cannot overwrite newer attempts. Notifications verify the consumer's event ID.
+
+Reconciliation validates the complete bounded simulated statement, checksum,
+unique operation/provider IDs and strict receipts before mutation. It requires
+a live job claim at the internal HTTP boundary and preserves completed results.
+Differences stay in the investigation queue; no automatic monetary adjustment.
+Both authority and simulator cap operations at10000. Large histories still need
+streaming snapshots, retention and an operational reconciliation process.
+
+Direct HTTP disables proxies/redirects and validates JSON/framing. HTTP admits32
+requests with15-second budgets; normal JSON input is1MiB, internal statements
+up to8MiB, RPC responses8MiB. Strict paths/headers/roles reject ignored fields.
+Bindings precede dispatcher startup; stop cancels sockets and drains owned threads.
+Deadlines do not forcibly terminate arbitrary SQL/CPU/DNS/custom providers.
+
+Final48tests passed21.561s, no skips, -Werror; baseline13tests16.541s.
+Five tests use four independent processes. The new demo verified stable checkout
+IDs, independent SUCCEEDED/FAILED outcomes across two merchants, payout/refund,
+available500/held0,other wallet0,five postings,four unique PSP operations and
+matching reconciliation. Original demo still balances5000cents/five postings.
+20pay-ins/four clients:6.67completed/s,p50/p95537.585/697.339ms. The sample remains
+below the book's10TPS example and is not sustained capacity or a controlled
+speedup comparison. [Review](chapter27-review.md),[measurements](../benchmarks/REPORT.md).
+
+No real PSP/card/bank service, AML/fraud provider, PCI certification, authority HA,
+TLS,bank settlement,FX,fees,taxes,chargebacks or finance-review resolution UI has
+been implemented or verified. All money is simulated. No commit or push.
+
+Provider transaction IDs are also globally unique across local operations;
+reuse enters review before posting. The database unique index is a second guard.
+Legacy duplicate bindings must be audited before upgrading.
