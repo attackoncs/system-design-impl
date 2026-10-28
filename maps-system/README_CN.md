@@ -1,82 +1,105 @@
 # 地图系统（第19章）
 
-实现有向道路图、三种模式路线／ETA、位置批量上报、交通聚合、按需路由瓦片、
-版本化 GeoJSON和PNG瓦片、独立HTTP副本及区域读故障恢复。
-示例道路为CC0合成数据，不是真实出行导航。
+有向道路寻路/ETA、位置批量上报、交通聚合、分类路由瓦片、版本化GeoJSON/PNG，
+补齐持久预生成瓦片与私有导航会话的后台路线更新。示例为CC0合成道路，不是真实导航数据。
+[English](README.md)。
 
 ## 运行
 
-Python 3.10+，只使用标准库（含SQLite RTree），无需外部账户。在本目录执行：
+Python3.10+，只使用标准库（含SQLite RTree）。在本目录执行：
 
 ```powershell
 python -m unittest discover -s tests -v
 python examples/network_demo.py
+python examples/adaptive_demo.py
 python tools/benchmark.py --output .runtime/benchmark.json
 ```
 
-示例启动主服务、只读副本、区域网关三个独立进程及两个独立数据库；通过真实HTTP
-验证路线、封路重规划、PNG/GeoJSON输出和主服务停止后的副本读取。
-退出停止自有进程，日志和实验数据库留在忽略目录 `.runtime/lab-<uuid>/`。
+示例使用主服务/只读副本/区域网关三个独立进程和独立目录数据库，真实HTTP验证路线、
+交通和瓦片故障恢复。退出停止自有进程，日志留在忽略目录`.runtime/lab-<uuid>/`。
 
-持久服务先设置 `$env:PYTHONPATH = 'src'`：
+另一个adaptive_demo示例通过CLI预生成和真实HTTP/SSE验证私有导航自动重规划。
+
+每个终端先设置`$env:PYTHONPATH='src'`，持久服务可依次运行：
 
 ```powershell
 python -m maps_service.cli import --graph examples/roads.json
 python -m maps_service.cli provision --user admin --admin --token-file .runtime/admin.token
 python -m maps_service.cli provision --user alice --token-file .runtime/alice.token
-python -m maps_service.cli serve --port 8095
+python -m maps_service.cli precompute --tiles examples/tiles.json --tile-archive .runtime/tiles.sqlite
+python -m maps_service.cli serve --port 8095 --tile-archive .runtime/tiles.sqlite
 ```
 
-另两个终端各设置相同PYTHONPATH并分别运行：
+另两个终端分别运行：
 
 ```powershell
 python -m maps_service.cli replica --db .runtime/replica.sqlite --port 8096 --upstream http://127.0.0.1:8095 --token-file .runtime/admin.token
 python -m maps_service.cli gateway --port 8097 --regions examples/regions.json
 ```
 
-默认只监听localhost。凭据文件私有，不能提交；生产部署需要TLS和身份服务。
+归档文件必须与目录数据库分开；副本可另传--tile-archive，但公开目录复制不会分发归档文件。
+凭据独占写入并fsync后才创建SQL用户，普通失败仅清理身份仍匹配的自有新文件。
+文件和备份需保护，默认只监听localhost，TLS/生产身份仍需部署。
 
-## 语义与接口
+## 主要接口
 
-- `POST /v1/route`：origin/destination为节点ID、精确地址或经纬度对象；
-  mode支持driving/walking/cycling。可选avoid_tolls、alternatives（1..3）、
-  max_nodes。Dijkstra按ETA寻路；候选采用有界单边避让，不是完整K最短路。
-  不可达返回404，搜索预算耗尽返回413，不能把耗尽当成不可达。
-- `GET /v1/geocode?address=Central` 和 `/v1/reverse?latitude=0&longitude=0`：
-  仅覆盖导入数据，反向查询匹配1000米内最近节点，不是全球地址服务。
-- `GET /v1/tiles/{graph}/{z}/{x}/{y}.geojson` 或 `.png`：真实矢量／256像素PNG。
-  支持z0—21、经度环绕、极区投影限制和跨日期变更线裁切。
-- `GET /v1/routing-tiles/{graph}/{x}/{y}`：z16路由瓦片及跨瓦片目标引用。
-- `/v1/locations`：POST携带Bearer和reports数组（1..100条），GET只读自己最近
-  24小时内的最多100条。报告含event_id/sequence/Unix timestamp/latitude/
-  longitude，可选mode和heading。相同ID重试不重复；内容冲突整个批次回滚。
-  乱序报告保留但不回退当前位置，时间不能超过过去24小时或未来30秒。
-- `/internal/traffic`、`/internal/aggregate`、`/internal/graph`：管理员Bearer，
-  分别更新交通、聚合样本、原子替换道路图；`/internal/catalog`导出公开目录。
-- `/health`：图UUID/hash、目录／交通版本、就绪状态及副本复制错误。
+| 方法/路径 | 行为 |
+| --- | --- |
+| POST /v1/route | origin/destination；可选mode/avoid_tolls/alternatives/max_nodes |
+| GET /v1/geocode?address=Central | 固定数据中精确规范化地址或节点ID |
+| GET /v1/reverse?latitude=0&longitude=0 | 1000米内最近固定节点 |
+| GET /v1/tile-urls?latitude=0&longitude=0&zoom=14 | 当前图版本的本格/邻居URL，可选format=png/geojson |
+| GET /v1/tiles/{graph}/{z}/{x}/{y}.png或.geojson | 真实256像素PNG或裁切矢量 |
+| GET /v1/routing-tiles/{graph}/{z}/{x}/{y} | z16全道路、z12主干/高速、z8高速；层级和跨瓦片入口 |
+| GET /v1/routing-tiles/{graph}/{x}/{y} | 兼容z16旧接口 |
+| POST/GET /v1/locations | Bearer；批上报1..100条 / 自己保留期内最近100条 |
+| POST /v1/navigation | Bearer，主服务；路线选项加可选ttl，建立私有会话 |
+| GET/DELETE /v1/navigation/{id} | 本人读取/删除导航会话 |
+| POST /v1/navigation/{id}/position | 本人更新{origin: 节点/地址/坐标}并重算 |
+| GET /v1/navigation/{id}/events?after=N | 本人有限SSE页；Last-Event-ID重连最新路线 |
+| GET /health | 图/目录/交通版本、角色、就绪和已挂载后台组件状态 |
 
-地图匹配采用100米内短路段切平面近似；缺少明确heading或方向有歧义的报告不产生
-速度样本。相同有向道路上前进、相隔1—120秒、速度0.5—50m/s的驾驶报告才参与聚合。
-五分钟窗口中至少两个不同用户，各取最近接收的样本。聚合需显式调用，不是Kafka／ML
-服务。手动交通参数为edge/speed_mps/closed，可设置过期；只影响驾驶，其他模式用基线。
-再次请求路线即重新规划，没有手机端自动后台导航。
+管理员Bearer接口：POST /internal/graph、/internal/traffic、/internal/aggregate，
+GET /internal/catalog分别导入图、设交通、聚合和导出公开目录。
 
-## 一致性、隐私与验证
+起终点支持节点/地址字符串或经纬度对象。mode为driving/walking/cycling，不含班次公交。
+结果含geometry、精度5编码polyline、逐段指令和时距；指令是几何提示，不含转弯限制、
+信号灯或车道规则。Dijkstra保持同一SQL图/交通快照，搜索仍使用细层准确图；已提供三层
+分类视图但未宣称分层寻路加速。候选为有界单边避让，非完整K最短路；max_nodes默认50000，
+计所有候选总访问。不可达404、预算耗尽413，ETA为长度/速度而非训练模型。
 
-每次路线在同一SQL读事务中绑定图和交通版本；源节点邻接按需加载，LRU容量64个
-路由瓦片。渲染缓存128项，按图UUID分开；URL带ETag和immutable缓存头，支持304。
-替换道路图后旧URL在源站返回410。内容校验防止副本在相同UUID下接受变更道路。
-缓存限制为条目数，密集瓦片仍可能占较大内存。
+## 位置和实时导航
 
-副本是真实HTTP完整目录复制，只包含道路／地址／交通，不包含位置、用户、凭据或
-幂等记录；失败保留完整旧版本。网关需 `X-Region: local`，只在同区域读节点间恢复。
-这不是数据库写主选举、云地域部署或真实CDN。
+报告含event_id/sequence/Unix timestamp/latitude/longitude，可选mode/heading。
+同用户事件ID幂等，冲突整批回滚；乱序不回退当前位置。取得SQL写锁后检查过去24小时/
+未来30秒的时间窗口。原始报告按接收时间保留24小时，只能本人查询；上报只裁剪该用户，
+主服务每30秒后台全局清理，停机或排队会使物理删除延后。公开复制不含用户、凭据、轨迹
+或导航会话，不记录坐标/凭据访问日志。
 
-原始位置查询保留期24小时，主服务上报时和每30秒清理；停机期间下次启动恢复物理
-清理。不生成精确坐标访问日志；磁盘和备份仍需保护。
+地图匹配为100米内短路段切平面近似。明确航向、同一有向边前进、间隔1..120秒、
+速度0.5..50m/s且足够新的驾驶报告才生成样本；五分钟窗口每用户取最后接收样本，至少
+两名用户才聚合，未过期的管理员封路不被重开。这是显式SQL处理，没有部署Kafka/ML。
 
-14项测试通过；包括225组最短路对照、图切换并发、边界、交通、批次和真实网络故障。
-900节点／3480有向边，4客户端60次混合HTTP请求零错误，实测72.17 QPS。
-详见[验证报告](benchmarks/results.md)和[设计](docs/design.md)。
-生产道路授权、转弯限制、分层加速、交通预测、分布式数据层、TLS、云地域和书中规模
-仍待扩展，不能把合成数据实验视为真实导航安全或生产规模达标。
+导航会话默认TTL900秒、主服务容量128。后台默认每秒检查，以变化道路包围盒和包含路线
+的父瓦片筛选需重算会话，周期全量刷新也发现新近更快路线；计算在写锁外，安装以CAS复核。
+SSE返回最新路线状态或heartbeat后关闭，客户端带Last-Event-ID重连并替换展示；中间状态
+会合并，不是持久事件回放。事件等待最多5秒，最多使用HTTP容量的四分之三。没有完整手机
+后台导航客户端或多主机会话HA。
+
+## 瓦片、并发和验证
+
+XYZ支持z0..21、经度环绕和极区钳制。冷渲染默认限制5000候选边/10000裁切段，密集请求
+可能413；路由瓦片导出默认限制5000节点/边。持久TileArchive为独立SQLite本地对象存储参考，
+校验图身份/checksum，预生成默认每批256瓦片/64MiB，单对象16MiB。UUID URL、ETag/304
+适合接CDN，但未部署云对象存储或CDN；旧代可保留归档，源站仍只服务active图，旧URL返回410。
+
+缓存固定条带合并冷加载，加载器不占全局LRU锁，返回数据隔离；邻接缓存每节点不可变JSON文本，再解析独立边对象，减少嵌套深拷贝。
+缓存条目预算不等于RSS。HTTP默认32处理器/10秒套接字期限，CLI用--concurrency/
+--request-timeout配置，--navigation-interval/--max-navigation-sessions配置后台导航。
+绑定成功才启动后台组件，关闭排空处理器、复制、导航和维护；严格JSON/framing、私有正文前
+鉴权，直接传输拒绝重定向，仅在同region切换副本。系统DNS/SQLite/CPU不受套接字期限强制终止。
+
+最终数量和实测见[验证报告](benchmarks/results.md)、[本轮原始数据](benchmarks/review-2026-10-25.json)。
+2026-10-20的14项测试/72.17混合QPS为历史结果，不能冒充本轮或证明生产容量。
+[章节记录](docs/chapter19-review.md)与[设计](docs/design_cn.md)列明原书映射和范围：
+真实道路授权、生产转弯/公交、ML ETA、物理分片、HA、云地域及书中规模仍待扩展。

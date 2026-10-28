@@ -1,96 +1,66 @@
-from collections import OrderedDict
 from contextlib import closing, contextmanager
 import hashlib
 import json
-import math
 from pathlib import Path
-import re
 import sqlite3
-import threading
 import time
 import uuid
 
-from .geo import boxes, cell, coordinates, distance, match_point, nearby_boxes
-
-MODES = {"driving", "walking", "cycling"}
-
-
-class Error(Exception):
-    def __init__(self, status, message):
-        self.status, self.message = status, message
-        super().__init__(message)
-
-
-def dumps(value):
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
-
-
-def identifier(value):
-    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", value):
-        raise ValueError("invalid identifier")
-    return value
+from .geo import coordinates, distance, nearby_boxes
+from .models import (
+    Error as Error,
+    MODES as MODES,
+    dumps as dumps,
+    identifier as identifier,
+    positive as positive,
+    finite,
+)
+from .cache import Cache as Cache
+from .schema import SCHEMA
+from .catalog import prepare_graph, prepare_snapshot, install_graph
+from .telemetry import Telemetry
+import os
 
 
-def positive(value, maximum=1e8):
-    if (
-        type(value) not in (int, float)
-        or not math.isfinite(value)
-        or not 0 < value <= maximum
-    ):
-        raise ValueError("invalid positive numeric value")
-    return float(value)
-
-
-class Cache:
-    def __init__(self, capacity=128):
-        if type(capacity) is not int or capacity < 0:
-            raise ValueError("capacity must be a non-negative integer")
-        self.capacity, self.items, self.lock = capacity, OrderedDict(), threading.Lock()
-        self.hits = self.misses = 0
-
-    def get(self, key, loader):
-        """Load outside the metadata lock; concurrent misses may duplicate work."""
-        with self.lock:
-            if key in self.items:
-                self.hits += 1
-                self.items.move_to_end(key)
-                return self.items[key]
-            self.misses += 1
-        loaded = loader()
-        with self.lock:
-            if key in self.items:
-                self.items.move_to_end(key)
-                return self.items[key]
-            self.items[key] = loaded
-            while len(self.items) > self.capacity:
-                self.items.popitem(last=False)
-            return loaded
-
-
-class Store:
+class Store(Telemetry):
     def __init__(self, path, readonly=False, clock=time.time):
+        if (
+            not isinstance(path, (str, os.PathLike))
+            or not str(path)
+            or str(path) == ":memory:"
+        ):
+            raise ValueError("Store requires a persistent database file")
+        if type(readonly) is not bool or not callable(clock):
+            raise ValueError("invalid store configuration")
         self.path, self.readonly, self.clock = str(path), readonly, clock
+        self.now()
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.adjacency, self.tiles = Cache(64), Cache(128)
         with closing(self.connect()) as db:
-            db.executescript("""
-            PRAGMA journal_mode=WAL;
-            CREATE TABLE IF NOT EXISTS config(key TEXT PRIMARY KEY,value TEXT);
-            CREATE TABLE IF NOT EXISTS nodes(id TEXT PRIMARY KEY,lat REAL,lon REAL,tx INTEGER,ty INTEGER);
-            CREATE INDEX IF NOT EXISTS nodes_tile ON nodes(tx,ty);
-            CREATE INDEX IF NOT EXISTS nodes_lat_lon ON nodes(lat,lon);
-            CREATE TABLE IF NOT EXISTS edges(id TEXT PRIMARY KEY,source TEXT,target TEXT,length REAL,speeds TEXT,toll INTEGER);
-            CREATE INDEX IF NOT EXISTS edges_source ON edges(source);
-            CREATE TABLE IF NOT EXISTS addresses(name TEXT PRIMARY KEY,node TEXT);
-            CREATE TABLE IF NOT EXISTS edge_boxes(id INTEGER PRIMARY KEY,edge TEXT);
-            CREATE VIRTUAL TABLE IF NOT EXISTS spatial USING rtree(id,west,east,south,north);
-            CREATE TABLE IF NOT EXISTS traffic(edge TEXT PRIMARY KEY,speed REAL,closed INTEGER,expires REAL);
-            CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,token TEXT UNIQUE,admin INTEGER);
-            CREATE TABLE IF NOT EXISTS events(user TEXT,event TEXT,hash TEXT,result TEXT,received REAL,PRIMARY KEY(user,event));
-            CREATE TABLE IF NOT EXISTS positions(user TEXT PRIMARY KEY,seq INTEGER,timestamp REAL,body TEXT,received REAL);
-            CREATE TABLE IF NOT EXISTS samples(user TEXT,event TEXT,edge TEXT,speed REAL,received REAL,PRIMARY KEY(user,event));
-            CREATE INDEX IF NOT EXISTS samples_time ON samples(received);
-            """)
+            deadline = time.monotonic() + 15
+            while True:
+                try:
+                    db.execute("PRAGMA journal_mode=WAL")
+                    break
+                except sqlite3.OperationalError as error:
+                    if (
+                        "locked" not in str(error).lower()
+                        or time.monotonic() >= deadline
+                    ):
+                        raise
+                    time.sleep(0.01)
+            db.executescript(SCHEMA)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(edges)")}
+            if "road_class" not in columns:
+                try:
+                    db.execute(
+                        "ALTER TABLE edges ADD COLUMN road_class TEXT NOT NULL DEFAULT 'local'"
+                    )
+                except sqlite3.OperationalError:
+                    if "road_class" not in {
+                        row[1] for row in db.execute("PRAGMA table_info(edges)")
+                    }:
+                        raise
             for key, value in {
                 "graph": str(uuid.uuid4()),
                 "lineage": str(uuid.uuid4()),
@@ -103,15 +73,34 @@ class Store:
                 db.execute(
                     "INSERT OR IGNORE INTO config VALUES(?,?)", (key, dumps(value))
                 )
+            meta = self.meta(db)
+            if meta["ready"]:
+                db.execute(
+                    "INSERT OR IGNORE INTO graph_versions VALUES(?,?)",
+                    (meta["graph"], meta["graph_hash"]),
+                )
             db.commit()
+
+    def now(self):
+        value = self.clock()
+        if not finite(value) or value < 0:
+            raise ValueError("invalid server clock")
+        return float(value)
 
     def connect(self):
         db = sqlite3.connect(self.path, timeout=15)
-        db.row_factory = sqlite3.Row
-        return db
+        try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA busy_timeout=15000")
+            return db
+        except BaseException:
+            db.close()
+            raise
 
     @contextmanager
     def transaction(self, write=False):
+        if type(write) is not bool:
+            raise ValueError("write must be boolean")
         with closing(self.connect()) as db:
             try:
                 db.execute("BEGIN IMMEDIATE" if write else "BEGIN")
@@ -138,7 +127,11 @@ class Store:
     def provision(self, user, token, admin=False):
         self.writable()
         identifier(user)
-        if not isinstance(token, str) or len(token) < 8:
+        if (
+            not isinstance(token, str)
+            or not 8 <= len(token) <= 4096
+            or type(admin) is not bool
+        ):
             raise ValueError("credential too short")
         with self.transaction(True) as db:
             db.execute(
@@ -147,6 +140,12 @@ class Store:
             )
 
     def authenticate(self, token, admin=False):
+        if (
+            not isinstance(token, str)
+            or not 8 <= len(token) <= 4096
+            or type(admin) is not bool
+        ):
+            raise Error(403, "invalid credential or permission")
         with self.transaction() as db:
             row = db.execute(
                 "SELECT id,admin FROM users WHERE token=?",
@@ -156,98 +155,40 @@ class Store:
                 raise Error(403, "invalid credential or permission")
             return row["id"]
 
-    def _install_graph(self, db, graph):
-        if not isinstance(graph, dict) or set(graph) - {
-            "nodes",
-            "edges",
-            "addresses",
-            "license",
-        }:
-            raise ValueError("invalid graph document")
-        license = graph.get("license", "unspecified")
-        if not isinstance(license, str) or not 1 <= len(license) <= 2048:
-            raise ValueError("invalid dataset license")
-        self.set_meta(db, license=license)
-        nodes = graph["nodes"]
-        if not isinstance(nodes, list) or not 1 <= len(nodes) <= 100000:
-            raise ValueError("graph requires 1..100000 nodes in reference importer")
-        for table in (
-            "spatial",
-            "edge_boxes",
-            "edges",
-            "nodes",
-            "addresses",
-            "traffic",
-            "samples",
-        ):
-            db.execute("DELETE FROM " + table)
-        points = {}
-        for node in nodes:
-            name = identifier(node["id"])
-            lat, lon = coordinates(node["latitude"], node["longitude"])
-            tx, ty = cell(lat, lon)
-            db.execute("INSERT INTO nodes VALUES(?,?,?,?,?)", (name, lat, lon, tx, ty))
-            points[name] = (lat, lon)
-        if not isinstance(graph["edges"], list) or len(graph["edges"]) > 500000:
-            raise ValueError("invalid edge count")
-        for edge in graph["edges"]:
-            name = identifier(edge["id"])
-            source, target = edge["source"], edge["target"]
-            if source == target or source not in points or target not in points:
-                raise ValueError("invalid road endpoints")
-            length = positive(
-                edge.get("length_m", distance(points[source], points[target]))
-            )
-            speeds = edge["speeds"]
-            if not isinstance(speeds, dict) or not speeds or set(speeds) - MODES:
-                raise ValueError("invalid travel modes")
-            speeds = {mode: positive(speed, 100) for mode, speed in speeds.items()}
-            toll = edge.get("toll", False)
-            if type(toll) is not bool:
-                raise ValueError("toll must be boolean")
-            db.execute(
-                "INSERT INTO edges VALUES(?,?,?,?,?,?)",
-                (name, source, target, length, dumps(speeds), int(toll)),
-            )
-            for west, east, south, north in boxes(points[source], points[target]):
-                row = db.execute(
-                    "INSERT INTO edge_boxes(edge) VALUES(?)", (name,)
-                ).lastrowid
-                db.execute(
-                    "INSERT INTO spatial VALUES(?,?,?,?,?)",
-                    (row, west, east, south, north),
-                )
-        for name, node in graph.get("addresses", {}).items():
-            if (
-                not isinstance(name, str)
-                or not name.strip()
-                or len(name) > 500
-                or node not in points
-            ):
-                raise ValueError("invalid fixture address")
-            db.execute(
-                "INSERT INTO addresses VALUES(?,?)", (name.strip().casefold(), node)
-            )
+    def _install_graph(self, db, graph=None, *, prepared=None):
+        prepared = prepare_graph(graph) if prepared is None else prepared
+        install_graph(db, prepared)
+        self.set_meta(db, license=prepared["license"])
 
     def import_graph(self, graph, fail_hook=None):
         self.writable()
+        if fail_hook is not None and not callable(fail_hook):
+            raise ValueError("invalid failure hook")
+        prepared = prepare_graph(graph)
         with self.transaction(True) as db:
             meta = self.meta(db)
-            self._install_graph(db, graph)
-            if fail_hook:
+            self._install_graph(db, prepared=prepared)
+            if fail_hook is not None:
                 fail_hook()
-            graph_hash = hashlib.sha256(
-                dumps(self.graph_document(db)).encode()
-            ).hexdigest()
             self.set_meta(
                 db,
                 graph=str(uuid.uuid4()),
                 revision=meta["revision"] + 1,
                 traffic_version=0,
                 ready=True,
-                graph_hash=graph_hash,
+                graph_hash=prepared["hash"],
             )
-        return self.health()
+            db.execute(
+                "INSERT INTO graph_versions VALUES(?,?)",
+                (self.meta(db)["graph"], prepared["hash"]),
+            )
+            result = {
+                **self.meta(db),
+                "role": "primary",
+                "nodes": len(prepared["nodes"]),
+                "edges": len(prepared["edges"]),
+            }
+        return result
 
     def health(self):
         with self.transaction() as db:
@@ -278,6 +219,11 @@ class Store:
                     "length_m": r["length"],
                     "speeds": json.loads(r["speeds"]),
                     "toll": bool(r["toll"]),
+                    **(
+                        {"road_class": r["road_class"]}
+                        if r["road_class"] != "local"
+                        else {}
+                    ),
                 }
                 for r in db.execute("SELECT * FROM edges ORDER BY id")
             ],
@@ -295,25 +241,14 @@ class Store:
                 "graph": self.graph_document(db),
                 "traffic": [
                     dict(row)
-                    for row in db.execute(
-                        "SELECT * FROM traffic WHERE expires>?", (self.clock(),)
-                    )
+                    for row in db.execute("SELECT * FROM traffic ORDER BY edge")
                 ],
             }
 
     def install_snapshot(self, snapshot):
         if not self.readonly:
             raise Error(403, "snapshot import requires replica")
-        incoming = snapshot["meta"]
-        uuid.UUID(incoming["lineage"])
-        uuid.UUID(incoming["graph"])
-        if (
-            type(incoming["revision"]) is not int
-            or incoming["revision"] < 0
-            or type(incoming["traffic_version"]) is not int
-            or incoming["traffic_version"] < 0
-        ):
-            raise ValueError("invalid catalog revision")
+        incoming, prepared, traffic = prepare_snapshot(snapshot)
         with self.transaction(True) as db:
             old = self.meta(db)
             if old["ready"]:
@@ -322,20 +257,26 @@ class Store:
                     or incoming["revision"] < old["revision"]
                 ):
                     raise Error(409, "foreign lineage or catalog rollback")
+                if (
+                    old["graph"] == incoming["graph"]
+                    and incoming["traffic_version"] < old["traffic_version"]
+                ):
+                    raise Error(409, "traffic version rollback")
                 if incoming["revision"] == old["revision"]:
+                    current_traffic = [
+                        dict(row)
+                        for row in db.execute("SELECT * FROM traffic ORDER BY edge")
+                    ]
+                    if incoming != old or traffic != current_traffic:
+                        raise Error(409, "catalog revision contains different content")
                     return False
-            self._install_graph(db, snapshot["graph"])
-            graph_hash = hashlib.sha256(
-                dumps(self.graph_document(db)).encode()
-            ).hexdigest()
-            if (
-                graph_hash != incoming["graph_hash"]
-                or old["ready"]
-                and old["graph"] == incoming["graph"]
-                and old["graph_hash"] != graph_hash
-            ):
-                raise Error(409, "catalog checksum or immutable graph changed")
-            for record in snapshot["traffic"]:
+            known = db.execute(
+                "SELECT hash FROM graph_versions WHERE graph=?", (incoming["graph"],)
+            ).fetchone()
+            if known and known[0] != prepared["hash"]:
+                raise Error(409, "immutable graph UUID contains different content")
+            self._install_graph(db, prepared=prepared)
+            for record in traffic:
                 self._traffic_record(
                     db,
                     record["edge"],
@@ -343,23 +284,15 @@ class Store:
                     bool(record["closed"]),
                     record["expires"],
                 )
-            self.set_meta(
-                db,
-                **{
-                    key: incoming[key]
-                    for key in (
-                        "lineage",
-                        "graph",
-                        "revision",
-                        "traffic_version",
-                        "graph_hash",
-                    )
-                },
-                ready=True,
+            self.set_meta(db, **incoming)
+            db.execute(
+                "INSERT OR IGNORE INTO graph_versions VALUES(?,?)",
+                (incoming["graph"], prepared["hash"]),
             )
             return True
 
     def resolve(self, db, value, max_snap=1000):
+        max_snap = positive(max_snap, 100000)
         if isinstance(value, str):
             row = db.execute(
                 "SELECT id,lat,lon,tx,ty FROM nodes WHERE id=?", (value,)
@@ -372,6 +305,8 @@ class Store:
             if not row:
                 raise Error(404, "node/address not found in fixture")
             return dict(row)
+        if not isinstance(value, dict) or set(value) != {"latitude", "longitude"}:
+            raise ValueError("coordinate object required")
         point = coordinates(value["latitude"], value["longitude"])
         choices = {}
         for west, east, south, north in nearby_boxes(*point, max_snap):
@@ -391,6 +326,8 @@ class Store:
         return ranked[0][2]
 
     def geocode(self, value, reverse=False):
+        if type(reverse) is not bool:
+            raise ValueError("reverse must be boolean")
         with self.transaction() as db:
             meta = self.ready(db)
             row = self.resolve(db, value)
@@ -423,255 +360,23 @@ class Store:
                 record = dict(row)
                 record["speeds"] = json.loads(record["speeds"])
                 adjacency.setdefault(record["source"], []).append(record)
-            return adjacency
+            # Cached immutable text avoids walking nested edge/speed dictionaries
+            # on every node expansion. Each consumer parses its own edge values.
+            return {source: dumps(edges) for source, edges in adjacency.items()}
 
-        return self.adjacency.get((graph, tx, ty), load).get(node["id"], [])
+        body = self.adjacency.get_item((graph, tx, ty), node["id"], load)
+        return json.loads(body) if body else []
 
-    def spatial_edges(self, db, west, east, south, north):
+    def spatial_edges(self, db, west, east, south, north, *, limit=None):
+        if limit is not None and (type(limit) is not int or not 1 <= limit <= 500001):
+            raise ValueError("invalid spatial result limit")
         return db.execute(
             """SELECT DISTINCT e.*,a.lat AS alat,a.lon AS alon,b.lat AS blat,b.lon AS blon
           FROM spatial s JOIN edge_boxes eb ON eb.id=s.id JOIN edges e ON e.id=eb.edge
           JOIN nodes a ON a.id=e.source JOIN nodes b ON b.id=e.target
-          WHERE s.west<=? AND s.east>=? AND s.south<=? AND s.north>=?""",
-            (east, west, north, south),
+          WHERE s.west<=? AND s.east>=? AND s.south<=? AND s.north>=?"""
+            + (" LIMIT ?" if limit is not None else ""),
+            (east, west, north, south, limit)
+            if limit is not None
+            else (east, west, north, south),
         ).fetchall()
-
-    def match(self, db, lat, lon, mode, heading=None):
-        if heading is not None and (
-            type(heading) not in (int, float)
-            or not math.isfinite(heading)
-            or not 0 <= heading < 360
-        ):
-            raise ValueError("invalid heading")
-        candidates = {}
-        for box in nearby_boxes(lat, lon, 100):
-            for row in self.spatial_edges(db, *box):
-                if mode not in json.loads(row["speeds"]):
-                    continue
-                gap, fraction, bearing = match_point(
-                    (lat, lon), (row["alat"], row["alon"]), (row["blat"], row["blon"])
-                )
-                angle = (
-                    abs((bearing - heading + 180) % 360 - 180)
-                    if heading is not None
-                    else 0
-                )
-                if gap <= 100 and angle <= 60:
-                    candidates[row["id"]] = (
-                        gap,
-                        angle,
-                        row["id"],
-                        fraction,
-                        row["length"],
-                    )
-        ranked = sorted(candidates.values())
-        if not ranked:
-            return None
-        best = ranked[0]
-        ambiguous = (
-            heading is None
-            or len(ranked) > 1
-            and abs(ranked[1][0] - best[0]) < 1
-            and abs(ranked[1][1] - best[1]) < 5
-        )
-        return {
-            "edge": best[2],
-            "fraction": best[3],
-            "gap_m": best[0],
-            "length_m": best[4],
-            "traffic_eligible": not ambiguous,
-        }
-
-    def _prune(self, db):
-        db.execute("DELETE FROM events WHERE received<=?", (self.clock() - 86400,))
-        db.execute("DELETE FROM positions WHERE received<=?", (self.clock() - 86400,))
-        db.execute("DELETE FROM samples WHERE received<=?", (self.clock() - 300,))
-
-    def prune(self):
-        if not self.readonly:
-            with self.transaction(True) as db:
-                self._prune(db)
-
-    def ingest(self, user, reports):
-        self.writable()
-        if not isinstance(reports, list) or not 1 <= len(reports) <= 100:
-            raise ValueError("batch requires 1..100 reports")
-        output = []
-        with self.transaction(True) as db:
-            meta = self.ready(db)
-            self._prune(db)
-            for body in reports:
-                event = identifier(body["event_id"])
-                fingerprint = hashlib.sha256(dumps(body).encode()).hexdigest()
-                replay = db.execute(
-                    "SELECT hash,result FROM events WHERE user=? AND event=?",
-                    (user, event),
-                ).fetchone()
-                if replay:
-                    if replay["hash"] != fingerprint:
-                        raise Error(409, "event ID reused with different report")
-                    output.append(json.loads(replay["result"]))
-                    continue
-                seq = body["sequence"]
-                stamp = body["timestamp"]
-                if (
-                    type(seq) is not int
-                    or not 0 <= seq < 2**53
-                    or type(stamp) not in (float, int)
-                    or not math.isfinite(stamp)
-                    or not self.clock() - 86400 < stamp <= self.clock() + 30
-                ):
-                    raise ValueError("invalid report sequence/timestamp")
-                lat, lon = coordinates(body["latitude"], body["longitude"])
-                mode = body.get("mode", "driving")
-                if mode not in MODES:
-                    raise ValueError("invalid report mode")
-                matched = self.match(db, lat, lon, mode, body.get("heading"))
-                previous = db.execute(
-                    "SELECT * FROM positions WHERE user=?", (user,)
-                ).fetchone()
-                advances = (
-                    previous is None
-                    or seq > previous["seq"]
-                    and stamp > previous["timestamp"]
-                )
-                result = {
-                    "event_id": event,
-                    "sequence": seq,
-                    "current": advances,
-                    "graph": meta["graph"],
-                    "match": matched,
-                }
-                if advances:
-                    position = {
-                        "latitude": lat,
-                        "longitude": lon,
-                        "timestamp": stamp,
-                        "graph": meta["graph"],
-                        "mode": mode,
-                        "match": matched,
-                    }
-                    if (
-                        previous
-                        and mode == "driving"
-                        and matched
-                        and matched["traffic_eligible"]
-                    ):
-                        old = json.loads(previous["body"])
-                        old_match = old.get("match")
-                        interval = stamp - previous["timestamp"]
-                        if (
-                            old["graph"] == meta["graph"]
-                            and old.get("mode") == "driving"
-                            and old_match
-                            and old_match["traffic_eligible"]
-                            and old_match["edge"] == matched["edge"]
-                            and 1 <= interval <= 120
-                        ):
-                            speed = (
-                                (matched["fraction"] - old_match["fraction"])
-                                * matched["length_m"]
-                                / interval
-                            )
-                            if 0.5 <= speed <= 50:
-                                db.execute(
-                                    "INSERT INTO samples VALUES(?,?,?,?,?)",
-                                    (user, event, matched["edge"], speed, self.clock()),
-                                )
-                    db.execute(
-                        "INSERT INTO positions VALUES(?,?,?,?,?) ON CONFLICT(user) DO UPDATE SET seq=excluded.seq,timestamp=excluded.timestamp,body=excluded.body,received=excluded.received",
-                        (user, seq, stamp, dumps(position), self.clock()),
-                    )
-                stored = {**result, "report": body}
-                db.execute(
-                    "INSERT INTO events VALUES(?,?,?,?,?)",
-                    (user, event, fingerprint, dumps(stored), self.clock()),
-                )
-                output.append(stored)
-        return {"accepted": len(output), "reports": output}
-
-    def history(self, user):
-        with self.transaction() as db:
-            return {
-                "reports": [
-                    json.loads(r[0])
-                    for r in db.execute(
-                        "SELECT result FROM events WHERE user=? AND received>? ORDER BY received DESC,event LIMIT 100",
-                        (user, self.clock() - 86400),
-                    )
-                ]
-            }
-
-    def _traffic_record(self, db, edge, speed, closed, expires):
-        if not db.execute("SELECT 1 FROM edges WHERE id=?", (edge,)).fetchone():
-            raise Error(404, "traffic edge missing")
-        if (
-            type(closed) is not bool
-            or type(expires) not in (float, int)
-            or not math.isfinite(expires)
-        ):
-            raise ValueError("invalid traffic state")
-        if speed is not None:
-            speed = positive(speed, 100)
-        if not closed and speed is None:
-            raise ValueError("traffic speed required unless closed")
-        db.execute(
-            "INSERT INTO traffic VALUES(?,?,?,?) ON CONFLICT(edge) DO UPDATE SET speed=excluded.speed,closed=excluded.closed,expires=excluded.expires",
-            (edge, speed, int(closed), expires),
-        )
-
-    def traffic(self, records, ttl=300):
-        self.writable()
-        ttl = positive(ttl, 3600)
-        if not isinstance(records, list) or not 1 <= len(records) <= 100:
-            raise ValueError("traffic batch requires 1..100 edges")
-        with self.transaction(True) as db:
-            meta = self.ready(db)
-            for record in records:
-                self._traffic_record(
-                    db,
-                    record["edge"],
-                    record.get("speed_mps"),
-                    record.get("closed", False),
-                    self.clock() + ttl,
-                )
-            self.set_meta(
-                db,
-                revision=meta["revision"] + 1,
-                traffic_version=meta["traffic_version"] + 1,
-            )
-            return {
-                "revision": meta["revision"] + 1,
-                "traffic_version": meta["traffic_version"] + 1,
-            }
-
-    def aggregate(self, min_users=2):
-        self.writable()
-        if type(min_users) is not int or not 2 <= min_users <= 100:
-            raise ValueError("at least two distinct users required")
-        with self.transaction(True) as db:
-            meta = self.ready(db)
-            by_edge = {}
-            for row in db.execute(
-                "SELECT * FROM samples WHERE received>? ORDER BY received,event",
-                (self.clock() - 300,),
-            ):
-                by_edge.setdefault(row["edge"], {})[row["user"]] = row["speed"]
-            records = []
-            for edge, users in by_edge.items():
-                if len(users) >= min_users:
-                    speed = sum(users.values()) / len(users)
-                    self._traffic_record(db, edge, speed, False, self.clock() + 300)
-                    records.append(
-                        {"edge": edge, "speed_mps": speed, "distinct_users": len(users)}
-                    )
-            if records:
-                self.set_meta(
-                    db,
-                    revision=meta["revision"] + 1,
-                    traffic_version=meta["traffic_version"] + 1,
-                )
-            return {
-                "updated": records,
-                "traffic_version": meta["traffic_version"] + int(bool(records)),
-            }

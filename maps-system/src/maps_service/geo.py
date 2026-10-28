@@ -7,36 +7,70 @@ MAX_LAT = 85.0511287798066
 
 
 def coordinates(lat, lon):
-    if (
-        type(lat) not in (float, int)
-        or type(lon) not in (float, int)
-        or not math.isfinite(lat)
-        or not math.isfinite(lon)
-        or not -90 <= lat <= 90
-        or not -180 <= lon <= 180
-    ):
+    try:
+        valid = (
+            type(lat) in (float, int)
+            and type(lon) in (float, int)
+            and math.isfinite(lat)
+            and math.isfinite(lon)
+            and -90 <= lat <= 90
+            and -180 <= lon <= 180
+        )
+    except OverflowError:
+        valid = False
+    if not valid:
         raise ValueError("invalid WGS84 coordinates")
     return float(lat), float(lon)
 
 
 def distance(a, b):
-    p, q = math.radians(a[0]), math.radians(b[0])
-    h = (
-        math.sin((q - p) / 2) ** 2
-        + math.cos(p) * math.cos(q) * math.sin(math.radians(b[1] - a[1]) / 2) ** 2
+    lat, lon = coordinates(*a)
+    other_lat, other_lon = coordinates(*b)
+    p, q = math.radians(lat), math.radians(other_lat)
+    delta = math.radians(math.remainder(other_lon - lon, 360))
+    sin_p, cos_p, sin_q, cos_q = math.sin(p), math.cos(p), math.sin(q), math.cos(q)
+    sine = math.hypot(
+        cos_q * math.sin(delta),
+        cos_p * sin_q - sin_p * cos_q * math.cos(delta),
     )
-    return 2 * EARTH * math.asin(math.sqrt(max(0, min(1, h))))
+    cosine = sin_p * sin_q + cos_p * cos_q * math.cos(delta)
+    return EARTH * math.atan2(sine, cosine)
+
+
+def bearing(a, b):
+    """Initial spherical heading clockwise from north; None for coincident points."""
+    lat, lon = coordinates(*a)
+    other_lat, other_lon = coordinates(*b)
+    if distance((lat, lon), (other_lat, other_lon)) < 1e-6:
+        return None
+    p, q = math.radians(lat), math.radians(other_lat)
+    delta = math.radians(math.remainder(other_lon - lon, 360))
+    return (
+        math.degrees(
+            math.atan2(
+                math.sin(delta) * math.cos(q),
+                math.cos(p) * math.sin(q) - math.sin(p) * math.cos(q) * math.cos(delta),
+            )
+        )
+        % 360
+    )
 
 
 def project(lat, lon):
-    coordinates(lat, lon)
+    lat, lon = coordinates(lat, lon)
     lat = max(-MAX_LAT, min(MAX_LAT, lat))
-    return (lon + 180) / 360, (
-        1 - math.asinh(math.tan(math.radians(lat))) / math.pi
-    ) / 2
+    y = (1 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2
+    return (lon + 180) / 360, max(0.0, min(1.0, y))
 
 
 def unproject(x, y):
+    if (
+        type(x) not in (int, float)
+        or type(y) not in (int, float)
+        or not 0 <= x <= 1
+        or not 0 <= y <= 1
+    ):
+        raise ValueError("normalized projection coordinates must be in [0,1]")
     return math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * y)))), x * 360 - 180
 
 
@@ -51,11 +85,14 @@ def tile(z, x, y):
 
 
 def cell(lat, lon, z=16):
+    if type(z) is not int or not 0 <= z <= 21:
+        raise ValueError("invalid cell zoom")
     x, y = project(lat, lon)
     return min(2**z - 1, max(0, int(x * 2**z))), min(2**z - 1, max(0, int(y * 2**z)))
 
 
 def boxes(a, b):
+    a, b = coordinates(*a), coordinates(*b)
     south, north = sorted((a[0], b[0]))
     west, east = sorted((a[1], b[1]))
     if east - west > 180:
@@ -64,6 +101,9 @@ def boxes(a, b):
 
 
 def nearby_boxes(lat, lon, meters):
+    lat, lon = coordinates(lat, lon)
+    if type(meters) not in (int, float) or not 0 <= meters <= math.pi * EARTH:
+        raise ValueError("invalid spherical radius")
     delta = math.degrees(meters / EARTH)
     south, north = max(-90, lat - delta), min(90, lat + delta)
     if south == -90 or north == 90:
@@ -81,7 +121,8 @@ def nearby_boxes(lat, lon, meters):
 
 def match_point(point, a, b):
     # Local tangent approximation. Long segments and poles require a production matcher.
-    lat, lon = point
+    lat, lon = coordinates(*point)
+    a, b = coordinates(*a), coordinates(*b)
     scale = max(1e-10, math.cos(math.radians(lat)))
 
     def xy(p):
@@ -90,7 +131,10 @@ def match_point(point, a, b):
         ) * EARTH * scale, math.radians(p[0] - lat) * EARTH
 
     ax, ay = xy(a)
-    bx, by = xy(b)
+    _, by = xy(b)
+    # Unwrap the segment relative to its first endpoint, not independently
+    # around the query: a dateline road must never pass through Greenwich.
+    bx = ax + math.radians(math.remainder(b[1] - a[1], 360)) * EARTH * scale
     dx, dy = bx - ax, by - ay
     fraction = (
         max(0, min(1, -(ax * dx + ay * dy) / (dx * dx + dy * dy)))
@@ -114,6 +158,7 @@ def clipped_segments(a, b, z, x, y):
     elif ax - bx > 0.5:
         bx += 1
     output = []
+    seen = set()
     for shift in (-1, 0, 1):
         x0, y0 = (ax + shift) * n - x, ay * n - y
         x1, y1 = (bx + shift) * n - x, by * n - y
@@ -135,7 +180,16 @@ def clipped_segments(a, b, z, x, y):
                     valid = False
                     break
         if valid:
-            output.append(((x0 + lo * dx, y0 + lo * dy), (x0 + hi * dx, y0 + hi * dy)))
+            segment = tuple(
+                (
+                    max(0.0, min(1.0, x0 + bound * dx)),
+                    max(0.0, min(1.0, y0 + bound * dy)),
+                )
+                for bound in (lo, hi)
+            )
+            if segment not in seen:
+                seen.add(segment)
+                output.append(segment)
     return output
 
 

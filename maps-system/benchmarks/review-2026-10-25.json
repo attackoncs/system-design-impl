@@ -1,0 +1,39 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "nodes": 900,
+  "directed_edges": 3480,
+  "import_ms": 119.018,
+  "requests": 60,
+  "clients": 4,
+  "seconds": 1.169,
+  "mixed_qps": 51.31,
+  "errors": 0,
+  "sqlite_bytes": 1024000,
+  "scope": "independent localhost HTTP primary; synthetic grid; mixed route/vector/PNG workload; not global traffic or CDN",
+  "cases": [
+    {
+      "case": "route",
+      "count": 20,
+      "p50_ms": 151.124,
+      "p95_ms": 337.529,
+      "response_bytes": 18054
+    },
+    {
+      "case": "geojson",
+      "count": 20,
+      "p50_ms": 23.882,
+      "p95_ms": 29.375,
+      "response_bytes": 433554
+    },
+    {
+      "case": "png",
+      "count": 20,
+      "p50_ms": 14.444,
+      "p95_ms": 173.946,
+      "response_bytes": 1253
+    }
+  ],
+  "all_graph_routing_tiles": 42,
+  "short_route_tiles_loaded": 2
+}
