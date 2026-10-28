@@ -1,3 +1,5 @@
+"""Conservative geohash coverage followed by exact spherical-distance filtering."""
+
 import math
 
 ALPHABET = "0123456789bcdefghjkmnpqrstuvwxyz"
@@ -6,9 +8,13 @@ RADII = {500: 6, 1000: 5, 2000: 5, 5000: 4, 20000: 4}
 
 
 def coordinates(latitude, longitude):
+    """Convert finite coordinate values, including URL query strings."""
     if isinstance(latitude, bool) or isinstance(longitude, bool):
         raise ValueError("coordinates must be numbers")
-    lat, lon = float(latitude), float(longitude)
+    try:
+        lat, lon = float(latitude), float(longitude)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("coordinates must be finite numbers") from None
     if (
         not math.isfinite(lat)
         or not math.isfinite(lon)
@@ -21,7 +27,7 @@ def coordinates(latitude, longitude):
 
 def encode(lat, lon, precision=6):
     lat, lon = coordinates(lat, lon)
-    if not 1 <= precision <= 12:
+    if type(precision) is not int or not 1 <= precision <= 12:
         raise ValueError("precision must be 1..12")
     bounds = [[-180.0, 180.0], [-90.0, 90.0]]
     bits = []
@@ -39,6 +45,13 @@ def encode(lat, lon, precision=6):
 
 
 def bounds(code):
+    """Return the closed bounding rectangle of one supported geohash cell."""
+    if (
+        not isinstance(code, str)
+        or not 1 <= len(code) <= 12
+        or any(char not in ALPHABET for char in code)
+    ):
+        raise ValueError("geohash must have 1..12 valid characters")
     ranges = [[-180.0, 180.0], [-90.0, 90.0]]
     i = 0
     for char in code:
@@ -52,18 +65,26 @@ def bounds(code):
 
 
 def distance(lat, lon, other_lat, other_lon):
+    """Great-circle metres, including coincident and near-antipodal points."""
+    lat, lon = coordinates(lat, lon)
+    other_lat, other_lon = coordinates(other_lat, other_lon)
     p, q = math.radians(lat), math.radians(other_lat)
-    a = (
-        math.sin((q - p) / 2) ** 2
-        + math.cos(p) * math.cos(q) * math.sin(math.radians(other_lon - lon) / 2) ** 2
-    )
-    return 2 * EARTH * math.asin(math.sqrt(max(0, min(1, a))))
+    longitude_delta = math.radians(math.remainder(other_lon - lon, 360))
+    sin_p, cos_p, sin_q, cos_q = math.sin(p), math.cos(p), math.sin(q), math.cos(q)
+    sin_delta, cos_delta = math.sin(longitude_delta), math.cos(longitude_delta)
+    # atan2 retains the small separation from an antipode that a rounded
+    # haversine value of exactly one would discard.
+    sine = math.hypot(cos_q * sin_delta, cos_p * sin_q - sin_p * cos_q * cos_delta)
+    cosine = sin_p * sin_q + cos_p * cos_q * cos_delta
+    return EARTH * math.atan2(sine, cosine)
 
 
 def cover(lat, lon, radius, max_cells=4096):
     lat, lon = coordinates(lat, lon)
-    if radius not in RADII or isinstance(radius, bool):
+    if type(radius) is not int or radius not in RADII:
         raise ValueError("radius must be 500,1000,2000,5000,20000 meters")
+    if type(max_cells) is not int or max_cells < 1:
+        raise ValueError("cell budget must be a positive integer")
     angular = radius / EARTH
     delta = math.degrees(angular)
     south, north = max(-90, lat - delta), min(90, lat + delta)

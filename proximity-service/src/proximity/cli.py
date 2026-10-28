@@ -4,9 +4,10 @@ from pathlib import Path
 
 from .http import Replicator, Router, server
 from .store import Store
+from .publisher import DailyPublisher
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("role", choices=["primary", "replica", "gateway", "publish"])
     parser.add_argument("--db", default=".runtime/primary.sqlite")
@@ -18,7 +19,14 @@ def main():
     parser.add_argument("--regions", help="JSON region -> list of replica URLs")
     parser.add_argument("--shards", type=int, default=4)
     parser.add_argument("--force", action="store_true")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--publication-interval",
+        type=float,
+        default=1,
+        help="Primary UTC publication check interval in seconds",
+    )
+    args = parser.parse_args(argv)
+    publisher = None
     tokens = (
         json.loads(Path(args.tokens).read_text(encoding="utf-8")) if args.tokens else {}
     )
@@ -46,10 +54,23 @@ def main():
             replicator = Replicator(
                 store, args.upstream, tokens["replication"], args.interval
             )
-            replicator.thread.start()
         httpd = server(
             args.host, args.port, store=store, tokens=tokens, replicator=replicator
         )
+        if replicator:
+            try:
+                replicator.start()
+            except BaseException:
+                httpd.server_close()
+                replicator.close()
+                raise
+        if args.role == "primary":
+            try:
+                publisher = DailyPublisher(store, args.publication_interval).start()
+                httpd.publisher = publisher
+            except BaseException:
+                httpd.server_close()
+                raise
     print(
         f"{args.role} listening on http://{args.host}:{httpd.server_port}", flush=True
     )
@@ -60,8 +81,9 @@ def main():
     finally:
         httpd.server_close()
         if replicator:
-            replicator.stop.set()
-            replicator.thread.join(timeout=5)
+            replicator.close()
+        if publisher:
+            publisher.close()
 
 
 if __name__ == "__main__":

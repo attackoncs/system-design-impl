@@ -1,0 +1,83 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "businesses": 10000,
+  "queries_per_case": 30,
+  "publication_seconds": 0.73,
+  "sqlite_bytes": 6033408,
+  "scope": "in-process sequential search, synthetic data; no HTTP or production-scale claim",
+  "results": [
+    {
+      "dataset": "dense",
+      "radius_m": 500,
+      "cold_ms": 20.234,
+      "warm_p50_ms": 12.206,
+      "warm_p95_ms": 15.055,
+      "sequential_qps": 79.67,
+      "total": 109,
+      "candidates": 543,
+      "cells": 6,
+      "precision": 6
+    },
+    {
+      "dataset": "dense",
+      "radius_m": 5000,
+      "cold_ms": 117.31,
+      "warm_p50_ms": 114.046,
+      "warm_p95_ms": 132.519,
+      "sequential_qps": 8.89,
+      "total": 5000,
+      "candidates": 5000,
+      "cells": 1,
+      "precision": 4
+    },
+    {
+      "dataset": "dense",
+      "radius_m": 20000,
+      "cold_ms": 110.899,
+      "warm_p50_ms": 121.022,
+      "warm_p95_ms": 143.548,
+      "sequential_qps": 8.27,
+      "total": 5000,
+      "candidates": 5000,
+      "cells": 9,
+      "precision": 4
+    },
+    {
+      "dataset": "sparse",
+      "radius_m": 500,
+      "cold_ms": 6.902,
+      "warm_p50_ms": 5.86,
+      "warm_p95_ms": 6.342,
+      "sequential_qps": 170.8,
+      "total": 0,
+      "candidates": 0,
+      "cells": 4,
+      "precision": 6
+    },
+    {
+      "dataset": "sparse",
+      "radius_m": 5000,
+      "cold_ms": 6.013,
+      "warm_p50_ms": 5.835,
+      "warm_p95_ms": 6.292,
+      "sequential_qps": 172.1,
+      "total": 0,
+      "candidates": 0,
+      "cells": 2,
+      "precision": 4
+    },
+    {
+      "dataset": "sparse",
+      "radius_m": 20000,
+      "cold_ms": 6.074,
+      "warm_p50_ms": 6.157,
+      "warm_p95_ms": 6.704,
+      "sequential_qps": 160.38,
+      "total": 0,
+      "candidates": 0,
+      "cells": 12,
+      "precision": 4
+    }
+  ]
+}

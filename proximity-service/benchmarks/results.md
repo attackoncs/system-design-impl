@@ -1,5 +1,92 @@
 # Validation report
 
+## Core review — 2026-10-25 (Asia/Shanghai)
+
+Windows 11 build 26100, Python 3.13.9. No third-party runtime or test packages.
+From the project directory:
+
+```powershell
+python -W error::ResourceWarning -m unittest discover -s tests -q
+python examples/cluster_demo.py
+python tools/benchmark.py --output benchmarks/review-local-2026-10-25.json
+python tools/http_benchmark.py --output benchmarks/review-http-2026-10-25.json
+```
+
+The final suite passed **76 tests in 17.436s**, without skips or resource warnings:
+17 original tests, 7 additional geography tests, 13 cache/model tests, 23 HTTP
+reliability tests and 16 publication tests. Local networking and independent
+process tests ran in the approved unrestricted local test process because of
+Windows sandbox socket restrictions. Test temporary files were isolated in the
+repository's `.test-tmp` directory and owned services were cleaned up.
+
+New checks exercise cold-load coalescing, mutable record isolation, TTL start at
+successful load completion, strict cursor/JSON/framing, total I/O deadlines,
+region-confined failover, bounded admission and close draining. Publication
+checks include draft-revision/CAS races, rollover during construction, reads of
+the old complete generation, legacy five-table migration, immutable replica
+versions, imported header ownership and background publication without traffic.
+Geometry checks add 25,920 destination points (72 centers × five radii × 72
+points), 1,000 random distance pairs and near-antipodal precision against an
+independent unit-vector oracle. These still verify the spherical metric.
+
+The four-process demo completed with pending total 0, published total 1,
+antimeridian distance **222.39016046812768m**, and total 1 after a replica and
+then the primary stopped. Three separate SQLite files were used. The original
+independent-process suite also verifies restart, durable replay and retained
+replica reads. Ruff E9/F, formatting, Python 3.10 syntax and local documentation
+links were checked separately. See [chapter review](../docs/chapter17-review.md).
+
+### Current in-process measurement
+
+[Raw report](review-local-2026-10-25.json): the same seeded 10,000 synthetic
+businesses and six cases as the historical benchmark, 30 repeated searches per
+case. Publication **0.730s**, SQLite **6,033,408 bytes**. Initial queries may share
+previous cases' caches; repeated dense queries are not fully warm when their
+5,000 candidates exceed the default 2,048-entry detail cache.
+
+| Area/radius | Candidates | Total | Cells | Repeated p50 ms | Repeated p95 ms | Sequential QPS |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Dense / 500m | 543 | 109 | 6 | 12.206 | 15.055 | 79.67 |
+| Dense / 5km | 5000 | 5000 | 1 | 114.046 | 132.519 | 8.89 |
+| Dense / 20km | 5000 | 5000 | 9 | 121.022 | 143.548 | 8.27 |
+| Sparse / 500m | 0 | 0 | 4 | 5.860 | 6.342 | 170.80 |
+| Sparse / 5km | 0 | 0 | 2 | 5.835 | 6.292 | 172.10 |
+| Sparse / 20km | 0 | 0 | 12 | 6.157 | 6.704 | 160.38 |
+
+An intermediate profile found dictionary deep copies dominated dense searches
+when scan churn caused 5,000 detail-cache misses per request. Store now caches
+immutable canonical JSON text and parses an independent object at the response
+boundary. Candidate bodies load in SQL batches of 256. Cache's general copy,
+coalescing, TTL and error contracts remain intact. This removes redundant record
+copies; it does not remove dense-scan churn, full filtering/sorting or prove a
+performance improvement against the historical run on a different host state.
+
+### Current real HTTP measurement
+
+[Raw report](review-http-2026-10-25.json): 4 clients, 120 localhost requests to
+an independent primary process, six cases with 20 observations each. **3.961s,
+30.30 QPS, zero errors**. The primary's daily publisher was enabled. This load
+ran after the test suite and in-process measurement, not concurrently with them.
+
+| Case | p50 ms | p95 ms |
+| --- | ---: | ---: |
+| Dense / 500m | 65.293 | 114.241 |
+| Dense / 5km | 313.981 | 379.505 |
+| Dense / 20km | 286.053 | 364.290 |
+| Sparse / 500m | 36.248 | 59.727 |
+| Sparse / 5km | 33.982 | 64.160 |
+| Sparse / 20km | 46.158 | 61.053 |
+
+The p95 convention remains sorted index floor(0.95×(n−1)). Sparse cases measure
+empty-query overhead. HTTP includes parsing, thread contention, SQLite,
+serialization and transport. This is a small local measurement, not a sustained
+load, WAN or cloud-HA acceptance test. Inbound threads and outbound router work
+are bounded, but DNS and database/CPU work may outlast socket cancellation.
+
+## Historical observations
+
+The observations below retain their original dates and implementation state.
+
 Executed 2026-10-13 (Asia/Shanghai), Windows 11 build 26100, Python 3.13.9.
 
 Reverified 2026-10-20: `python -m unittest discover -s tests -q`, 17 tests passed
@@ -67,8 +154,9 @@ still filters/sorts all matches. Initial queries may reuse earlier cases' caches
 
 Sparse queries have no matches and measure empty-query overhead. Details cache
 capacity 2048 is smaller than the 5000-candidate dense scan, causing churn.
-Caching does not automatically improve this case. Batch hydration, adaptive dense
-precision and connection pooling are future performance work.
+Caching does not automatically improve this case. These historical results
+predate the 2026-10-25 batch hydration and immutable-text changes; adaptive dense
+precision and connection pooling remain future performance work.
 
 ## Real HTTP load
 
