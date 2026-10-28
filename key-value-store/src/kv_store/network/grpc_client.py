@@ -360,6 +360,29 @@ class GRPCClient:
         except grpc.RpcError as e:
             raise NodeUnavailableError(target, e) from e
 
+    async def merkle_inspect(self, target, bucket_count, indices, expected_root=""):
+        return await self._get_stub(target).MerkleInspect(
+            kvstore_pb2.MerkleInspectRequest(
+                bucket_count=bucket_count, indices=indices, expected_root=expected_root
+            ),
+            timeout=self._timeout,
+        )
+
+    async def repair_bucket_page(
+        self, target, bucket_count, bucket, root, after="", limit=64
+    ):
+        return await self._get_stub(target).RepairBucketPage(
+            kvstore_pb2.RepairBucketPageRequest(
+                bucket_count=bucket_count,
+                bucket_id=bucket,
+                expected_root=root,
+                after_key=after,
+                limit=limit,
+                max_bytes=min(2 * 1024 * 1024, self._max_message_size - 1024),
+            ),
+            timeout=self._timeout,
+        )
+
     async def read_replica(self, target, key):
         from kv_store.replication.records import decode
 

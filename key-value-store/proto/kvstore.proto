@@ -25,6 +25,9 @@ service KVStoreService {
 
   // Anti-entropy synchronization between replicas
   rpc MerkleTreeSync(MerkleTreeSyncRequest) returns (MerkleTreeSyncResponse);
+  // Bounded anti-entropy protocol. Root changes abort a page; retry is safe.
+  rpc MerkleInspect(MerkleInspectRequest) returns (MerkleInspectResponse);
+  rpc RepairBucketPage(RepairBucketPageRequest) returns (RepairBucketPageResponse);
 }
 
 // Vector clock messages
@@ -143,3 +146,29 @@ message MerkleTreeSyncResponse {
 }
 
 message ReplicaRecord { string key = 1; bytes record = 2; }
+
+message MerkleInspectRequest {
+  repeated uint32 indices = 1;  // max64 heap indices; root=1
+  uint32 bucket_count = 2;
+  string expected_root = 3;  // empty only for the initial inspection
+}
+message MerkleHashNode { uint32 index = 1; string hash = 2; }
+message MerkleInspectResponse {
+  uint32 bucket_count = 1;
+  string root_hash = 2;
+  repeated MerkleHashNode nodes = 3;
+}
+message RepairBucketPageRequest {
+  uint32 bucket_id = 1;
+  uint32 bucket_count = 2;
+  string expected_root = 3;
+  string after_key = 4;
+  uint32 limit = 5;  // 1..128 records
+  uint32 max_bytes = 6;
+}
+message RepairBucketPageResponse {
+  repeated ReplicaRecord records = 1;
+  string next_after = 2;
+  bool done = 3;
+  string root_hash = 4;
+}

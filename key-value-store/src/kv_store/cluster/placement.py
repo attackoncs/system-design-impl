@@ -18,6 +18,10 @@ class ReplicaPlacement:
     def nodes(self):
         return self._ring.nodes
 
+    def snapshot(self):
+        """Pin replica placement for a complete repair operation."""
+        return ReplicaPlacement(self._ring.snapshot(), self._data_centers)
+
     def get_nodes(self, key, count):
         order = self._ring.get_nodes(key, len(self._ring.nodes))
         diverse, remaining, seen = [], [], set()

@@ -15,6 +15,7 @@ import asyncio
 import dataclasses
 import hashlib
 import logging
+from bisect import bisect_left, bisect_right
 from typing import Awaitable, Callable, Optional
 
 
@@ -53,6 +54,23 @@ class SyncDiff:
 SyncFunc = Callable[[str, list[SyncDiff]], Awaitable[None]]
 
 
+@dataclasses.dataclass(frozen=True)
+class MerkleView:
+    """Immutable hash-only view; heap index1 is root, bucket_count+i is leaf i."""
+
+    bucket_count: int
+    hashes: tuple[bytes, ...]
+
+    @property
+    def root_hash(self):
+        return self.hashes[1].hex()
+
+    def node_hash(self, index):
+        if type(index) is not int or not 1 <= index < len(self.hashes):
+            raise ValueError("invalid Merkle node index")
+        return self.hashes[index].hex()
+
+
 class MerkleTree:
     """Bucket-based Merkle tree for efficient data comparison.
 
@@ -65,13 +83,18 @@ class MerkleTree:
     """
 
     def __init__(self, bucket_count: int = 1024):
-        if bucket_count <= 0 or (bucket_count & (bucket_count - 1)) != 0:
+        if (
+            type(bucket_count) is not int
+            or not 1 <= bucket_count <= 65536
+            or (bucket_count & (bucket_count - 1)) != 0
+        ):
             raise ValueError("bucket_count must be a positive power of 2")
 
         self._bucket_count = bucket_count
 
         # Each bucket stores a dict of key -> value_hash
         self._buckets: list[dict[str, str]] = [{} for _ in range(bucket_count)]
+        self._bucket_keys: list[list[str]] = [[] for _ in range(bucket_count)]
 
         # Cached bucket hashes
         self._bucket_hashes: list[str] = ["" for _ in range(bucket_count)]
@@ -94,10 +117,17 @@ class MerkleTree:
             key: The key to update.
             value_hash: The hash of the value associated with this key.
         """
+        if not isinstance(key, str) or not isinstance(value_hash, str):
+            raise ValueError("Merkle keys and value hashes must be strings")
         bucket_id = self._key_to_bucket(key)
+        if self._buckets[bucket_id].get(key) == value_hash:
+            return
+        if key not in self._buckets[bucket_id]:
+            keys = self._bucket_keys[bucket_id]
+            keys.insert(bisect_left(keys, key), key)
         self._buckets[bucket_id][key] = value_hash
         self._recompute_bucket(bucket_id)
-        self._recompute_root()
+        self._update_path(bucket_id)
 
     def remove(self, key: str) -> None:
         """Remove a key from the tree.
@@ -108,8 +138,38 @@ class MerkleTree:
         bucket_id = self._key_to_bucket(key)
         if key in self._buckets[bucket_id]:
             del self._buckets[bucket_id][key]
+            keys = self._bucket_keys[bucket_id]
+            keys.pop(bisect_left(keys, key))
             self._recompute_bucket(bucket_id)
-            self._recompute_root()
+            self._update_path(bucket_id)
+
+    def snapshot(self) -> MerkleView:
+        return MerkleView(self._bucket_count, tuple(self._heap))
+
+    def value_hash(self, key: str) -> str | None:
+        """Read the indexed digest used by a pinned repair page."""
+        return self._buckets[self._key_to_bucket(key)].get(key)
+
+    def node_hash(self, index: int) -> str:
+        if type(index) is not int or not 1 <= index < len(self._heap):
+            raise ValueError("invalid Merkle node index")
+        return self._heap[index].hex()
+
+    def key_page(
+        self, bucket_id: int, after: str = "", limit: int = 64
+    ) -> tuple[list[str], bool]:
+        if type(bucket_id) is not int or not 0 <= bucket_id < self._bucket_count:
+            raise ValueError("invalid bucket")
+        if (
+            type(limit) is not int
+            or not 1 <= limit <= 128
+            or not isinstance(after, str)
+        ):
+            raise ValueError("invalid key page")
+        keys = self._bucket_keys[bucket_id]
+        index = bisect_right(keys, after) if after else 0
+        page = keys[index : index + limit]
+        return page, index + len(page) < len(keys)
 
     def get_root_hash(self) -> str:
         """Get the root hash of the tree.
@@ -181,7 +241,7 @@ class MerkleTree:
         """
         if bucket_id < 0 or bucket_id >= self._bucket_count:
             raise IndexError(f"bucket_id {bucket_id} out of range")
-        return list(self._buckets[bucket_id].keys())
+        return list(self._bucket_keys[bucket_id])
 
     def _key_to_bucket(self, key: str) -> int:
         """Hash a key to a bucket index.
@@ -207,7 +267,7 @@ class MerkleTree:
         else:
             # Sort keys for deterministic hashing
             hasher = hashlib.sha256()
-            for key in sorted(bucket.keys()):
+            for key in self._bucket_keys[bucket_id]:
                 for part in (key.encode("utf-8"), bucket[key].encode("utf-8")):
                     hasher.update(len(part).to_bytes(8, "big"))
                     hasher.update(part)
@@ -215,15 +275,28 @@ class MerkleTree:
 
     def _recompute_root(self) -> None:
         """Recompute the root hash from all bucket hashes."""
-        level = [
-            hashlib.sha256(value.encode()).digest() for value in self._bucket_hashes
-        ]
-        while len(level) > 1:
-            level = [
-                hashlib.sha256(level[i] + level[i + 1]).digest()
-                for i in range(0, len(level), 2)
-            ]
-        self._root_hash = level[0].hex()
+        self._heap = [b""] * (2 * self._bucket_count)
+        for index, value in enumerate(self._bucket_hashes):
+            self._heap[self._bucket_count + index] = hashlib.sha256(
+                value.encode()
+            ).digest()
+        for index in range(self._bucket_count - 1, 0, -1):
+            self._heap[index] = hashlib.sha256(
+                self._heap[index * 2] + self._heap[index * 2 + 1]
+            ).digest()
+        self._root_hash = self._heap[1].hex()
+
+    def _update_path(self, bucket_id):
+        index = self._bucket_count + bucket_id
+        self._heap[index] = hashlib.sha256(
+            self._bucket_hashes[bucket_id].encode()
+        ).digest()
+        while index > 1:
+            index //= 2
+            self._heap[index] = hashlib.sha256(
+                self._heap[index * 2] + self._heap[index * 2 + 1]
+            ).digest()
+        self._root_hash = self._heap[1].hex()
 
     def _recompute_all(self) -> None:
         """Recompute all bucket hashes and the root hash."""

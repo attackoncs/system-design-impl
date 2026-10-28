@@ -21,9 +21,9 @@ import grpc.aio
 
 from kv_store.cluster import gossip as cluster_gossip
 from kv_store.network import kvstore_pb2, kvstore_pb2_grpc
-from kv_store.replication.coordinator import RequestCoordinator, QuorumNotMetError
 from kv_store.replication import quorum as replication_quorum
 from kv_store.replication import vector_clock as replication_vector_clock
+from kv_store.replication.coordinator import QuorumNotMetError, RequestCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +84,7 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
         gossip_protocol,
         merkle_tree,
         replica_records=None,
+        max_message_size=16 * 1024 * 1024,
     ):
         """Initialize the servicer with component references.
 
@@ -99,6 +100,17 @@ class KVStoreServicer(kvstore_pb2_grpc.KVStoreServiceServicer):
         self._storage_engine = storage_engine
         self._gossip_protocol = gossip_protocol
         self._merkle_tree = merkle_tree
+        from kv_store.network.repair_service import RepairService
+
+        self._repair_service = RepairService(
+            replica_records, merkle_tree, max_message_size
+        )
+
+    async def MerkleInspect(self, request, context):
+        return await self._repair_service.inspect(request, context)
+
+    async def RepairBucketPage(self, request, context):
+        return await self._repair_service.page(request, context)
 
     async def ReadReplica(self, request, context):
         from kv_store.replication.records import encode
@@ -518,6 +530,7 @@ class GRPCServer:
             gossip_protocol=self._gossip_protocol,
             merkle_tree=self._merkle_tree,
             replica_records=self._replica_records,
+            max_message_size=self._max_message_size,
         )
         kvstore_pb2_grpc.add_KVStoreServiceServicer_to_server(servicer, self._server)
 

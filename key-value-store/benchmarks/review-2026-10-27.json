@@ -1,0 +1,37 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "tree": {
+    "updates": 2000,
+    "buckets": 4096,
+    "seconds": 0.0328732999987551,
+    "updates_per_second": 60839.64798410075,
+    "p50_ms": 0.015600002370774746,
+    "p95_ms": 0.018999999156221747,
+    "root": "b71f0a0f70c734d02250bec3fb84977b066718456297c99f78623698da72f9d6"
+  },
+  "runtime": {
+    "write": {
+      "operations": 120,
+      "clients": 8,
+      "replicas": 3,
+      "consistency": "all",
+      "ops_per_second": 157.11692536880673,
+      "p50_ms": 39.296949998970376,
+      "p95_ms": 129.5890999972471
+    },
+    "read": {
+      "operations": 120,
+      "clients": 8,
+      "replicas": 3,
+      "consistency": "all",
+      "ops_per_second": 294.31140206346794,
+      "p50_ms": 25.381100000231527,
+      "p95_ms": 42.7925000039977
+    }
+  },
+  "source_commit": "working tree after chapter07 review",
+  "grpcio": "1.84.0",
+  "protobuf": "7.36.2",
+  "source": "E:\\share\\system-design-impl\\system-design-impl\\key-value-store\\src"
+}

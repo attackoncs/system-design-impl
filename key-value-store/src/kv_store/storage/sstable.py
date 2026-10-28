@@ -28,7 +28,9 @@ import struct
 import time
 from typing import TYPE_CHECKING, Iterator, List, Optional, Tuple
 
+from kv_store.async_work import complete
 from kv_store.storage import bloom_filter as storage_bloom_filter
+from kv_store.storage.files import publish
 
 if TYPE_CHECKING:
     from kv_store.storage.memtable import MemTable
@@ -590,11 +592,9 @@ class SSTable:
         def _write_file() -> None:
             path = pathlib.Path(file_path)
             path.parent.mkdir(parents=True, exist_ok=True)
-            with open(file_path, "wb") as f:
-                f.write(file_data)
-                f.flush()
+            publish(file_path, file_data)
 
-        await asyncio.to_thread(_write_file)
+        await complete(asyncio.to_thread(_write_file))
 
         # Return a new SSTable instance by reading the file back
         return cls(file_path)

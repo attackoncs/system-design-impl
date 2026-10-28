@@ -28,6 +28,9 @@ import struct
 import zlib
 from typing import Optional
 
+from kv_store.async_work import complete, finish_on_cancel
+from kv_store.storage.files import sync_directory
+
 logger = logging.getLogger(__name__)
 
 # WAL file name
@@ -110,6 +113,7 @@ class WriteAheadLog:
         """Current sequence number (monotonically increasing)."""
         return self._sequence_number
 
+    @finish_on_cancel
     async def append(self, entry: WALEntry) -> None:
         """Append an entry to the WAL and fsync to disk.
 
@@ -155,6 +159,7 @@ class WriteAheadLog:
 
         return entries
 
+    @finish_on_cancel
     async def truncate(self) -> None:
         """Truncate the WAL after successful MemTable flush.
 
@@ -163,6 +168,14 @@ class WriteAheadLog:
 
         async with self._lock:
             await asyncio.to_thread(self._truncate_file)
+
+    @finish_on_cancel
+    async def close(self) -> None:
+        """Close only after owned disk work has drained."""
+        async with self._lock:
+            if self._fd is not None:
+                descriptor, self._fd = self._fd, None
+                await complete(asyncio.to_thread(os.close, descriptor))
 
     def _serialize_entry(self, entry: WALEntry) -> bytes:
         """Serialize a WAL entry to binary format.
@@ -212,7 +225,8 @@ class WriteAheadLog:
         serialized by the asyncio lock, we open in write mode and seek to end
         before each write.
         """
-        if self._fd is None:
+        opened = self._fd is None
+        if opened:
             flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
             # On Windows, O_BINARY is required to prevent newline translation
             if hasattr(os, "O_BINARY"):
@@ -227,6 +241,8 @@ class WriteAheadLog:
                 raise IOError("os.write returned 0 bytes written")
             total_written += written
         os.fsync(self._fd)
+        if opened:
+            sync_directory(self._wal_dir)
 
     def _read_all_entries(self) -> list[WALEntry]:
         """Read and deserialize all valid entries from the WAL file.

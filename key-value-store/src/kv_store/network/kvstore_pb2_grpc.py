@@ -82,6 +82,16 @@ class KVStoreServiceStub:
                 request_serializer=kvstore__pb2.MerkleTreeSyncRequest.SerializeToString,
                 response_deserializer=kvstore__pb2.MerkleTreeSyncResponse.FromString,
                 _registered_method=True)
+        self.MerkleInspect = channel.unary_unary(
+                '/kvstore.KVStoreService/MerkleInspect',
+                request_serializer=kvstore__pb2.MerkleInspectRequest.SerializeToString,
+                response_deserializer=kvstore__pb2.MerkleInspectResponse.FromString,
+                _registered_method=True)
+        self.RepairBucketPage = channel.unary_unary(
+                '/kvstore.KVStoreService/RepairBucketPage',
+                request_serializer=kvstore__pb2.RepairBucketPageRequest.SerializeToString,
+                response_deserializer=kvstore__pb2.RepairBucketPageResponse.FromString,
+                _registered_method=True)
 
 
 class KVStoreServiceServicer:
@@ -149,6 +159,19 @@ class KVStoreServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def MerkleInspect(self, request, context):
+        """Bounded anti-entropy protocol. Root changes abort a page; retry is safe.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RepairBucketPage(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_KVStoreServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -196,6 +219,16 @@ def add_KVStoreServiceServicer_to_server(servicer, server):
                     servicer.MerkleTreeSync,
                     request_deserializer=kvstore__pb2.MerkleTreeSyncRequest.FromString,
                     response_serializer=kvstore__pb2.MerkleTreeSyncResponse.SerializeToString,
+            ),
+            'MerkleInspect': grpc.unary_unary_rpc_method_handler(
+                    servicer.MerkleInspect,
+                    request_deserializer=kvstore__pb2.MerkleInspectRequest.FromString,
+                    response_serializer=kvstore__pb2.MerkleInspectResponse.SerializeToString,
+            ),
+            'RepairBucketPage': grpc.unary_unary_rpc_method_handler(
+                    servicer.RepairBucketPage,
+                    request_deserializer=kvstore__pb2.RepairBucketPageRequest.FromString,
+                    response_serializer=kvstore__pb2.RepairBucketPageResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -444,6 +477,60 @@ class KVStoreService:
             '/kvstore.KVStoreService/MerkleTreeSync',
             kvstore__pb2.MerkleTreeSyncRequest.SerializeToString,
             kvstore__pb2.MerkleTreeSyncResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def MerkleInspect(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kvstore.KVStoreService/MerkleInspect',
+            kvstore__pb2.MerkleInspectRequest.SerializeToString,
+            kvstore__pb2.MerkleInspectResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RepairBucketPage(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kvstore.KVStoreService/RepairBucketPage',
+            kvstore__pb2.RepairBucketPageRequest.SerializeToString,
+            kvstore__pb2.RepairBucketPageResponse.FromString,
             options,
             channel_credentials,
             insecure,

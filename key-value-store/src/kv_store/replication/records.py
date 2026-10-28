@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from dataclasses import dataclass
 import hashlib
 import json
 import math
 import time
+from dataclasses import dataclass
+
+from kv_store.async_work import complete
 
 from .vector_clock import VectorClock
 
@@ -38,18 +40,32 @@ def encode(versions: list[Version]) -> bytes:
     ).encode()
 
 
+def _unique_fields(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate record field")
+        result[key] = value
+    return result
+
+
 def decode(raw: bytes) -> list[Version]:
     if len(raw) > 1024 * 1024:
         raise ValueError("replica record exceeds 1 MiB")
-    data = json.loads(raw)
-    if not isinstance(data, dict) or data.get("format") != 1:
+    data = json.loads(raw, object_pairs_hook=_unique_fields)
+    if (
+        not isinstance(data, dict)
+        or set(data) != {"format", "versions"}
+        or type(data["format"]) is not int
+        or data["format"] != 1
+    ):
         raise ValueError("unsupported replica record format")
     rows = data.get("versions")
     if not isinstance(rows, list) or len(rows) > 256:
         raise ValueError("expected at most 256 sibling versions")
     versions = []
     for row in rows:
-        if not isinstance(row, dict):
+        if not isinstance(row, dict) or set(row) != {"clock", "timestamp", "value"}:
             raise ValueError("invalid version")
         clock, timestamp = row.get("clock"), row.get("timestamp")
         if (
@@ -58,13 +74,18 @@ def decode(raw: bytes) -> list[Version]:
             or any(
                 not isinstance(node, str)
                 or not node
+                or len(node.encode("utf-8")) > 256
                 or type(count) is not int
-                or count < 0
+                or not 0 <= count <= (1 << 63) - 1
                 for node, count in clock.items()
             )
         ):
             raise ValueError("invalid vector clock")
-        if type(timestamp) not in (int, float) or not math.isfinite(timestamp):
+        if (
+            type(timestamp) not in (int, float)
+            or not math.isfinite(timestamp)
+            or not 0 <= timestamp <= 1e12
+        ):
             raise ValueError("invalid timestamp")
         if "value" not in row or (
             row["value"] is not None and not isinstance(row["value"], str)
@@ -117,15 +138,36 @@ class ReplicaRecords:
         return decode(result.value)
 
     async def merge(self, key, versions):
+        # Freeze and validate mutable input before waiting for a striped lock.
+        frozen = decode(encode(versions))
+        return await complete(self._merge(key, frozen))
+
+    async def _merge(self, key, versions):
         async with self.lock(key):
-            existing = await self.read(key)
+            stored = await self.engine.get(key)
+            existing = (
+                decode(stored.value) if stored is not None and stored.found else []
+            )
             merged = reconcile([*existing, *versions])
             raw = encode(merged)
             decode(raw)  # apply the same limits to local and remote merges
             if raw == encode(existing):
                 return True
             # Metadata and values are one WAL/SSTable record, never separate commits.
-            await self.engine.put(key, raw, time.time())
+            timestamp = time.time()
+            if stored is not None:
+                timestamp = max(timestamp, math.nextafter(stored.timestamp, math.inf))
+            try:
+                await self.engine.put(key, raw, timestamp)
+            except BaseException:
+                # A flush error can follow a durable WAL/memtable update. Keep
+                # the index consistent with what reads actually observe while
+                # still reporting the failed/uncertain write to the caller.
+                observed = await self.engine.get(key)
+                if observed is not None and observed.found:
+                    decode(observed.value)
+                    self.tree.update(key, hashlib.sha256(observed.value).hexdigest())
+                raise
             self.tree.update(key, hashlib.sha256(raw).hexdigest())
         return True
 

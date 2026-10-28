@@ -13,15 +13,18 @@ Covers: FR-9, FR-10
 import asyncio
 import dataclasses
 import logging
+import math
 import pathlib
 import uuid
 from typing import List, Optional
 
 from kv_store import config as kv_store_config
+from kv_store.async_work import finish_on_cancel
 from kv_store.storage import compaction as storage_compaction
 from kv_store.storage import memtable as storage_memtable
 from kv_store.storage import sstable as storage_sstable
 from kv_store.storage import wal as storage_wal
+from kv_store.storage.files import sync_directory
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +69,7 @@ class StorageEngine:
         self._compaction_manager = storage_compaction.CompactionManager(
             sstable_dir=config.sstable_dir,
             compaction_threshold=config.compaction_threshold,
+            tombstone_grace_seconds=float("inf"),
         )
         self._started = False
 
@@ -77,6 +81,8 @@ class StorageEngine:
         2. Load existing SSTables from disk (sorted newest first by created_at).
         3. Replay WAL to restore MemTable state.
         """
+        if self._started:
+            raise RuntimeError("storage engine is already started")
         # Create directories
         pathlib.Path(self._config.data_dir).mkdir(parents=True, exist_ok=True)
         pathlib.Path(self._config.wal_dir).mkdir(parents=True, exist_ok=True)
@@ -106,18 +112,22 @@ class StorageEngine:
             self._memtable.size_bytes,
         )
 
+    @finish_on_cancel
     async def stop(self) -> None:
         """Gracefully stop — flush MemTable if non-empty, close WAL."""
 
         # Serialize WAL updates and flushes to prevent lost concurrent writes.
         async with self._write_lock:
-            if len(self._memtable) > 0:
-                await self._flush_memtable()
-                logger.info("Flushed MemTable to SSTable on shutdown")
-
-            self._started = False
+            try:
+                if len(self._memtable) > 0:
+                    await self._flush_memtable()
+                    logger.info("Flushed MemTable to SSTable on shutdown")
+            finally:
+                await self._wal.close()
+                self._started = False
             logger.info("Storage engine stopped")
 
+    @finish_on_cancel
     async def put(self, key: str, value: bytes, timestamp: float) -> None:
         """Write a key-value pair.
 
@@ -137,7 +147,15 @@ class StorageEngine:
 
         # Serialize WAL updates and flushes to prevent lost concurrent writes.
         async with self._write_lock:
+            if not self._started:
+                raise RuntimeError("storage engine is not started")
             self._validate_key(key)
+            if (
+                type(timestamp) not in (int, float)
+                or not math.isfinite(timestamp)
+                or not 0 <= timestamp <= 1e12
+            ):
+                raise ValueError("invalid storage timestamp")
             self._validate_value(value)
 
             # Write to WAL first for durability
@@ -170,36 +188,22 @@ class StorageEngine:
         Returns:
             StorageResult if found (may be a tombstone), None if not found.
         """
-        # Check MemTable first
-        mem_entry = self._memtable.get(key)
-        if mem_entry is not None:
-            return StorageResult(
-                key=mem_entry.key,
-                value=mem_entry.value,
-                timestamp=mem_entry.timestamp,
-                is_tombstone=mem_entry.is_tombstone,
-                found=True,
-            )
-
-        # Check SSTables from newest to oldest
-        for sstable in self._sstables:
-            # Check Bloom filter first for fast negative lookup
-            if not sstable.may_contain(key):
-                continue
-
-            # Bloom filter says maybe — do actual lookup
-            entry = await sstable.get(key)
-            if entry is not None:
-                return StorageResult(
-                    key=entry.key,
-                    value=entry.value,
-                    timestamp=entry.timestamp,
-                    is_tombstone=entry.is_tombstone,
-                    found=True,
-                )
-
-        # Not found anywhere
-        return None
+        self._validate_key(key)
+        # Creation times can regress across flushes/restarts. Select the newest
+        # per-key storage timestamp across every candidate, including tombstones.
+        best = self._memtable.get(key)
+        for table in tuple(self._sstables):
+            if table.may_contain(key):
+                candidate = await table.get(key)
+                if candidate is not None and (
+                    best is None or candidate.timestamp > best.timestamp
+                ):
+                    best = candidate
+        if best is None:
+            return None
+        return StorageResult(
+            best.key, best.value, best.timestamp, best.is_tombstone, True
+        )
 
     async def scan(self) -> dict[str, StorageResult]:
         """Capture newest records under the writer lock, including tombstones.
@@ -211,9 +215,13 @@ class StorageEngine:
             entries = {}
             for table in reversed(self._sstables):
                 for entry in table.entries():
-                    entries[entry.key] = entry
+                    previous = entries.get(entry.key)
+                    if previous is None or entry.timestamp >= previous.timestamp:
+                        entries[entry.key] = entry
             for entry in self._memtable.entries_sorted():
-                entries[entry.key] = entry
+                previous = entries.get(entry.key)
+                if previous is None or entry.timestamp >= previous.timestamp:
+                    entries[entry.key] = entry
             return {
                 key: StorageResult(
                     key,
@@ -225,6 +233,7 @@ class StorageEngine:
                 for key, entry in entries.items()
             }
 
+    @finish_on_cancel
     async def delete(self, key: str, timestamp: float) -> None:
         """Delete a key by writing a tombstone marker.
 
@@ -243,7 +252,15 @@ class StorageEngine:
 
         # Serialize WAL updates and flushes to prevent lost concurrent writes.
         async with self._write_lock:
+            if not self._started:
+                raise RuntimeError("storage engine is not started")
             self._validate_key(key)
+            if (
+                type(timestamp) not in (int, float)
+                or not math.isfinite(timestamp)
+                or not 0 <= timestamp <= 1e12
+            ):
+                raise ValueError("invalid storage timestamp")
 
             # Write to WAL
             wal_entry = storage_wal.WALEntry(
@@ -319,6 +336,9 @@ class StorageEngine:
         """
         compacted_level = compacted_sstable.metadata.level - 1
 
+        retired = [
+            sst for sst in self._sstables if sst.metadata.level == compacted_level
+        ]
         # Remove SSTables that were at the compacted level
         self._sstables = [
             sst for sst in self._sstables if sst.metadata.level != compacted_level
@@ -335,6 +355,17 @@ class StorageEngine:
 
         if not inserted:
             self._sstables.append(compacted_sstable)
+        # Readers retain immutable in-memory SSTable objects, not open files.
+        # The replacement file was fsynced before these old inputs are retired.
+        for table in retired:
+            try:
+                pathlib.Path(table.metadata.file_path).unlink(missing_ok=True)
+            except OSError:
+                logger.warning(
+                    "Old compacted SSTable could not be retired", exc_info=True
+                )
+        if retired:
+            sync_directory(self._config.sstable_dir)
 
     def _load_sstables(self) -> List[storage_sstable.SSTable]:
         """Load all existing SSTable files from the sstable directory.
@@ -353,8 +384,10 @@ class StorageEngine:
                 try:
                     sst = storage_sstable.SSTable(str(file_path))
                     sstables.append(sst)
-                except (ValueError, FileNotFoundError) as e:
-                    logger.warning("Skipping invalid SSTable file %s: %s", file_path, e)
+                except (ValueError, FileNotFoundError) as error:
+                    raise ValueError(
+                        f"invalid SSTable requires recovery: {file_path.name}"
+                    ) from error
 
         # Sort by created_at descending (newest first)
         sstables.sort(key=lambda s: s.metadata.created_at, reverse=True)
