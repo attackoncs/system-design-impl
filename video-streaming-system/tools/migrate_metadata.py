@@ -8,7 +8,15 @@ import sqlite3
 
 import video_streaming
 
-TABLES = ("settings", "credentials", "videos", "parts", "jobs", "completions")
+TABLES = (
+    "settings",
+    "credentials",
+    "videos",
+    "parts",
+    "jobs",
+    "completions",
+    "job_limits",
+)
 
 
 def migrate(source, target, objects=None, source_objects=None):
@@ -17,8 +25,16 @@ def migrate(source, target, objects=None, source_objects=None):
         # Snapshot all source tables while offline, including
         # credentials/signing key.
         connection.execute("BEGIN")
+        existing = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
         rows = {
             table: connection.execute("SELECT * FROM " + table).fetchall()
+            if table in existing
+            else []
             for table in TABLES
         }
         if objects is not None:

@@ -12,22 +12,39 @@ import video_streaming.service
 import video_streaming.worker
 
 
-def main():
+def _parser():
     parser = argparse.ArgumentParser(
         description="Local video API and durable media workers"
     )
     parser.add_argument("--root", default=".runtime/video")
+    parser.add_argument(
+        "--pipeline", help="JSON profiles/thumbnail/preprocess configuration"
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("token").add_argument("owner")
     commands.add_parser("cleanup")
     api = commands.add_parser("api")
     api.add_argument("--host", default="127.0.0.1")
     api.add_argument("--port", type=int, default=8080)
+    api.add_argument("--concurrency", type=int, default=32)
+    api.add_argument("--request-timeout", type=float, default=30)
     worker = commands.add_parser("worker")
     worker.add_argument("--name", default="worker")
     worker.add_argument("--once", action="store_true")
+    worker.add_argument("--concurrency", type=int, default=1)
+    worker.add_argument(
+        "--kinds", nargs="+", choices=sorted(video_streaming.worker.KINDS)
+    )
     worker.add_argument("--media-timeout", type=float, default=600)
-    args = parser.parse_args()
+    return parser
+
+
+def main(argv=None):
+    args = _parser().parse_args(argv)
+    pipeline = None
+    if args.pipeline:
+        with open(args.pipeline, encoding="utf-8") as stream:
+            pipeline = json.load(stream)
     root = pathlib.Path(args.root).resolve()
     root.mkdir(parents=True, exist_ok=True)
     objects = (
@@ -44,6 +61,7 @@ def main():
     service = video_streaming.service.VideoService(
         os.environ.get("VIDEO_DATABASE_DSN") or root / "metadata.sqlite3",
         objects,
+        pipeline=pipeline,
     )
     try:
         if args.command == "token":
@@ -54,10 +72,21 @@ def main():
             print("Video worker ready", flush=True)
             media = video_streaming.media.FFmpegMedia(timeout=args.media_timeout)
             video_streaming.worker.Worker(
-                service, media, args.name, lease=args.media_timeout + 60
+                service,
+                media,
+                args.name,
+                lease=args.media_timeout + 60,
+                concurrency=args.concurrency,
+                kinds=args.kinds,
             ).run(args.once)
         else:
-            http = video_streaming.http.server(service, args.host, args.port)
+            http = video_streaming.http.server(
+                service,
+                args.host,
+                args.port,
+                concurrency=args.concurrency,
+                request_timeout=args.request_timeout,
+            )
             print("Video API ready", flush=True)
             try:
                 http.serve_forever()

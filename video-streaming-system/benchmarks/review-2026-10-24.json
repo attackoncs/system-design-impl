@@ -1,0 +1,32 @@
+{
+  "duration_seconds": 3,
+  "source_bytes": 120988,
+  "renditions": [
+    144,
+    240
+  ],
+  "upload_parts": 2,
+  "upload_and_finalize_ms": 28.578,
+  "pipeline_ms": 613.15,
+  "task_ms": {
+    "inspect": 120.769,
+    "thumbnail": 97.782,
+    "encode-144": 179.477,
+    "encode-240": 185.151,
+    "publish": 23.168
+  },
+  "output_bytes": 377358,
+  "encrypted_http_decode_verified": true,
+  "http_requests": 10,
+  "http_latency": {
+    "p50_ms": 14.472,
+    "p95_ms": 27.378,
+    "p99_ms": 27.378
+  },
+  "environment": {
+    "platform": "Windows-11-10.0.26100-SP0",
+    "python": "3.13.9",
+    "logical_cpus": 16
+  },
+  "scope": "one local worker; sequential loopback HTTP; no cloud CDN or production scale claim"
+}

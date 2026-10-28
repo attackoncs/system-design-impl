@@ -35,7 +35,7 @@ accepts the corresponding binary chunk. `POST /renew?video=...` renews upload
 grants; `POST /finish?video=...` finalizes; `GET /videos?video=...` reports state;
 `POST /playback?video=...` issues a short-lived playback grant. Fetch
 `GET /media?grant=...&resource=master.m3u8`; nested manifests and keys carry that
-grant. `POST /remove?video=...` revokes access. POST bodies are JSON; optional
+grant. `POST /remove?video=...` revokes access. Creation/metadata bodies are JSON; optional
 finalization checksum is SHA-256. Upload defaults to 4 MiB chunks and a 1 GB limit.
 
 ## Recovery and boundaries
@@ -108,3 +108,55 @@ disposable real cluster. Optionally set `VIDEO_TEST_S3_ENDPOINT`,
 `VIDEO_TEST_S3_ACCESS_KEY`, `VIDEO_TEST_S3_SECRET_KEY` for a real S3 service; otherwise
 tests start a Moto protocol emulator. Tests create/remove isolated schemas/buckets.
 Without a PostgreSQL DSN its integration tests are explicitly skipped.
+
+## Chapter audit additions
+
+The audit adds immutable pipeline configuration, persistent GOP preprocessing,
+metadata updates, renewable leases and bounded parallel workers. See the
+[chapter coverage and evidence](docs/chapter15-review.md).
+
+```powershell
+.\.venv\Scripts\python -m video_streaming.cli --root .runtime/video --pipeline examples/pipeline.json api --port 8080
+.\.venv\Scripts\python -m video_streaming.cli --root .runtime/video worker --name worker-a --concurrency 2
+```
+
+[examples/pipeline.json](examples/pipeline.json) selects 144p/240p, preprocessing and
+thumbnail generation. Library callers can pass `pipeline=Pipeline(...)` to the
+service or `finish`. Accepted plans survive restart and cannot be replaced by an
+explicit finalization retry. Defaults preserve the original five-task plan.
+Preprocessing stream-copies chunks at source keyframes; two seconds is a target.
+Renditions encode in parallel; this is not distributed per-GOP encoding/merge.
+
+`--kinds inspect preprocess thumbnail encode publish` restricts a worker's task
+capabilities. Ensure every required kind has a worker. Parallelism is bounded to
+1..32 per worker. `worker --once` drains ready work without waiting for delayed
+retries. API flags `--concurrency` and `--request-timeout` configure handler slots
+and socket-I/O deadlines. Lease heartbeats cover downloads, encoding and uploads;
+first claim persists the attempt limit so other workers cannot shorten it.
+
+`POST /metadata?video=...` accepts `{"title":"Updated title"}` with the owner
+Bearer token while uploading/processing/ready. `HEAD /media` returns media/range
+headers without a body. Finish, renew, playback and remove requests are bodyless;
+upload creation and metadata updates use JSON. FAILED status includes bounded
+task/error details. Raw HLS manifests are capped at 1 MiB.
+
+Cold object loads and completion checks run outside the global cache/metadata lock;
+immutable asset maps use a bounded metadata cache. Current authorization/state and
+remote origin existence are still checked. Graceful close drains handlers and
+accepted operations. SQLite/object calls can outlive socket deadlines; a disconnected
+request's accepted mutation may still commit. Some final reference checks and GC
+retain write transactions and can delay writers/renewals on slow storage.
+
+Cleanup commits expiry before deleting objects; a failed sweep cannot restore an
+upload whose objects were removed. READY/FAILED GOP intermediates become collectible
+after the grace period. Sources/playback assets remain referenced; grace is not a
+durable pin for paused, uncommitted work. Offline migration also preserves per-job
+attempt limits and accepts legacy sources without that table.
+
+Final validation: **160 passed, no skips**, using a fresh owned PostgreSQL 18 UTF8
+instance, Moto S3, real FFmpeg and independent workers; owned services were cleaned
+up. Normal runs without a PostgreSQL DSN skip six integration cases. The
+[new fixture report](benchmarks/review-2026-10-24.json) measures a three-second video,
+one worker and ten sequential loopback reads; it does not establish concurrent or
+production capacity. This round did not repeat Patroni promotion, real S3 HA or
+cross-host network-partition experiments.

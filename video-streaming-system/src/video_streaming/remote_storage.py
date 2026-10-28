@@ -1,8 +1,8 @@
 """Private S3 objects with per-host, checksum-verified materialization."""
 
-import hashlib
-import os
+import collections
 import re
+import threading
 import types
 import uuid
 
@@ -90,6 +90,9 @@ class S3Objects(video_streaming.storage.LocalObjects):
                 ),
             )
         self.client = client
+        self._loads = tuple(threading.Lock() for _ in range(64))
+        self._verified = collections.OrderedDict()
+        self._cache_lock = threading.Lock()
 
     def file(self, key):
         video_streaming.storage.LocalObjects.file(
@@ -130,8 +133,45 @@ class S3Objects(video_streaming.storage.LocalObjects):
         target = video_streaming.storage.LocalObjects.file(self, key)
         # Always verify remote presence; a local copy is not remote durability.
         self.head(key)
-        if target.is_file():
-            return target
+        with self._loads[hash(key) % len(self._loads)]:
+            if self._valid_cache(target, key):
+                return target
+            return self._download(target, key)
+
+    @staticmethod
+    def _signature(path):
+        value = path.stat()
+        return (
+            value.st_dev,
+            value.st_ino,
+            value.st_size,
+            value.st_mtime_ns,
+            value.st_ctime_ns,
+        )
+
+    def _remember(self, key, signature):
+        with self._cache_lock:
+            self._verified[key] = signature
+            self._verified.move_to_end(key)
+            while len(self._verified) > 1024:
+                self._verified.popitem(last=False)
+
+    def _valid_cache(self, target, key):
+        """Detect modified/corrupt cache files without rehashing warm copies."""
+        try:
+            signature = self._signature(target)
+        except FileNotFoundError:
+            return False
+        with self._cache_lock:
+            if self._verified.get(key) == signature:
+                self._verified.move_to_end(key)
+                return True
+        if self.checksum(target) != key or self._signature(target) != signature:
+            return False
+        self._remember(key, signature)
+        return True
+
+    def _download(self, target, key):
         temporary = self.root / (uuid.uuid4().hex + ".tmp")
         try:
             try:
@@ -140,13 +180,10 @@ class S3Objects(video_streaming.storage.LocalObjects):
                 )
             except Exception:
                 raise OSError("object download unavailable") from None
-            digest = hashlib.sha256()
-            with temporary.open("rb") as stream:
-                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                    digest.update(chunk)
-            if digest.hexdigest() != key:
+            if self.checksum(temporary) != key:
                 raise OSError("object checksum mismatch")
-            os.replace(temporary, target)
+            self._publish(temporary, key)
+            self._remember(key, self._signature(target))
             return target
         finally:
             temporary.unlink(missing_ok=True)
@@ -182,12 +219,15 @@ class S3Objects(video_streaming.storage.LocalObjects):
             The number of removed objects; other prefixes are never considered.
         """
         removed = 0
+        references = frozenset(references)
         try:
             pages = self.client.get_paginator("list_objects_v2").paginate(
                 Bucket=self.bucket, Prefix=self.prefix
             )
             for page in pages:
                 for item in page.get("Contents", []):
+                    if not item["Key"].startswith(self.prefix):
+                        continue
                     key = item["Key"][len(self.prefix) :]
                     if (
                         re.fullmatch(r"[0-9a-f]{64}", key)

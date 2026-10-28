@@ -5,6 +5,7 @@ from video_streaming.remote_storage import S3Objects
 from video_streaming.service import VideoService
 from video_streaming.storage import LocalObjects
 from video_streaming.worker import Worker
+from video_streaming.pipeline import Pipeline
 
 __all__ = [
     "VideoService",
@@ -13,4 +14,5 @@ __all__ = [
     "FFmpegMedia",
     "InvalidMedia",
     "Worker",
+    "Pipeline",
 ]

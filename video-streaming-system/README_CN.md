@@ -64,3 +64,42 @@ python tools/migrate_metadata.py --source .runtime/video/metadata.sqlite3 --sour
 
 目标元数据必须为空；对象先传输，元数据事务整体导入，保留源文件、凭据、签名密钥
 和任务。完成后重新启动目标进程。集成测试环境变量及复现方式见英文说明和报告。
+
+## 本轮章节核对
+
+补齐配置式流水线、持久 GOP 预处理、独立元数据更新、任务续租和有限并行 Worker，
+详见[章节覆盖与证据](docs/chapter15-review.md)。新增模块分离计划、队列、SQL 和
+生命周期职责；保留原有 VideoService 接口及默认五任务计划。
+
+```powershell
+.\.venv\Scripts\python -m video_streaming.cli --root .runtime/video --pipeline examples/pipeline.json api --port 8080
+.\.venv\Scripts\python -m video_streaming.cli --root .runtime/video worker --name worker-a --concurrency 2
+```
+
+[流水线示例](examples/pipeline.json)配置 144p/240p、GOP 预处理和缩略图。库接口也
+接受 pipeline=Pipeline(...)，完成上传时持久计划，重启或显式重试不能替换它。
+预处理按已有关键帧切块，两秒只是目标；编码并行粒度为清晰度，不是逐 GOP 分布式
+编码/合并。Worker --kinds 可限制 inspect/preprocess/thumbnail/encode/publish，
+需确保全部所需类型有 Worker；本地并发 1..32。--once 只清空当前就绪工作，不等待
+延迟重试。API 的 --concurrency、--request-timeout 设置处理槽位和套接字期限。
+
+POST /metadata?video=... 使用所有者 Bearer 令牌及 JSON {"title":"新标题"}，
+上传、处理和 READY 状态均可调用。HEAD /media 返回媒体/范围响应头；finish、renew、
+playback、remove 请求不带正文，上传创建与元数据更新使用 JSON。FAILED 状态增加
+有限任务错误详情，原始 HLS 清单上限 1MiB。
+
+心跳覆盖下载/转码/上传，首次领取持久确定尝试上限，其他 Worker 不会提前耗尽它。
+冷对象加载和完成检查移出全局锁，资源映射使用有限元数据缓存；缓存不能绕过当前
+状态、授权或远端存在性检查。停服等待活动处理器和操作。数据库/对象调用可能超过
+套接字期限，断连后已接受写入仍可能提交；部分最终检查和 GC 仍持有写事务，慢存储
+可能延迟写入和续租。
+
+清理先提交过期状态，再删对象；失败不会恢复引用丢失对象的上传。READY/FAILED
+的 GOP 中间块经过宽限后可回收，源与播放资源继续保留。宽限不是持久 pin，暂停的
+未提交工作可能需要重试。离线迁移保留任务尝试策略，兼容没有新表的旧源数据库。
+
+本轮最终 **160 项测试通过，无跳过**：全新独占 PostgreSQL 18 UTF8、Moto S3、
+真实 FFmpeg 及独立 Worker 均实际执行，结束后清理自有服务。未配置 PostgreSQL
+时正常跳过六项集成测试。[新实测](benchmarks/review-2026-10-24.json)仅为三秒素材、
+一个 Worker 和十次顺序回环读取，不证明并发容量。本轮未重跑 Patroni 主库提升、
+真实 S3 高可用和跨主机网络分区实验。

@@ -1,19 +1,28 @@
-"""Lease-fenced durable DAG worker; independent processes may run
-concurrently.
-"""
+"""Durable DAG workers with bounded execution, renewed leases and owned cleanup."""
 
+import concurrent.futures
+import contextlib
 import logging
 import pathlib
+import re
 import shutil
-import time
+import threading
 
 import video_streaming.database
 import video_streaming.media
-import video_streaming.service
+from video_streaming.pipeline import KINDS, PROFILES
+from video_streaming.scheduling import attempts, duration
+
+_LOG = logging.getLogger(__name__)
 
 
 class Worker:
-    """Executes leased transcode DAG tasks with attempt-local working files."""
+    """Run supported tasks within a fixed local capacity; other processes cooperate.
+
+    Lease renewal covers object materialization and uploads as well as FFmpeg.
+    Stop drains active operations. Lost leases stop media subprocesses and prevent
+    local completion; remote object operations retain their backend timeouts.
+    """
 
     def __init__(
         self,
@@ -23,48 +32,115 @@ class Worker:
         lease=120,
         max_attempts=3,
         retry_base=1,
+        *,
+        concurrency=1,
+        kinds=None,
     ):
-        if lease <= getattr(media, "timeout", 0):
+        lease = duration(lease, "lease")
+        timeout = duration(getattr(media, "timeout", 0), "media timeout", zero=True)
+        if lease <= timeout:
             raise ValueError("lease must exceed the media timeout")
+        attempts(max_attempts)
+        if type(concurrency) is not int or not 1 <= concurrency <= 32:
+            raise ValueError("invalid worker concurrency")
+        if not isinstance(name, str) or not 1 <= len(name) <= 200:
+            raise ValueError("invalid worker name")
+        if kinds is not None:
+            if not isinstance(kinds, (list, tuple, set, frozenset)) or not kinds:
+                raise ValueError("invalid worker capabilities")
+            if any(not isinstance(kind, str) or kind not in KINDS for kind in kinds):
+                raise ValueError("invalid worker capabilities")
+            kinds = frozenset(kinds)
         self.service, self.media, self.name = service, media, name
-        self.lease, self.max_attempts, self.retry_base = (
-            lease,
-            max_attempts,
-            retry_base,
-        )
+        self.lease, self.max_attempts = lease, max_attempts
+        self.retry_base = duration(retry_base, "retry base", zero=True)
+        self.concurrency, self.kinds = concurrency, kinds
+        self._slots = threading.BoundedSemaphore(concurrency)
+        self._run_lock = threading.Lock()
         self.work = service.objects.root.parent / "work"
         self.work.mkdir(exist_ok=True)
 
+    def _prepared_source(self, job, folder):
+        dependencies = job.get("dependencies", {})
+        prepared = dependencies.get("preprocess")
+        if prepared is None:
+            return pathlib.Path(self.service.objects.file(job["video_data"]["source"]))
+        if isinstance(prepared, dict) and "segments" in prepared:
+            keys = prepared["segments"]
+        elif isinstance(prepared, dict):
+            keys = [prepared[name] for name in sorted(prepared)]
+        else:
+            raise ValueError("invalid preprocessing output")
+        if not isinstance(keys, list) or not keys:
+            raise ValueError("preprocessing output has no segments")
+        lines = ["ffconcat version 1.0"]
+        for key in keys:
+            path = pathlib.Path(self.service.objects.file(key)).resolve().as_posix()
+            # FFmpeg concat uses shell-like single quote escaping. The paths
+            # refer only to validated content hashes in this worker's store.
+            quoted = path.replace("'", "'\\''")
+            lines.append("file '" + quoted + "'")
+        manifest = folder / "input.ffconcat"
+        manifest.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return manifest
+
+    def _publish(self, job):
+        outputs = self.service.outputs(job["video"])
+        assets, playlist = {}, ["#EXTM3U", "#EXT-X-VERSION:3"]
+        profiles = sorted(
+            int(name.split("-")[1]) for name in outputs if name.startswith("encode-")
+        )
+        for profile in profiles:
+            width, height, bitrate = PROFILES[profile]
+            assets.update(outputs[f"encode-{profile}"])
+            playlist += [
+                f"#EXT-X-STREAM-INF:BANDWIDTH={bitrate + 96000},"
+                f"RESOLUTION={width}x{height}",
+                f"{profile}/index.m3u8",
+            ]
+        assets.update(outputs.get("thumbnail", {}))
+        assets["key.bin"] = self.service.objects.put(
+            bytes.fromhex(job["video_data"]["key_hex"])
+        )
+        assets["master.m3u8"] = self.service.objects.put(
+            ("\n".join(playlist) + "\n").encode()
+        )
+        if not profiles or any(
+            not self.service.objects.file(key).is_file() for key in assets.values()
+        ):
+            raise RuntimeError("publication output incomplete")
+        return assets
+
     def execute(self, job):
-        """Execute a claimed task and return its JSON-serializable output.
-
-        Args:
-            job: A claim containing kind, video, lease, profile, and video_data.
-
-        Returns:
-            Inspection metadata or an asset-name to object-key mapping.
-
-        Raises:
-            InvalidMedia: The source cannot be decoded.
-            ValueError: The job kind is unsupported.
-            OSError: Required source or output objects cannot be accessed.
-        """
-        service = self.service
+        """Execute only in a validated attempt folder and clean it on every exit."""
+        if any(
+            not isinstance(job.get(field), str)
+            or not re.fullmatch(r"[0-9a-f]{32}", job[field])
+            for field in ("video", "lease")
+        ):
+            raise ValueError("invalid attempt identity")
         folder = self.work / job["video"] / job["lease"]
+        folder.resolve().relative_to(self.work.resolve())
         folder.mkdir(parents=True, exist_ok=True)
-        source = service.objects.file(job["video_data"]["source"])
         try:
-            if hasattr(source, "__fspath__"):
-                source = pathlib.Path(source)
-            if job["kind"] == "inspect":
+            kind = job["kind"]
+            if kind == "publish":
+                return self._publish(job)
+            source = self._prepared_source(job, folder)
+            if kind == "inspect":
                 return self.media.inspect(source, folder)
-            if job["kind"] == "thumbnail":
+            if kind == "preprocess":
                 return {
-                    "thumbnail.png": service.objects.put_file(
+                    path.name: self.service.objects.put_file(path)
+                    for path in self.media.preprocess(source, folder)
+                }
+            if kind == "thumbnail":
+                return {
+                    "thumbnail.png": self.service.objects.put_file(
                         self.media.thumbnail(source, folder)
                     )
                 }
-            if job["kind"] == "encode":
+            if kind == "encode":
                 files = self.media.encode(
                     source,
                     folder,
@@ -72,92 +148,147 @@ class Worker:
                     bytes.fromhex(job["video_data"]["key_hex"]),
                 )
                 return {
-                    f"{job['profile']}/{path.name}": service.objects.put_file(path)
+                    f"{job['profile']}/{path.name}": self.service.objects.put_file(path)
                     for path in files
                 }
-            if job["kind"] == "publish":
-                outputs = service.outputs(job["video"])
-                assets = {}
-                playlist = ["#EXTM3U", "#EXT-X-VERSION:3"]
-                # Read the persisted DAG's profiles, not this worker's startup
-                # defaults.
-                profiles = sorted(
-                    int(name.split("-")[1])
-                    for name in outputs
-                    if name.startswith("encode-")
-                )
-                for profile in profiles:
-                    width, height, bitrate = video_streaming.service.PROFILES[profile]
-                    assets.update(outputs[f"encode-{profile}"])
-                    playlist += [
-                        (
-                            f"#EXT-X-STREAM-INF:BANDWIDTH={bitrate + 96000},"
-                            f"RESOLUTION={width}x{height}"
-                        ),
-                        f"{profile}/index.m3u8",
-                    ]
-                assets.update(outputs["thumbnail"])
-                assets["key.bin"] = service.objects.put(
-                    bytes.fromhex(job["video_data"]["key_hex"])
-                )
-                assets["master.m3u8"] = service.objects.put(
-                    ("\n".join(playlist) + "\n").encode()
-                )
-                if not profiles or any(
-                    not service.objects.file(key).is_file() for key in assets.values()
-                ):
-                    raise RuntimeError("publication output incomplete")
-                return assets
             raise ValueError("unknown task type")
         finally:
-            # Attempt-local path is generated here, never from an HTTP path.
-            folder.resolve().relative_to(self.work.resolve())
-            shutil.rmtree(folder)
+            try:
+                shutil.rmtree(folder)
+            except OSError:
+                # Cleanup must not turn a valid output into a retry or hide the
+                # original error. Conservative GC reaps abandoned attempts.
+                _LOG.warning(
+                    "Could not remove attempt folder %s", folder, exc_info=True
+                )
+
+    @contextlib.contextmanager
+    def _heartbeat(self, job):
+        finished, lost = threading.Event(), threading.Event()
+
+        def renew():
+            while not finished.wait(min(30, self.lease / 3)):
+                try:
+                    if self.service.renew(job, self.lease):
+                        continue
+                except Exception:
+                    _LOG.exception("Could not renew task %s", job["id"])
+                lost.set()
+                return
+
+        thread = threading.Thread(target=renew, name=f"video-lease-{self.name}")
+        thread.start()
+        try:
+            yield lost
+        finally:
+            finished.set()
+            thread.join()
+
+    def _claim(self):
+        if not self._slots.acquire(blocking=False):
+            return None
+        try:
+            options = {} if self.kinds is None else {"kinds": self.kinds}
+            job = self.service.claim(
+                self.name, self.lease, self.max_attempts, **options
+            )
+        except BaseException:
+            self._slots.release()
+            raise
+        if job is None:
+            self._slots.release()
+        return job
+
+    def _process(self, job):
+        try:
+            with self._heartbeat(job) as lost:
+                context = (
+                    self.media.operation(lost)
+                    if hasattr(self.media, "operation")
+                    else contextlib.nullcontext()
+                )
+                try:
+                    with context:
+                        output = self.execute(job)
+                    if not lost.is_set():
+                        self.service.complete(job, output)
+                except Exception as error:
+                    _LOG.exception("Task attempt failed: %s", job["name"])
+                    if not lost.is_set():
+                        self.service.fail(
+                            job,
+                            error,
+                            isinstance(error, video_streaming.media.InvalidMedia),
+                            self.max_attempts,
+                            self.retry_base,
+                        )
+        finally:
+            self._slots.release()
 
     def run_once(self, handle_completion=True):
-        """Process at most one job; return False when no job is ready."""
+        """Process one task synchronously, or return False when idle/at capacity."""
         if handle_completion:
             self.service.handle_completions()
-        job = self.service.claim(self.name, self.lease, self.max_attempts)
+        job = self._claim()
         if job is None:
             return False
-        try:
-            self.service.complete(job, self.execute(job))
-        # Isolate this operation; record failures before continuing.
-        except Exception as error:  # pylint: disable=broad-exception-caught
-            logging.getLogger(__name__).exception("Failure isolated in %s", "run_once")
-            self.service.fail(
-                job,
-                error,
-                isinstance(error, video_streaming.media.InvalidMedia),
-                self.max_attempts,
-                self.retry_base,
-            )
+        self._process(job)
         if handle_completion:
             self.service.handle_completions()
         return True
 
-    def run(self, once=False):
-        """Poll for durable work, backing off on transient storage failures.
+    def _poll(self, pool, once, stop):
+        pending = set()
+        try:
+            while not stop.is_set():
+                self.service.handle_completions()
+                while len(pending) < self.concurrency and not stop.is_set():
+                    job = self._claim()
+                    if job is None:
+                        break
+                    try:
+                        pending.add(pool.submit(self._process, job))
+                    except BaseException:
+                        self._slots.release()
+                        raise
+                if not pending:
+                    if once:
+                        return
+                    stop.wait(0.2)
+                    continue
+                done, pending = concurrent.futures.wait(
+                    pending, timeout=0.1, return_when=concurrent.futures.FIRST_COMPLETED
+                )
+                for future in done:
+                    future.result()
+        finally:
+            # Every submitted operation remains owned until it finishes.
+            for future in pending:
+                future.result()
 
-        Args:
-            once: Drain currently ready work and return when idle if True;
-                otherwise
-                poll indefinitely. In drain mode, storage failures propagate.
+    def run(self, once=False, stop=None):
+        """Poll with bounded local parallelism; stop drains active operations.
+
+        once=True drains ready work, but does not wait for delayed retries.
+        Storage failures back off unless once=True. Only one polling loop may
+        own this Worker; run_once remains useful for deterministic processing.
         """
-        while True:
-            try:
-                progressed = self.run_once()
-            except (video_streaming.database.MetadataUnavailable, OSError):
-                # A lost commit may have succeeded. Poll persisted state next
-                # time;
-                # expired task leases, not blind transaction replay, recover
-                # work.
-                if once:
-                    raise
-                time.sleep(1)
-                continue
-            if not progressed:
-                if once:
-                    return
-                time.sleep(0.2)
+        if not isinstance(once, bool):
+            raise ValueError("once must be a boolean")
+        if not self._run_lock.acquire(blocking=False):
+            raise RuntimeError("worker already has a polling loop")
+        stop = threading.Event() if stop is None else stop
+        try:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=self.concurrency, thread_name_prefix="video-task"
+            ) as pool:
+                while not stop.is_set():
+                    try:
+                        self._poll(pool, once, stop)
+                        return
+                    except (video_streaming.database.MetadataUnavailable, OSError):
+                        if once:
+                            raise
+                        stop.wait(1)
+        finally:
+            self._run_lock.release()

@@ -3,6 +3,8 @@ transactions.
 """
 
 import sqlite3
+import collections
+import threading
 import time
 
 try:
@@ -45,17 +47,27 @@ class Result:
         names = (
             [column.name for column in cursor.description] if cursor.description else []
         )
-        self.rows = [Row(row, names) for row in cursor.fetchall()] if names else []
+        self.rows = (
+            collections.deque(Row(row, names) for row in cursor.fetchall())
+            if names
+            else collections.deque()
+        )
 
     def fetchone(self):
-        return self.rows.pop(0) if self.rows else None
+        return self.rows.popleft() if self.rows else None
 
     def fetchall(self):
-        rows, self.rows = self.rows, []
+        rows = list(self.rows)
+        self.rows.clear()
         return rows
 
     def __iter__(self):
-        return iter(self.rows)
+        return self
+
+    def __next__(self):
+        if not self.rows:
+            raise StopIteration
+        return self.rows.popleft()
 
 
 class Postgres:
@@ -73,6 +85,8 @@ class Postgres:
 
         self.driver, self.dsn = psycopg, dsn
         self.connection, self.active = None, False
+        self._lock = threading.RLock()
+        self._closed = False
 
         class BoundedConnection(psycopg.Connection):
             """Limit socket waits independently of the server statement
@@ -114,6 +128,8 @@ class Postgres:
         self.connection = None
 
     def _ensure(self):
+        if self._closed:
+            raise RuntimeError("metadata adapter is closed")
         if self.connection is not None and not self.connection.closed:
             readonly = self.connection.execute("SHOW transaction_read_only").fetchone()[
                 0
@@ -135,19 +151,28 @@ class Postgres:
             self.connection.execute("SET lock_timeout='3s'")
 
     def __enter__(self):
-        if self.active:
-            raise RuntimeError("nested metadata transaction")
+        # Ownership spans the entire transaction, not just individual execute
+        # calls; another thread cannot accidentally join an active transaction.
+        self._lock.acquire()
         try:
-            self._ensure()
-            self.connection.execute("BEGIN")
-            self.connection.execute("SELECT pg_advisory_xact_lock(%s)", (self.LOCK,))
-            self.active = True
-            return self
-        except self.driver.Error:
-            self._discard()
-            raise MetadataUnavailable(
-                "metadata unavailable; transaction not replayed"
-            ) from None
+            if self.active:
+                raise RuntimeError("nested metadata transaction")
+            try:
+                self._ensure()
+                self.connection.execute("BEGIN")
+                self.connection.execute(
+                    "SELECT pg_advisory_xact_lock(%s)", (self.LOCK,)
+                )
+                self.active = True
+                return self
+            except self.driver.Error:
+                self._discard()
+                raise MetadataUnavailable(
+                    "metadata unavailable; transaction not replayed"
+                ) from None
+        except BaseException:
+            self._lock.release()
+            raise
 
     def __exit__(self, kind, value, traceback):
         try:
@@ -161,6 +186,7 @@ class Postgres:
                 ) from None
         finally:
             self.active = False
+            self._lock.release()
 
     def execute(self, sql, params=()):
         """Execute parameterized service SQL and return buffered result rows.
@@ -179,6 +205,12 @@ class Postgres:
                 write
                 whose commit outcome may be unknown.
         """
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("metadata adapter is closed")
+            return self._execute(sql, params)
+
+    def _execute(self, sql, params):
         if sql == "BEGIN IMMEDIATE":
             if not self.active:
                 raise RuntimeError("transaction context required")
@@ -212,4 +244,9 @@ class Postgres:
                     self.execute(sql.replace(" REAL", " DOUBLE PRECISION"))
 
     def close(self):
-        self._discard()
+        """Drain another thread's transaction and permanently close this adapter."""
+        with self._lock:
+            if self.active:
+                raise RuntimeError("cannot close an active metadata transaction")
+            self._closed = True
+            self._discard()

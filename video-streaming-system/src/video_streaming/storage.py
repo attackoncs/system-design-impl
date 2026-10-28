@@ -1,6 +1,7 @@
 """Atomic, content-addressed local object adapter."""
 
 import hashlib
+import errno
 import os
 import pathlib
 import re
@@ -18,6 +19,43 @@ class LocalObjects:
         if not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{64}", key):
             raise ValueError("invalid object key")
         return self.root / key
+
+    @staticmethod
+    def checksum(path):
+        """Hash a file using bounded buffers rather than reading it all at once."""
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _publish(self, temporary, key):
+        """Publish without replacing valid immutable objects held by readers."""
+        target = LocalObjects.file(self, key)
+        try:
+            # Both names are in one directory/filesystem. Linking is atomic and
+            # does not replace an existing file, including a Windows open reader.
+            os.link(temporary, target)
+        except FileExistsError:
+            if self.checksum(target) != key:
+                # Repair detected local corruption using the known-good staging
+                # file. Failure leaves the write unacknowledged for caller retry.
+                os.replace(temporary, target)
+            # A reused old object is about to acquire a new metadata reference.
+            # Refresh conservative GC grace without changing its data/inode.
+            os.utime(target, None)
+        except OSError as error:
+            if error.errno not in (
+                errno.EPERM,
+                errno.EOPNOTSUPP,
+                errno.ENOSYS,
+                errno.EINVAL,
+            ):
+                raise
+            # Some local filesystems lack hard links; replacement still gives
+            # atomic complete-file publication, with platform sharing limits.
+            os.replace(temporary, target)
+        return target
 
     def write(self, chunks):
         """Persist byte chunks atomically and return (SHA-256 key, byte count).
@@ -43,7 +81,7 @@ class LocalObjects:
                 stream.flush()
                 os.fsync(stream.fileno())
             key = digest.hexdigest()
-            os.replace(temporary, self.file(key))
+            self._publish(temporary, key)
             return key, size
         finally:
             temporary.unlink(missing_ok=True)

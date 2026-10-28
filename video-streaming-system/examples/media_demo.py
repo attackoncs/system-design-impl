@@ -5,7 +5,7 @@ import runpy
 import sys
 
 if __name__ == "__main__":
-    sys.argv = ["benchmark.py", "--http-requests", "10"]
+    sys.argv = ["benchmark.py", "--http-requests", "10", *sys.argv[1:]]
     runpy.run_path(
         str(pathlib.Path(__file__).resolve().parents[1] / "tools" / "benchmark.py"),
         run_name="__main__",
