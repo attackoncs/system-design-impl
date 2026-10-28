@@ -1,0 +1,21 @@
+{
+  "scope": "six independent localhost gateway/shard/worker/simulated-payment processes; no real funds",
+  "background_calendar_days_per_room": 730,
+  "auto_filled_room_types": 2,
+  "hotel_query_room_types": [
+    "king",
+    "queen"
+  ],
+  "two_room_query_types": [
+    "king"
+  ],
+  "policy_admin_only": true,
+  "identical_policy_preserves_version": true,
+  "manual_night_price_preserved": 12000,
+  "booking_total_cents": 44000,
+  "booking_retry_same_id": true,
+  "final_payment": "REFUNDED",
+  "available_after_refund": 11,
+  "disabled_policy_keeps_inventory": true,
+  "simulated_payments": true
+}

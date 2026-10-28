@@ -1,55 +1,116 @@
-# Hotel reservation reference design
+# Hotel reservation design — Chapter 23
 
-## Service boundaries and storage
+Core review: 2026-10-26. [Chapter mapping](chapter23-review.md) and
+[executed evidence](../benchmarks/results.md) distinguish implemented behavior
+from the book's production targets. Standard library, Python 3.10+.
 
-The lab runs six independent processes: HTTP gateway, two hotel shard HTTP servers, two saga worker processes, and a durable **simulated** payment HTTP service. The gateway and workers do not open shard databases; all production-path communication crosses HTTP. Each shard owns a separate SQLite WAL file, and the payment simulator owns another. Only fault tests open a shard file from a separate child to inject a pre-commit process exit or inspect unit invariants.
+## Boundaries and routing
 
-Routing is `first_64_bits(SHA256(canonical_JSON(hotel_id))) % shard_count`. A hotel's catalog, room types, date inventory, orders, nightly snapshots and payment outbox are colocated. Multi-night reservations therefore require no cross-shard distributed transaction. Shard ID/count is persisted and checked on startup, and wrong-owner writes fail. Gateway configuration must stay consistent across deployment; online resharding is not implemented. Changing topology requires an explicit offline migration rather than changing a running shard count.
+The lab has six independent processes: gateway, two shard HTTP servers, two saga
+workers, and one simulated payment ledger. Gateway/workers use HTTP and do not
+open shard files. Each hotel's catalog, room types, daily inventory, orders,
+nightly snapshots, jobs and events live in one SQLite WAL shard. Routing is the
+first 64 bits of SHA256(canonical JSON hotel ID) modulo the fixed shard count;
+stored topology rejects an incompatible reopen. No online resharding or replica
+failover is implemented. Physical room-number assignment and hotel search remain
+outside scope. All payment behavior is explicitly simulated.
 
-Room types, not specific physical room numbers, are reserved. Hotel and room deletion is a soft active flag that prevents new bookings while retaining inventory, orders and cancellation/refund access. Reactivation is an explicit administrative PUT. Daily calendar rows are populated by administrators; missing nights are rejected instead of inferred. There is no daily two-year horizon-population scheduler in this reference.
+## Inventory and prices
 
-## Inventory and price invariants
+A room type, not an individual room, is booked. Inventory is keyed by
+(hotel, room type, UTC day). Limit is capacity + floor(capacity*overbook/100),
+with overbook 0..10; pending holds and confirmed orders both consume units.
+`BEGIN IMMEDIATE`, conditional increments and CHECK constraints protect the
+multi-night update. Missing/full nights, changed accepted totals or process exit
+before commit roll back inventory, order, price snapshots and charge intent
+atomically. SQLite has one writer per shard, not row-level locks. Version metadata
+and read snapshots are not a claim of an optimistic-lock retry implementation.
 
-Inventory primary key is `(hotel, room_type, UTC_calendar_day)` with capacity, overbook percentage, price cents, reserved units and version. Reserved includes pending payment holds and confirmed reservations. The SQL constraint is:
+Amounts are bounded integer USD cents. `[checkin, checkout)` has 1..30 nights,
+quantity 1..10 and at most 730 future UTC days. Quotes are advisory; expected_total
+is checked again in the writer. Accepted nightly prices remain immutable. Existing
+occupancy prevents administrators lowering a day's capacity/policy below usage.
+Catalog soft-delete blocks new reservations while keeping historical refunds.
 
-```sql
-CHECK(reserved >= 0 AND reserved <= capacity + (capacity * overbook) / 100)
-```
+## Read consistency and rolling calendars
 
-All operands are integers and inputs bound capacity to 100000, so division floors the additional allowance. Nine physical rooms at 10% still permit nine reservations; ten permit eleven; twenty permit twenty-two. Percentage is constrained to 0–10. Calendar changes cannot reduce capacity/policy below current occupied units: the same constraint rejects and rolls back the whole administration batch.
+Catalog and availability use isolated TTL/LRU results and fixed-stripe cold-load
+coalescing. Cache keys include durable revision; loaders read revision, active
+catalog and inventory in one SQLite snapshot. Separate saga workers invalidate
+revision when inventory changes. The database remains authoritative on every
+booking. Hotel-wide availability scans at most 100 active types and 30 nights;
+it returns only complete ranges with enough quantity and reports its revision.
 
-A `BEGIN IMMEDIATE` transaction locks this SQLite shard's writer, reads every night's current price, checks the exact expected total, conditionally increments each night's reserved units, creates the order and nightly price snapshots, and inserts its charge outbox job and HELD event. Any failed night, missing row, price mismatch or crash rolls the entire operation back. The conditional update repeats the capacity predicate in SQL; the CHECK constraint remains a final guard even against a bypass of application checks. Administrative price changes preserve previously saved order snapshots.
+CalendarPolicies is opt-in. Admin PUT requires capacity/overbook/price, with
+horizon_days 1..730 (default 730). The shard maintenance worker defaults to five
+seconds and a pass of at most 32 policies/4096 examined days. It captures rows
+outside the writer, then checks the current UTC day plus persistent generation,
+version and cursor before publishing progress. A non-reused generation prevents
+delete/recreate ABA. Identical configuration PUT keeps progress. Only missing
+dates are inserted: existing prices, reservations and historical rows are never
+repriced or deleted. Shrinking the horizon or disabling a policy preserves old
+inventory. Inactive catalog entries do not receive new rows. The internal bounded
+roll endpoint uses the same implementation and is not publicly proxied.
 
-Pessimistic row locks in PostgreSQL could lock just the relevant dates in a stable order. Optimistic compare-and-swap could use the version field with conflict retry but suffers repeated retries on a hot hotel. This reference deliberately chooses SQLite's writer serialization plus conditional updates and constraints; its version field is observable metadata, not an implemented optimistic lock algorithm. No row-level lock throughput or comparison benchmark is claimed. Sharding separates different hotels' writers, while a single hot hotel remains serialized in one shard.
+## Identity and idempotency
 
-Quotes and availability reads are advisory. The user supplies `expected_total` in cents; a mismatch with the current transaction's sum × quantity returns 409 before any inventory changes. The accepted total and nightly prices are frozen at creation. Taxes/fees/exchange are omitted; currency is USD only. Stays use `[checkin,checkout)` date bounds, at most 30 nights and 10 rooms, within 730 UTC calendar days. UTC is an explicit simplification, not hotel-local timezone support.
+Guest identity comes from configured Bearer credentials, never a body user field.
+Reservation identity is hotel + '.' + the first 128 digest bits of [guest,key],
+with UNIQUE(hotel,user,request_key) and an immutable body fingerprint. Exact replay
+returns the current order even after cancellation/expiry, date movement or rate
+changes; it never reacquires rooms. Changed payload conflicts. Missing and foreign
+orders both return 404. History is hotel-scoped, ID-cursor paginated to 100 items;
+it is not a cross-shard guest index or a snapshot across concurrent insertions.
+Admins manage this lab globally; per-hotel staff ACLs are not implemented.
 
-## Idempotency and guest authorization
+## Saga and durable operations
 
-Order idempotency is scoped to `(hotel,user,request_key)` in a durable UNIQUE constraint. ID is `hotel_id + '.' + first_128_bits(SHA256(canonical_JSON([user,request_key])))`; hotel ID permits only ASCII letters/digits/underscore/hyphen so it can route directly. Body fingerprints prevent the same key from changing dates, room count, expected price or simulated payment method. Replay returns the current state of the same order, even after the stay date or price has changed, and never re-acquires inventory or charges again. The check occurs before fresh date/price validation for this purpose. Identities and receipts are not automatically expired.
+PENDING is an inventory hold. Only full charge success before its deadline yields
+CONFIRMED/PAID. An explicit decline releases the hold and rejects it; a timeout or
+HTTP failure means unknown, never decline. Cancel/sweep/finish serialize the held
+flag, releasing units once. A success after cancellation or expiry creates a
+compensating refund instead of confirming. Confirmed orders do not expire as
+pending holds. Cancellation is full and penalty-free in this reference.
 
-Bearer tokens map to configured guest identities; the guest ID is never accepted from the booking body. Guests can read/cancel only their own orders, with missing/foreign IDs both returning 404. History is hotel-scoped with a bounded 100-item ID cursor, not a global cross-shard guest index or a snapshot across concurrent insertions. Admins manage all hotels in this reference and may inspect/cancel orders; per-hotel staff ACLs are a production extension. Admins create bookings using an actual configured guest credential rather than implicitly impersonating a guest.
+Charge/refund jobs use stable IDs and frozen intent. Claim persists an attempt
+and lease token; retry/finish validate durable identity and fence a replaced owner.
+Network operations run outside inventory transactions. Unknown outcomes stay
+pending for idempotent resolution rather than being silently discarded. Sweep is
+bounded to 100 pending holds per pass, so downtime can conservatively reserve
+units until work resumes. Independent workers own their stop/cancel/drain state;
+legacy custom adapters without cancellation support still require real work to
+exit. Provider receipts, amounts and simulated status are validated before settle.
 
-## Order/payment state machine and compensation
+The simulator's SQLite operations freeze their idempotent fingerprints and
+receipts. Refund requires the original matching paid charge. Test controls can
+return 503 after a durable operation or temporarily reject refunds. Retrying a
+completed operation still returns its original result; an outage flag must not
+undo the idempotency contract. This is not a bank, real-card SDK or exactly-once
+external-money guarantee. Events are a durable polling journal, not a guaranteed
+external notification bus; financial/receipt history still needs production GC.
 
-Order states are PENDING, CONFIRMED, CANCELLED, EXPIRED and REJECTED. Separate payment states are NONE, CHARGING, PAID, REFUND_PENDING, REFUNDED and DECLINED. Creating an order holds all nights but does **not** confirm accommodation. Full simulated payment success before hold expiry makes PENDING → CONFIRMED/PAID. Explicit decline rejects and releases the hold. Payment timeouts/HTTP errors never mean decline: the outcome is unknown and the job remains durable for retry.
+## Transport and process ownership
 
-Cancellation is idempotent and atomically releases inventory exactly once using the order's `held` flag. Confirmed paid orders enqueue a full refund; pending orders retain any previously attempted charge job so an unknown outcome can be resolved. A first-ever charge attempt is skipped if the order has already been canceled or expired, avoiding an unnecessary initial charge. For previously attempted operations, retries may discover an earlier charge or complete an operation that had not reached the provider; if the order is no longer eligible, any success immediately enqueues a compensating refund. The asynchronous intermediate states are visible to the guest.
+HTTP defaults: 32 active handler slots, 128 backlog, ten-second absolute socket
+I/O budget, 1MiB requests and 4MiB responses. Explicit method/path/query contracts
+are shared by gateway and shard; auth precedes body reads. Gateway forwards only
+public routes with the original identity and never blindly retries writes.
+Strict JSON rejects duplicate/non-finite values; ambiguous framing, unknown
+queries and unsupported bodies are rejected. Direct RPC does not inherit proxies
+or follow redirects; HTTPS uses normal certificate checks. Overload rejection
+has bounded drain so unread TCP data does not overwrite 503 with a Windows RST.
 
-Workers sweep up to 100 expired PENDING orders per loop and release their held inventory before claiming another job. Expiry is effective when swept, not a hard real-time TTL guarantee: worker downtime can conservatively reduce availability until recovery. If a charge completes after expiry, settlement rechecks the wall clock inside the write transaction, releases inventory and schedules a refund rather than confirming. Order locking serializes cancel, expiry and settlement races. Confirmed orders do not expire as payment holds. This reference permits full cancellation/refund without check-in penalties; production cancellation policy is outside scope.
+CLI config is bounded to 1MiB, validates distinct credentials, origin URLs, topology
+and durations. Shard maintenance starts only after bind. Shutdown stops/drains
+handlers and then owned maintenance; errors are sanitized and visible through
+health/status with retries. Socket deadlines cannot terminate accepted DNS,
+SQLite or CPU work; capacity remains occupied until that work really exits.
 
-## Durable jobs, leases, and payment simulation
+## Remaining production work
 
-Charge job ID is `charge:<order_id>` and refund ID is `refund:<order_id>`. Jobs, order state changes and durable events commit with their corresponding inventory transaction. Claiming a job commits an attempt count and random lease token before contacting the payment service. A worker crash or lost callback leaves a lease that can be reclaimed; settlement checks the token plus the durable booking/action/amount to fence stale workers. Default lease is two seconds; idempotent provider operations tolerate overlapping requests if the lease expires during a slow HTTP call. HTTP work runs outside the inventory write transaction.
-
-The simulator stores frozen operation fingerprints and results in its own SQLite transaction. Identical operations return their original receipt, with an attempt count; changed amounts under the same ID fail. Refund requires a paid matching charge and a durable refund operation ensures it happens once. The only methods are `test-ok` and `test-decline`; no card, bank or real payment SDK is present. A payment adapter interface makes the boundary explicit, but no real provider integration has been implemented or validated.
-
-The test-only authenticated simulator control can return 503 **after** committing a payment result, or reject refunds temporarily. The first models missing confirmation and the second a refund service outage. Retries use bounded exponential delay (at most 25.6 seconds with the current exponent cap), persist errors, and continue until receipt settlement; financial uncertainty is never silently dead-lettered away. A failed shard callback is retried after the lease or outbox delay. Payment and shard restarts preserve operations/jobs on local disk. The durable events endpoint is a polling journal; it is not a delivery-guaranteed external notification bus. Job status exposes attempts and recent errors for operator attention.
-
-## Caching and operational limits
-
-Details and availability use a thread-safe bounded LRU (128 entries, one second TTL). Keys include the shard's durable revision. Changes made by the separate worker process increment that revision when inventory changes, so the HTTP process's cached availability is invalidated without shared memory. The cache still requires a cheap revision lookup and can race a concurrent commit; reads are advisory and writes always consult the transaction. Order/payment reads are uncached.
-
-All services bind localhost by default; request JSON is limited to 1 MiB and HTTP client responses to 4 MiB. Distinct guest/admin/internal/payment credentials are mandatory; raw internal outbox/event APIs and simulator controls are not accessible through the public gateway. There is no TLS, rate-limit gateway, card handling, tenant isolation, encryption at rest or automated privacy/receipt retention. Configuration and `.runtime` are ignored, but deployment credentials still require operator protection.
-
-SQLite shards, gateway configuration and simulated ledger have no replication, consensus or automatic failover. Tests exercise retained-disk process crashes, not host/disk loss. Workers can be restarted and leases recovered, but no orchestration leader election is supplied. The two-shard lab demonstrates physical data separation and routing, not automatic cluster growth or the book's 5000-hotel capacity. No search, real room assignment, dynamic pricing algorithm, real payments or production availability claim is made.
+No replicated shard/ledger, consensus metadata, automatic failover, live topology
+migration, actual Redis/CDC, distributed throttling, real payment integration,
+TLS/tenant ACL deployment, hotel-local timezone/tax/currency policies, privacy
+retention, backup/disaster recovery or sustained 5000-hotel/million-room validation
+is claimed. Retained-disk process tests do not prove machine loss or universal
+Windows filesystem power-loss durability.

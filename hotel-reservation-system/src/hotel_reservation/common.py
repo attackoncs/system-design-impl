@@ -1,4 +1,4 @@
-from collections import OrderedDict
+from .cache import Cache as Cache
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 import hashlib
@@ -6,9 +6,6 @@ import json
 from pathlib import Path
 import re
 import sqlite3
-import threading
-import time
-from urllib.request import Request, urlopen
 
 
 class Error(Exception):
@@ -66,10 +63,13 @@ def stay(start, end, now, future=True):
 
 
 def shard_for(hotel_id, count):
+    integer(count, "shard count", 1, 32)
     return int(digest(identifier(hotel_id))[:16], 16) % count
 
 
 def booking_hotel(booking_id):
+    if not isinstance(booking_id, str):
+        raise ValueError("invalid reservation ID")
     pieces = booking_id.split(".")
     if len(pieces) != 2 or not re.fullmatch(r"[a-f0-9]{32}", pieces[1]):
         raise ValueError("invalid reservation ID")
@@ -107,40 +107,26 @@ class Database:
             db.close()
 
 
-class Cache:
-    def __init__(self, ttl=1, limit=128, clock=time.monotonic):
-        self.ttl, self.limit, self.clock = ttl, limit, clock
-        self.values, self.lock = OrderedDict(), threading.Lock()
+def http_json(
+    url,
+    token,
+    body=None,
+    method=None,
+    timeout=5,
+    *,
+    deadline=None,
+    cancel=None,
+    max_bytes=4 * 1024 * 1024,
+):
+    from .transport import request
 
-    def get(self, key):
-        with self.lock:
-            pair = self.values.get(key)
-            if pair is None or pair[0] <= self.clock():
-                self.values.pop(key, None)
-                return None
-            self.values.move_to_end(key)
-            return json.loads(pair[1])
-
-    def put(self, key, value):
-        with self.lock:
-            self.values[key] = (self.clock() + self.ttl, dumps(value))
-            self.values.move_to_end(key)
-            while len(self.values) > self.limit:
-                self.values.popitem(last=False)
-
-
-def http_json(url, token, body=None, method=None, timeout=5):
-    request = Request(
+    return request(
         url,
-        data=None if body is None else dumps(body).encode(),
-        method=method,
-        headers={
-            "Authorization": "Bearer " + token,
-            "Content-Type": "application/json",
-        },
+        method or ("POST" if body is not None else "GET"),
+        body,
+        token,
+        timeout=timeout,
+        deadline=deadline,
+        cancel=cancel,
+        max_bytes=max_bytes,
     )
-    with urlopen(request, timeout=timeout) as response:
-        raw = response.read(4 * 1024 * 1024 + 1)
-        if len(raw) > 4 * 1024 * 1024:
-            raise Error(413, "upstream response too large")
-        return json.loads(raw)

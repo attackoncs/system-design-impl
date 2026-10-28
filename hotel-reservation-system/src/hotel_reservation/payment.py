@@ -2,8 +2,10 @@
 
 from abc import ABC, abstractmethod
 import json
+import time
 
-from .common import Database, Error, digest, dumps, http_json, integer
+from .common import Database, Error, digest, dumps, http_json
+from .payment_contracts import normalize_job, normalize_operation, normalize_receipt
 
 
 class PaymentAdapter(ABC):
@@ -11,20 +13,36 @@ class PaymentAdapter(ABC):
     def execute(self, job):
         """Return a stable receipt keyed by operation ID, or raise on unknown outcome."""
 
+    def execute_with_budget(self, job, *, deadline=None, cancel=None):
+        """Compatibility hook; custom adapters must own their blocking I/O budget."""
+        return self.execute(job)
+
 
 class SimulatedHTTPPayment(PaymentAdapter):
     def __init__(self, config):
-        self.url, self.token = config["payment_url"], config["payment_token"]
+        owned = json.loads(dumps(config))
+        self.url, self.token = owned["payment_url"].rstrip("/"), owned["payment_token"]
 
     def execute(self, job):
-        return http_json(
+        return self.execute_with_budget(job)
+
+    def execute_with_budget(self, job, *, deadline=None, cancel=None):
+        job = normalize_job(job)
+        remaining = 5 if deadline is None else deadline - time.monotonic()
+        if remaining <= 0 or (cancel is not None and cancel.is_set()):
+            raise TimeoutError("payment request expired")
+        result = http_json(
             self.url + "/operations",
             self.token,
             {
                 k: job[k]
                 for k in ("id", "action", "booking_id", "amount", "currency", "method")
             },
+            timeout=min(5, remaining),
+            deadline=deadline,
+            cancel=cancel,
         )
+        return normalize_receipt(result, job)
 
 
 class SimulatedLedger(Database):
@@ -38,16 +56,18 @@ class SimulatedLedger(Database):
         """)
 
     def control(self, body=None):
+        if body is not None:
+            if (
+                not isinstance(body, dict)
+                or set(body) != {"fail_after_commit", "fail_refunds"}
+                or any(type(value) is not bool for value in body.values())
+            ):
+                raise ValueError(
+                    "control requires boolean fail_after_commit and fail_refunds"
+                )
+            body = dict(body)
         with self.transaction(True) as db:
             if body is not None:
-                if (
-                    not isinstance(body, dict)
-                    or set(body) != {"fail_after_commit", "fail_refunds"}
-                    or any(type(v) is not bool for v in body.values())
-                ):
-                    raise ValueError(
-                        "control requires boolean fail_after_commit and fail_refunds"
-                    )
                 db.execute(
                     "UPDATE control SET fail_after_commit=?,fail_refunds=?",
                     (body["fail_after_commit"], body["fail_refunds"]),
@@ -55,35 +75,15 @@ class SimulatedLedger(Database):
             return dict(db.execute("SELECT * FROM control").fetchone())
 
     def execute(self, body):
-        if not isinstance(body, dict) or set(body) != {
-            "id",
-            "action",
-            "booking_id",
-            "amount",
-            "currency",
-            "method",
-        }:
-            raise ValueError("invalid simulated operation fields")
-        if (
-            body["action"] not in ("charge", "refund")
-            or body["id"] != body["action"] + ":" + body["booking_id"]
-        ):
-            raise ValueError("operation ID must match action and reservation")
-        integer(body["amount"], "amount", 0, 30_000_000_000)
-        if body["currency"] != "USD" or body["method"] not in (
-            "test-ok",
-            "test-decline",
-        ):
-            raise ValueError("only USD simulated payment methods are supported")
+        body = normalize_operation(body)
+        fingerprint = digest(body)
         with self.transaction(True) as db:
             control = db.execute("SELECT * FROM control").fetchone()
-            if body["action"] == "refund" and control["fail_refunds"]:
-                raise Error(503, "simulated refund provider unavailable")
             old = db.execute(
                 "SELECT * FROM operations WHERE id=?", (body["id"],)
             ).fetchone()
             if old:
-                if old["hash"] != digest(body):
+                if old["hash"] != fingerprint:
                     raise Error(409, "provider idempotency conflict")
                 db.execute(
                     "UPDATE operations SET attempts=attempts+1 WHERE id=?",
@@ -91,7 +91,13 @@ class SimulatedLedger(Database):
                 )
                 result = json.loads(old["result"])
             else:
+                if body["action"] == "refund" and control["fail_refunds"]:
+                    raise Error(503, "simulated refund provider unavailable")
                 if body["action"] == "charge":
+                    if db.execute(
+                        "SELECT 1 FROM charges WHERE booking=?", (body["booking_id"],)
+                    ).fetchone():
+                        raise Error(409, "charge exists without an operation receipt")
                     status = "declined" if body["method"] == "test-decline" else "paid"
                     db.execute(
                         "INSERT INTO charges VALUES(?,?,?,?)",
@@ -105,6 +111,7 @@ class SimulatedLedger(Database):
                         not charge
                         or charge["status"] != "paid"
                         or charge["amount"] != body["amount"]
+                        or charge["currency"] != body["currency"]
                     ):
                         raise Error(409, "refund requires matching paid charge")
                     db.execute(
@@ -121,7 +128,7 @@ class SimulatedLedger(Database):
                 }
                 db.execute(
                     "INSERT INTO operations VALUES(?,?,?,1)",
-                    (body["id"], digest(body), dumps(result)),
+                    (body["id"], fingerprint, dumps(result)),
                 )
             fail = control["fail_after_commit"]
         # This error occurs AFTER durable operation commit, emulating a lost ACK.
@@ -131,6 +138,7 @@ class SimulatedLedger(Database):
 
     def status(self):
         with self.transaction() as db:
+            total_charges = db.execute("SELECT count(*) FROM charges").fetchone()[0]
             return {
                 "simulated": True,
                 "operations": db.execute("SELECT count(*) FROM operations").fetchone()[
@@ -145,4 +153,6 @@ class SimulatedLedger(Database):
                         "SELECT * FROM charges ORDER BY booking LIMIT 1000"
                     )
                 ],
+                "total_charges": total_charges,
+                "charges_truncated": total_charges > 1000,
             }

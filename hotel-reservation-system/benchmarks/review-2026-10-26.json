@@ -1,0 +1,27 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "processes": 6,
+  "hotel_shards": 2,
+  "hot_hotel_requests": 100,
+  "clients": 16,
+  "physical_rooms_per_night": 20,
+  "overbook_percent": 10,
+  "night_count": 2,
+  "accepted_unique": 22,
+  "capacity_conflicts": 78,
+  "admission_seconds": 1.287,
+  "all_settled_seconds": 2.543,
+  "attempt_requests_per_second": 77.7,
+  "successful_bookings_per_second": 8.65,
+  "request_p50_ms": 36.196,
+  "request_p95_ms": 666.458,
+  "reserved_per_night": [
+    22,
+    22
+  ],
+  "simulated_unique_charges": 22,
+  "simulated_payments": true,
+  "sqlite_bytes": 245760,
+  "scope": "localhost HTTP gateway + two SQLite shards + two saga workers + simulated payment ledger; contention on one hot hotel; no real funds or HA"
+}

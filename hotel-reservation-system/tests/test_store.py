@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT/"src"))
+sys.path.insert(0, str(ROOT / "src"))
 from hotel_reservation.common import Error, shard_for
 from hotel_reservation.payment import SimulatedLedger
 from hotel_reservation.store import Store
@@ -18,22 +18,41 @@ class StoreTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         self.now = datetime(2030, 1, 1, tzinfo=timezone.utc).timestamp()
-        self.store = Store(self.root/"hotel.sqlite", clock=lambda: self.now, hold_seconds=10)
+        self.store = Store(
+            self.root / "hotel.sqlite", clock=lambda: self.now, hold_seconds=10
+        )
         self.store.manage("h", {"name": "Hotel", "address": "Address"})
         self.store.manage("h", {"name": "King", "description": "Room type"}, "king")
-        self.days = [{"day": f"2030-01-0{i}", "capacity": 10, "overbook": 10, "price": 10000+i} for i in (2, 3)]
+        self.days = [
+            {"day": f"2030-01-0{i}", "capacity": 10, "overbook": 10, "price": 10000 + i}
+            for i in (2, 3)
+        ]
         self.store.set_days("h", "king", self.days)
 
     def tearDown(self):
         self.temp.cleanup()
 
     def request(self, key="req", quantity=1, **kwargs):
-        return {"hotel": "h", "room": "king", "start": "2030-01-02", "end": "2030-01-04", "quantity": quantity,
-                "request_key": key, "expected_total": quantity*20005, "payment_method": "test-ok", **kwargs}
+        return {
+            "hotel": "h",
+            "room": "king",
+            "start": "2030-01-02",
+            "end": "2030-01-04",
+            "quantity": quantity,
+            "request_key": key,
+            "expected_total": quantity * 20005,
+            "payment_method": "test-ok",
+            **kwargs,
+        }
 
     @staticmethod
     def receipt(job, status="paid"):
-        return {"booking_id": job["booking_id"], "amount": job["amount"], "currency": "USD", "status": status}
+        return {
+            "booking_id": job["booking_id"],
+            "amount": job["amount"],
+            "currency": "USD",
+            "status": status,
+        }
 
     def available(self):
         return self.store.availability("h", "king", "2030-01-02", "2030-01-04")
@@ -49,24 +68,31 @@ class StoreTests(unittest.TestCase):
         with self.assertRaises(Error):
             self.store.reserve("alice", self.request("price-changed"))
         with self.store.transaction() as db:
-            self.assertEqual(db.execute("SELECT count(*) FROM bookings").fetchone()[0], 1)
+            self.assertEqual(
+                db.execute("SELECT count(*) FROM bookings").fetchone()[0], 1
+            )
 
     def test_second_night_failure_and_precommit_exception_rollback(self):
         self.store.set_days("h", "king", [{**self.days[1], "capacity": 0}])
         with self.assertRaises(Error):
             self.store.reserve("alice", self.request())
         with self.store.transaction() as db:
-            self.assertEqual(db.execute("SELECT sum(reserved) FROM inventory").fetchone()[0], 0)
+            self.assertEqual(
+                db.execute("SELECT sum(reserved) FROM inventory").fetchone()[0], 0
+            )
             self.assertEqual(db.execute("SELECT count(*) FROM jobs").fetchone()[0], 0)
         self.store.set_days("h", "king", self.days)
+
         def crash():
             raise RuntimeError("before commit")
+
         with self.assertRaises(RuntimeError):
             self.store.reserve("alice", self.request(), crash)
         self.assertEqual(self.available()["available"], 11)
 
     def test_concurrency_overbooking_rounding_and_database_constraint(self):
         self.store.set_days("h", "king", [{**r, "capacity": 9} for r in self.days])
+
         def reserve(i):
             try:
                 self.store.reserve("alice", self.request(str(i)))
@@ -74,6 +100,7 @@ class StoreTests(unittest.TestCase):
             except Error as exc:
                 self.assertEqual(exc.status, 409)
                 return 0
+
         with ThreadPoolExecutor(max_workers=12) as pool:
             self.assertEqual(sum(pool.map(reserve, range(30))), 9)
         with self.store.transaction(True) as db:
@@ -101,7 +128,7 @@ class StoreTests(unittest.TestCase):
     def test_cancel_during_charge_and_lost_ack_refund(self):
         booking = self.store.reserve("alice", self.request())
         charge = self.store.claim()
-        ledger = SimulatedLedger(self.root/"payments.sqlite")
+        ledger = SimulatedLedger(self.root / "payments.sqlite")
         operation = {k: v for k, v in charge.items() if k != "token"}
         ledger.control({"fail_after_commit": True, "fail_refunds": False})
         with self.assertRaises(Error):
@@ -112,7 +139,9 @@ class StoreTests(unittest.TestCase):
         self.store.finish(charge, receipt)
         self.assertEqual(self.store.booking(booking["id"])["payment"], "REFUND_PENDING")
         refund = self.store.claim()
-        self.store.finish(refund, ledger.execute({k: v for k, v in refund.items() if k != "token"}))
+        self.store.finish(
+            refund, ledger.execute({k: v for k, v in refund.items() if k != "token"})
+        )
         self.assertEqual(self.store.booking(booking["id"])["payment"], "REFUNDED")
         self.assertEqual(self.available()["available"], 11)
         self.assertEqual(ledger.status()["operations"], 2)
@@ -156,27 +185,33 @@ class StoreTests(unittest.TestCase):
         history = self.store.history("h", "alice")["reservations"]
         self.store.cancel(history[0]["id"])
         with self.store.transaction() as db:
-            self.assertEqual(db.execute("SELECT sum(reserved) FROM inventory").fetchone()[0], 0)
-        sharded = Store(self.root/"shard.sqlite", 0, 2)
-        wrong = next(str(i) for i in range(20) if shard_for(str(i), 2)==1)
+            self.assertEqual(
+                db.execute("SELECT sum(reserved) FROM inventory").fetchone()[0], 0
+            )
+        sharded = Store(self.root / "shard.sqlite", 0, 2)
+        wrong = next(str(i) for i in range(20) if shard_for(str(i), 2) == 1)
         with self.assertRaises(Error):
             sharded.owner(wrong)
         with self.assertRaises(Error):
             Store(sharded.path, 0, 1)
 
     def test_invalid_requests_and_provider_payload_conflict(self):
-        for body in [self.request(quantity=True), self.request(start="2029-01-01"),
-                     self.request(end="2030-01-02"), self.request(payment_method="real-card"),
-                     {**self.request(), "unknown": 1}]:
+        for body in [
+            self.request(quantity=True),
+            self.request(start="2029-01-01"),
+            self.request(end="2030-01-02"),
+            self.request(payment_method="real-card"),
+            {**self.request(), "unknown": 1},
+        ]:
             with self.assertRaises((ValueError, Error)):
                 self.store.reserve("alice", body)
-        booking = self.store.reserve("alice", self.request())
+        self.store.reserve("alice", self.request())
         job = self.store.claim()
-        ledger = SimulatedLedger(self.root/"payments.sqlite")
-        body = {k: v for k, v in job.items() if k!="token"}
+        ledger = SimulatedLedger(self.root / "payments.sqlite")
+        body = {k: v for k, v in job.items() if k != "token"}
         ledger.execute(body)
         with self.assertRaises(Error):
-            ledger.execute({**body, "amount": body["amount"]+1})
+            ledger.execute({**body, "amount": body["amount"] + 1})
         with self.assertRaises(Error):
             self.store.finish(job, {**self.receipt(job), "amount": 1})
 

@@ -4,6 +4,11 @@
 
 要求 Python 3.10+，不依赖额外包或外部服务。所有支付均为模拟，不会操作真实资金；不含酒店搜索或具体房号分配。
 
+2026-10-26核心审查补充酒店内跨房型可用查询、滚动日历默认策略，并改善库存/Saga/
+传输职责、任务身份校验、缓存与后台资源边界。本轮最终测试/实测见
+[验证报告](benchmarks/results.md)，原书映射和未完成项见
+[章节记录](docs/chapter23-review.md)。2026-10-20数据仅保留历史日期。
+
 ## 运行
 
 在本目录执行：
@@ -45,6 +50,8 @@ python -m hotel_reservation.cli worker --config .runtime/secrets.json --shard 1
 | `GET/PUT/DELETE /v1/hotels/{hotel}/rooms/{type}` | 房型详情、管理员增改/软删除 |
 | `PUT /v1/hotels/{hotel}/rooms/{type}/calendar` | 管理员设置 `{days:[{day,capacity,overbook,price},...]}` |
 | `GET /v1/hotels/{hotel}/rooms/{type}/availability?start=YYYY-MM-DD&end=YYYY-MM-DD` | 可用量与每日价格，结果仅供报价参考 |
+| `GET /v1/hotels/{hotel}/availability?start=YYYY-MM-DD&end=YYYY-MM-DD&quantity=1` | 同一快照查询所有活跃房型，返回每晚日历完整且足量的房型；最多100源房型 |
+| `GET/PUT/DELETE /v1/hotels/{hotel}/rooms/{type}/calendar-policy` | 管理员查看/设置滚动默认策略，或停止后续自动补空日 |
 | `POST /v1/reservations` | 用户提交预订，占用全部入住日期并持久化支付任务 |
 | `GET /v1/reservations?hotel={hotel}&after={cursor}` | 本人按酒店分页历史，最多 100 条，cursor 可省略 |
 | `GET/DELETE /v1/reservations/{id}` | 本人或管理员查看/幂等取消 |
@@ -61,6 +68,13 @@ python -m hotel_reservation.cli worker --config .runtime/secrets.json --shard 1
 
 `request_key` 按酒店+用户分组。同键同内容返回原订单当前状态；不同内容拒绝；已取消或过期订单不会因旧键重试重新占房。`payment_method` 仅接受 `test-ok` 或 `test-decline`，请勿提交银行卡资料。
 
+滚动日历是显式启用功能：PUT策略必填`capacity/overbook/price`，选填`horizon_days`
+（1..730，默认730）。分片CLI的自有维护线程默认每5秒执行一轮（配置`calendar_interval`），
+每轮最多32策略/4096日期行，只补空日，不改任何既有日价、占用或历史库存。策略更新不是
+批量重定价；删除策略保留已有日历。进度持久化并检查version，重启可以继续；停用酒店/
+房型不再填充。内部/管理令牌可直接向分片POST `/internal/calendar-roll`，正文`{}`，
+执行同样有限的一轮，网关不转发此接口。
+
 ## 正确性与恢复语义
 
 - 可售上限 = 物理容量 + floor(物理容量 × 超售百分比 / 100)。9 间在 10% 时仍最多卖 9 间，10 间可卖 11 间；待付款与已确认订单都占库存。
@@ -72,8 +86,24 @@ python -m hotel_reservation.cli worker --config .runtime/secrets.json --shard 1
 - 酒店哈希路由到固定分片，库存/订单在同一数据库；不支持运行中直接改变分片数。单热点酒店仍串行争用同一个 SQLite 写者。
 - 详情与库存读取采用 128 项、1 秒 TTL 缓存，键含数据库持久化版本，独立任务进程改库存也会使旧缓存失效。缓存可用量仅为参考，最终预订始终依据数据库事务。
 
-分片 `/internal/status` 提供未完成任务、重试错误和待清理占用；`/internal/events?after=0` 提供分页持久化事件；任务接口为 POST `/internal/sweep`、`claim`、`finish`、`retry`。需内部/管理令牌，公网网关不会转发这些接口。
+缓存冷加载固定条带合并并隔离返回对象；catalog/availability在一致读快照中读取版本与
+内容。预订/回调输入在等待writer前冻结，事务时间在获取writer后采样；维护/任务/历史索引
+减少无关历史扫描。同分片SQLite仍只有一个写者，不把版本字段称为已实现乐观重试算法。
+
+HTTP默认32个活跃handler、128 backlog、10秒绝对socket I/O预算，正文1MiB/响应4MiB；
+CLI可设`--concurrency`（1..256）和`--request-timeout`（大于0且不超过3600秒）。
+显式路由/方法/query契约、正文前鉴权、严格framing/JSON；网关只转发允许的公共接口，
+保持原身份且不盲目重试写入。RPC直连，不走环境代理/重定向，HTTPS正常验证证书。
+socket期限不能强杀DNS/SQL/CPU，名额保留到实际退出。HTTP绑定成功后才启动维护，
+关闭排空handler和自有线程；失败用脱敏状态/日志报告并重试。
+
+分片 `/internal/status` 提供未完成任务、重试错误、待清理占用及维护错误；
+`/internal/events?after=0`提供分页持久化事件；内部POST接口为`/internal/sweep`、
+`claim`、`finish`、`retry`和`calendar-roll`。需内部/管理令牌，网关不转发。
 
 模拟支付服务提供受支付令牌保护的 `/operations`，以及管理员 `/admin/status`、`/admin/control`。控制正文 `{"fail_after_commit":true,"fail_refunds":false}` 可模拟支付已持久化但响应丢失；退款故障开关可验证补偿重试。这些都是本地模拟接口，不是银行或真实支付接口。
 
-数据库分片和模拟账本暂无复制/自动故障转移；验证覆盖保留本地磁盘的进程重启，不覆盖机器或磁盘丢失。尚无在线扩分片、跨分片用户索引、日历自动滚动预填、多租户员工权限、TLS、分布式限流或自动隐私清理。原书 5000 酒店/100 万房间规模尚未验证。更多细节见 [设计文档](docs/design.md)。
+数据库分片和模拟账本暂无复制/自动故障转移；验证仅覆盖保留本地磁盘的进程重启。
+在线扩分片、跨分片用户索引、租户员工权限、TLS、分布式限流、自动隐私清理、真实支付、
+酒店当地时区/税费及原书5000酒店/100万房间规模尚未实现或验收。更多见
+[设计文档](docs/design_cn.md)。

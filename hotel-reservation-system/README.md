@@ -4,6 +4,13 @@ A Python standard-library reference with a real six-process HTTP lab: gateway, t
 
 Python 3.10+; no external packages or services required. No real money is charged. Hotel search and physical room-number assignment are outside scope.
 
+The 2026-10-26 core review adds hotel-wide room-type availability and rolling
+calendar defaults, separates storage/saga/transport responsibilities, validates
+durable job identities and receipts, and bounds HTTP/worker work. Current results
+and remaining book gaps: [validation](benchmarks/results.md),
+[chapter mapping](docs/chapter23-review.md). Historical 2026-10-20 figures retain
+their dates and are not the final review result.
+
 ## Run
 
 From this directory:
@@ -45,6 +52,8 @@ Use bearer authorization. Guest tokens access catalog/availability and their own
 | `GET/PUT/DELETE /v1/hotels/{hotel}/rooms/{type}` | Room-type details; admin update/soft-delete |
 | `PUT /v1/hotels/{hotel}/rooms/{type}/calendar` | Admin: `{days:[{day,capacity,overbook,price},...]}` |
 | `GET /v1/hotels/{hotel}/rooms/{type}/availability?start=YYYY-MM-DD&end=YYYY-MM-DD` | Advisory nightly prices/units and `unit_total` |
+| `GET /v1/hotels/{hotel}/availability?start=YYYY-MM-DD&end=YYYY-MM-DD&quantity=1` | Active room types with a complete calendar and enough units for every night; bounded to 100 source types |
+| `GET/PUT/DELETE /v1/hotels/{hotel}/rooms/{type}/calendar-policy` | Admin: inspect, set defaults, or disable future automatic fill |
 | `POST /v1/reservations` | Guest: acquire all-night hold and persist payment intent |
 | `GET /v1/reservations?hotel={hotel}&after={cursor}` | Guest history, at most 100 items; optional cursor |
 | `GET/DELETE /v1/reservations/{id}` | Owner or admin: inspect/cancel; cancel is idempotent |
@@ -77,6 +86,17 @@ print(order)  # PENDING; poll GET /v1/reservations/{id} for CONFIRMED/PAID.
 
 Only `test-ok` and `test-decline` are accepted payment methods. Do not send card details. Date ranges are `[checkin,checkout)`, 1–30 nights, at most 10 rooms, within the next 730 UTC calendar days. The expected total is checked against current nightly prices inside the inventory transaction; a changed total returns 409 and requires accepting a new quote. Accepted nightly prices remain frozen even when calendar rates change.
 
+For opt-in rolling calendars, PUT a policy such as
+`{"capacity":10,"overbook":10,"price":10000,"horizon_days":730}`. Capacity,
+overbook and price are required; horizon is 1..730 days, default 730. The shard's
+owned maintenance worker runs every `calendar_interval` seconds (default 5),
+examining at most 32 policies/4096 day rows per pass. It inserts **missing dates
+only**, with durable progress/version checks; explicit daily prices, occupancy
+and old rows remain intact. Updates affect future missing dates, not bulk
+repricing. DELETE disables the policy and preserves existing inventory. Inactive
+catalog entries are not filled. `POST /internal/calendar-roll` with `{}` permits
+an internal/admin bounded pass through the shard, never through the gateway.
+
 ## Correctness and recovery
 
 - Sellable units are `capacity + floor(capacity*overbook/100)`. At 10%, nine rooms permit nine bookings, ten permit eleven. Pending and confirmed orders both occupy inventory. Every night's update, the order, snapshots and charge job commit atomically; any missing/full night rolls back all nights.
@@ -87,10 +107,39 @@ Only `test-ok` and `test-decline` are accepted payment methods. Do not send card
 - Hotel sharding keeps each reservation in one SQL transaction. SQLite `BEGIN IMMEDIATE`, conditional increments and CHECK constraints protect writes. There are no row-level SQLite locks or implemented optimistic retry algorithm.
 - Catalog/availability use bounded one-second caches keyed by persisted revision, so separate worker inventory changes invalidate reads. Availability remains advisory; booking never trusts it for authorization or capacity.
 
-On shard servers, internal/admin credentials can access `GET /internal/status` (positions are not needed; exposes unfinished jobs, errors and expired holds), `GET /internal/events?after=0` (durable paginated event journal), and POST `/internal/sweep`, `/internal/claim`, `/internal/finish`, `/internal/retry`. These routes are not proxied by the gateway. They are intended for the worker/operations boundary, not clients.
+Cache loads now coalesce on fixed stripes and return isolated values. Catalog and
+availability loaders read revision/catalog/inventory in a consistent snapshot.
+Booking payloads and job intents are captured before writer waits; transaction
+clocks are sampled after acquiring the writer. Queue-ready/sweep/history indexes
+keep bounded maintenance off unrelated history scans. Same-shard SQLite writes
+still serialize; this review does not claim row locks or an optimistic retry mode.
+
+HTTP defaults are 32 admitted handler threads, 128 backlog, a 10-second absolute
+socket I/O deadline, 1MiB request and 4MiB response limits. CLI options
+`--concurrency` (1..256) and `--request-timeout` (>0..3600 seconds) tune them.
+The gateway validates an explicit route/method/query contract, authenticates
+before reading bodies, forwards the original identity once, and never blindly
+retries a write. RPC ignores environment proxies and redirects, validates framing
+and JSON, and uses normal HTTPS certificate verification. Deadlines cannot kill
+accepted DNS/SQL/CPU work; capacity and shutdown wait for real work to exit.
+Maintenance starts after a successful HTTP bind, reports sanitized errors through
+health/status, retries, and is drained on exit. Payment workers likewise own their
+non-daemon lifetime and use a per-round RPC deadline/cancellation boundary.
+
+On shard servers, internal/admin credentials can access `GET /internal/status`
+(unfinished jobs, errors, expired holds and maintenance errors),
+`GET /internal/events?after=0` (durable paginated event journal), and POST
+`/internal/sweep`, `/internal/claim`, `/internal/finish`, `/internal/retry`,
+`/internal/calendar-roll`. These routes are not proxied by the gateway.
 
 The separate payment simulator provides payment/admin-only `POST /operations` and admin-only `GET /admin/status` / `POST /admin/control`. The control body is `{"fail_after_commit":true,"fail_refunds":false}` to emulate a durable charge with missing acknowledgement; setting refund failure tests compensation retries. Defaults are both false. These are simulation controls, not real financial endpoints.
 
 ## Scope limits
 
-SQLite shards and simulator have no replication or automatic failover. Restart tests retain disk; host/disk loss is untested. Fixed routing does not support online shard-count changes. Catalog, rates and orders are colocated rather than separate transactional databases. No search, real payment integration, global cross-shard guest index, automatic horizon population, tenant staff ACLs, TLS, distributed rate limiting or automated privacy retention is included. The book's capacity/availability targets remain unverified. See [design](docs/design.md) for state transitions, lease behavior and production tradeoffs.
+SQLite shards and simulator have no replication or automatic failover. Restart
+tests retain disk; host/disk loss is untested. Fixed routing does not support
+online shard-count changes. Catalog, rates and orders are colocated rather than
+separate transactional databases. Search, real payment integration, a global
+cross-shard guest index, tenant staff ACLs, TLS, distributed rate limiting,
+automatic privacy retention, hotel-local timezones/taxes and the book's
+5000-hotel/million-room capacity remain extensions. See [design](docs/design.md).
