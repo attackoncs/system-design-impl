@@ -1,7 +1,6 @@
 import hashlib
 import json
 import re
-from urllib.request import Request, urlopen
 
 ZERO = "0" * 64
 
@@ -33,18 +32,27 @@ def envelope(record, previous):
     return {"record": record, "previous": previous, "hash": digest}
 
 
-def rpc(url, path, body, token, timeout=1):
-    request = Request(
-        url.rstrip("/") + path,
-        data=dumps(body).encode(),
-        headers={
-            "Authorization": "Bearer " + token,
-            "Content-Type": "application/json",
-        },
-        method="POST",
+def rpc(
+    url,
+    path,
+    body,
+    token,
+    timeout=1,
+    *,
+    deadline=None,
+    cancel=None,
+    max_bytes=32 * 1024 * 1024,
+):
+    """Compatibility entry point for direct, bounded, authenticated JSON RPC."""
+    from .transport import request
+
+    return request(
+        url,
+        path,
+        body,
+        token,
+        timeout=timeout,
+        deadline=deadline,
+        cancel=cancel,
+        max_bytes=max_bytes,
     )
-    with urlopen(request, timeout=timeout) as response:
-        payload = response.read(32 * 1024 * 1024 + 1)
-        if len(payload) > 32 * 1024 * 1024:
-            raise ValueError("reference RPC response exceeds 32 MiB")
-        return json.loads(payload)

@@ -1,71 +1,98 @@
 from contextlib import closing, contextmanager
 import hashlib
 import json
-import math
 from pathlib import Path
 import sqlite3
 import threading
 import time
-import uuid
 import zlib
 
 from .common import Error, ZERO, dumps, envelope, integer, name, rpc
+from .coordination_locks import OperationLocks, partition_key
+from .coordinator_groups import ConsumerGroups
+from .coordinator_replication import Replication
+from .coordinator_retention import Retention
+from .coordinator_schema import initialize
+from .coordinator_validation import finite_number, tags_filter
+from .messages import freeze_messages
 
 
-class Coordinator:
+class Coordinator(ConsumerGroups, Replication, Retention):
+    """Single metadata owner; publication is atomic, partition protocols concurrent.
+
+    Ordered fixed stripes bound lock memory; collisions may serialize unrelated
+    partitions. Sharing this database between concurrent coordinator processes is
+    not a substitute for a consensus-backed metadata service.
+    """
+
     def __init__(self, root, brokers, cluster_token, lease_seconds=10, clock=time.time):
         if not isinstance(brokers, dict) or not 1 <= len(brokers) <= 9:
             raise ValueError("1..9 brokers required")
+        for node, url in brokers.items():
+            name(node)
+            if not isinstance(url, str) or not url.startswith(("http://", "https://")):
+                raise ValueError("broker URL required")
+        if not isinstance(cluster_token, str) or len(cluster_token) < 8:
+            raise ValueError("private cluster credential required")
+        finite_number(lease_seconds, 0.01, 86400, "invalid consumer lease")
+        if not callable(clock):
+            raise ValueError("clock must be callable")
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self.path = self.root / "metadata.sqlite"
         self.brokers = dict(brokers)
         self.token, self.lease_seconds, self.clock = cluster_token, lease_seconds, clock
-        self.lock = threading.RLock()
+        self.operations = OperationLocks()
+        self.changed = threading.Condition()
+        self.last_error = None
         with closing(self.connect()) as db:
-            db.executescript("""
-            PRAGMA journal_mode=WAL;
-            PRAGMA synchronous=FULL;
-            CREATE TABLE IF NOT EXISTS topics(name TEXT PRIMARY KEY,partitions INTEGER,retention REAL,max_bytes INTEGER,segment_bytes INTEGER);
-            CREATE TABLE IF NOT EXISTS parts(topic TEXT,partition INTEGER,leader TEXT,epoch INTEGER,hwm INTEGER,floor INTEGER,base_hash TEXT,PRIMARY KEY(topic,partition));
-            CREATE TABLE IF NOT EXISTS records(topic TEXT,partition INTEGER,offset INTEGER,hash TEXT,timestamp REAL,size INTEGER,PRIMARY KEY(topic,partition,offset));
-            CREATE TABLE IF NOT EXISTS producers(id TEXT PRIMARY KEY,epoch INTEGER);
-            CREATE TABLE IF NOT EXISTS sequences(producer TEXT,epoch INTEGER,topic TEXT,partition INTEGER,last INTEGER,PRIMARY KEY(producer,epoch,topic,partition));
-            CREATE TABLE IF NOT EXISTS receipts(producer TEXT,epoch INTEGER,topic TEXT,partition INTEGER,sequence INTEGER,hash TEXT,response TEXT,last_offset INTEGER,PRIMARY KEY(producer,epoch,topic,partition,sequence));
-            CREATE TABLE IF NOT EXISTS pending(topic TEXT,partition INTEGER,body TEXT,PRIMARY KEY(topic,partition));
-            CREATE TABLE IF NOT EXISTS groups(topic TEXT,name TEXT,generation INTEGER,PRIMARY KEY(topic,name));
-            CREATE TABLE IF NOT EXISTS members(topic TEXT,group_name TEXT,id TEXT,session TEXT,expires REAL,PRIMARY KEY(topic,group_name,id));
-            CREATE TABLE IF NOT EXISTS cursors(topic TEXT,group_name TEXT,partition INTEGER,next INTEGER,PRIMARY KEY(topic,group_name,partition));
-            CREATE TABLE IF NOT EXISTS delivered(topic TEXT,group_name TEXT,partition INTEGER,generation INTEGER,next INTEGER,PRIMARY KEY(topic,group_name,partition));
-            CREATE TABLE IF NOT EXISTS transactions(id TEXT PRIMARY KEY,hash TEXT,response TEXT);
-            """)
-            # Incomplete transactional output stages never independently become visible.
-            for row in db.execute(
-                "SELECT topic,partition,body FROM pending"
-            ).fetchall():
-                if json.loads(row["body"]).get("transaction"):
-                    db.execute(
-                        "DELETE FROM pending WHERE topic=? AND partition=?",
-                        (row["topic"], row["partition"]),
-                    )
-            db.commit()
+            initialize(db)
 
     def connect(self):
         db = sqlite3.connect(self.path, timeout=15)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA synchronous=FULL")
+        try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA synchronous=FULL")
+        except BaseException:
+            db.close()
+            raise
         return db
 
     @contextmanager
-    def transaction(self):
+    def transaction(self, write=True):
         with closing(self.connect()) as db:
             try:
-                db.execute("BEGIN IMMEDIATE")
+                db.execute("BEGIN IMMEDIATE" if write else "BEGIN")
                 yield db
                 db.commit()
             except BaseException:
                 db.rollback()
                 raise
+
+    def _now(self):
+        return finite_number(self.clock(), 0, 2**53 - 1, "invalid clock")
+
+    def _notify(self):
+        with self.changed:
+            self.changed.notify_all()
+
+    def _poll(self, page, wait_seconds):
+        """Wait between short operations, never while holding partition/SQL locks.
+
+        The wait budget does not interrupt an already accepted broker RPC. The
+        100ms fallback observes due-time changes and other process notifications.
+        """
+        finite_number(wait_seconds, 0, 5, "wait_seconds must be 0..5")
+        deadline = time.monotonic() + wait_seconds
+        while True:
+            result, scanned = page()
+            if result["records"] or scanned or not wait_seconds:
+                return result
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return result
+            with self.changed:
+                self.changed.wait(min(0.1, remaining))
 
     def topic(self, db, topic):
         name(topic)
@@ -104,12 +131,7 @@ class Coordinator:
         integer(partitions, 1, 64)
         integer(max_bytes, 1024, 16 * 1024 * 1024)
         integer(segment_bytes, 256, 16 * 1024 * 1024)
-        if (
-            type(retention_seconds) not in (int, float)
-            or not math.isfinite(retention_seconds)
-            or not 0 < retention_seconds <= 365 * 86400
-        ):
-            raise ValueError("invalid retention")
+        finite_number(retention_seconds, 0.001, 365 * 86400, "invalid retention")
         with self.transaction() as db:
             if db.execute("SELECT 1 FROM topics WHERE name=?", (topic,)).fetchone():
                 raise Error(409, "topic already exists")
@@ -126,118 +148,20 @@ class Coordinator:
 
     def producer_open(self, producer):
         name(producer)
-        with self.transaction() as db:
-            row = db.execute(
-                "SELECT epoch FROM producers WHERE id=?", (producer,)
-            ).fetchone()
-            epoch = row[0] + 1 if row else 0
-            db.execute(
-                "INSERT INTO producers VALUES(?,?) ON CONFLICT(id) DO UPDATE SET epoch=excluded.epoch",
-                (producer, epoch),
-            )
-            return {"producer": producer, "epoch": epoch}
+        with self.operations.hold(("producer", producer)):
+            with self.transaction() as db:
+                row = db.execute(
+                    "SELECT epoch FROM producers WHERE id=?", (producer,)
+                ).fetchone()
+                epoch = row[0] + 1 if row else 0
+                db.execute(
+                    "INSERT INTO producers VALUES(?,?) ON CONFLICT(id) DO UPDATE SET epoch=excluded.epoch",
+                    (producer, epoch),
+                )
+                return {"producer": producer, "epoch": epoch}
 
     def call(self, node, path, body):
         return rpc(self.brokers[node], path, body, self.token, timeout=0.7)
-
-    def _leader(self, part):
-        with self.transaction() as db:
-            part = self.part(db, part["topic"], part["partition"])
-            expected = self.expected_hash(db, part)
-            options = self.topic(db, part["topic"])
-        common = {
-            "topic": part["topic"],
-            "partition": part["partition"],
-            "committed": part["hwm"],
-            "segment_bytes": options["segment_bytes"],
-        }
-        candidates = {}
-        for node in [
-            part["leader"],
-            *[n for n in sorted(self.brokers) if n != part["leader"]],
-        ]:
-            try:
-                state = self.call(node, "/status", common)
-                if state["hash"] == expected:
-                    candidates[node] = state
-                    if node == part["leader"]:
-                        return part, node, expected
-            except (OSError, ValueError):
-                pass
-        if not candidates:
-            raise Error(503, "no replica contains committed prefix")
-        leader = sorted(candidates)[0]
-        with self.transaction() as db:
-            db.execute(
-                "UPDATE parts SET leader=?,epoch=epoch+1 WHERE topic=? AND partition=?",
-                (leader, part["topic"], part["partition"]),
-            )
-            part = self.part(db, part["topic"], part["partition"])
-        return part, leader, expected
-
-    def _retained(self, part, leader):
-        values = []
-        offset = part["floor"]
-        while offset <= part["hwm"]:
-            batch = self.call(
-                leader,
-                "/read",
-                {
-                    "topic": part["topic"],
-                    "partition": part["partition"],
-                    "offset": offset,
-                    "limit": min(500, part["hwm"] - offset + 1),
-                },
-            )["records"]
-            if not batch:
-                raise Error(503, "committed prefix unavailable during catchup")
-            values.extend(batch)
-            offset += len(batch)
-        return values
-
-    def _replicate(self, pending, leader_only=False):
-        part, leader, expected = self._leader(pending)
-        with self.transaction() as db:
-            options = self.topic(db, part["topic"])
-        common = {
-            "topic": part["topic"],
-            "partition": part["partition"],
-            "epoch": part["epoch"],
-            "committed": part["hwm"],
-            "committed_hash": expected,
-            "base": part["floor"],
-            "base_hash": part["base_hash"],
-            "segment_bytes": options["segment_bytes"],
-            "records": pending["values"],
-        }
-        synced = []
-        snapshot = None
-        for node in [leader, *[n for n in sorted(self.brokers) if n != leader]]:
-            try:
-                state = self.call(node, "/status", common)
-                if state["hash"] == expected:
-                    result = self.call(node, "/sync", common)
-                else:
-                    if snapshot is None:
-                        snapshot = self._retained(part, leader)
-                    result = self.call(
-                        node,
-                        "/install",
-                        {**common, "records": snapshot + pending["values"]},
-                    )
-                if result["hash"] == pending["values"][-1]["hash"]:
-                    synced.append(node)
-                    if leader_only and node == leader:
-                        return synced
-            except (OSError, ValueError):
-                pass
-        if len(synced) < len(self.brokers) // 2 + 1:
-            raise Error(
-                503, "quorum unavailable; outcome pending, retry identical sequence"
-            )
-        if leader_only and leader not in synced:
-            raise Error(503, "leader persistence not confirmed")
-        return synced
 
     def _finalize(self, db, pending, synced):
         last = pending["values"][-1]["record"]["offset"]
@@ -293,7 +217,7 @@ class Coordinator:
         return response
 
     def _flush(self, topic, partition):
-        with self.transaction() as db:
+        with self.transaction(write=False) as db:
             row = db.execute(
                 "SELECT body FROM pending WHERE topic=? AND partition=?",
                 (topic, partition),
@@ -305,41 +229,31 @@ class Coordinator:
             raise Error(409, "partition reserved by unfinished transaction")
         synced = self._replicate(pending)
         with self.transaction() as db:
-            return self._finalize(db, pending, synced)
+            response = self._finalize(db, pending, synced)
+        self._notify()
+        return response
 
     def _values(self, part, messages, producer, epoch, sequence):
-        if not isinstance(messages, list) or not 1 <= len(messages) <= 100:
-            raise ValueError("batch requires 1..100 messages")
-        with self.transaction() as db:
+        """Build a hash-linked batch from already validated, owned messages."""
+        with self.transaction(write=False) as db:
             previous = self.expected_hash(db, part)
+        now = self._now()
         values = []
         for i, message in enumerate(messages):
-            if (
-                not isinstance(message, dict)
-                or not isinstance(message.get("value"), str)
-                or len(message["value"].encode()) > 16384
-            ):
-                raise ValueError("text messages must be at most 16 KiB")
-            key = message.get("key")
-            if key is not None and (not isinstance(key, str) or len(key) > 1000):
-                raise ValueError("invalid message key")
-            delay = message.get("delay_seconds", 0)
-            if (
-                type(delay) not in (float, int)
-                or not math.isfinite(delay)
-                or not 0 <= delay <= 86400
-            ):
-                raise ValueError("delay must be 0..86400 seconds")
             record = {
                 "offset": part["hwm"] + 1 + i,
-                "timestamp": self.clock(),
+                "timestamp": now,
                 "producer": producer,
                 "producer_epoch": epoch,
                 "sequence": sequence,
-                "key": key,
+                "key": message.get("key"),
                 "value": message["value"],
-                "not_before": self.clock() + delay,
+                "not_before": message.get(
+                    "deliver_at", now + message.get("delay_seconds", 0)
+                ),
             }
+            if message.get("tags"):
+                record["tags"] = list(message["tags"])
             value = envelope(record, previous)
             values.append(value)
             previous = value["hash"]
@@ -353,21 +267,35 @@ class Coordinator:
         integer(sequence)
         if acks not in ("all", "leader"):
             raise ValueError("acks must be all or leader")
-        if (
-            not isinstance(messages, list)
-            or not 1 <= len(messages) <= 100
-            or any(not isinstance(message, dict) for message in messages)
-        ):
-            raise ValueError("batch requires 1..100 message objects")
-        with self.transaction() as db:
+        # Freeze caller-owned nested dictionaries before waiting on another writer.
+        messages = freeze_messages(messages)
+        with self.transaction(write=False) as db:
             options = self.topic(db, topic)
             if partition is None:
-                key = (
-                    messages[0].get("key", producer)
-                    if isinstance(messages, list) and messages
-                    else producer
+                keyed_partitions = {
+                    zlib.crc32(message["key"].encode()) % options["partitions"]
+                    for message in messages
+                    if message.get("key") is not None
+                }
+                if len(keyed_partitions) > 1:
+                    raise ValueError("implicit batch spans multiple key partitions")
+                # The SDK chooses random partitions for keyless sends explicitly.
+                # Direct RPC retries need a stable fallback for the same sequence.
+                partition = (
+                    next(iter(keyed_partitions))
+                    if keyed_partitions
+                    else zlib.crc32(producer.encode()) % options["partitions"]
                 )
-                partition = zlib.crc32(str(key).encode()) % options["partitions"]
+        integer(partition, 0, 63)
+        with self.operations.hold(
+            partition_key(topic, partition), ("producer", producer)
+        ):
+            return self._produce(
+                topic, producer, epoch, sequence, messages, partition, acks
+            )
+
+    def _produce(self, topic, producer, epoch, sequence, messages, partition, acks):
+        with self.transaction(write=False) as db:
             part = self.part(db, topic, partition)
             current = db.execute(
                 "SELECT epoch FROM producers WHERE id=?", (producer,)
@@ -406,7 +334,7 @@ class Coordinator:
                     }
                 return self._flush(topic, partition)
             self._flush(topic, partition)
-        with self.transaction() as db:
+        with self.transaction(write=False) as db:
             part = self.part(db, topic, partition)
             last = db.execute(
                 "SELECT last FROM sequences WHERE producer=? AND epoch=? AND topic=? AND partition=?",
@@ -443,10 +371,22 @@ class Coordinator:
             }
         return self._flush(topic, partition)
 
-    def fetch(self, topic, partition, offset=0, limit=100):
+    def fetch(self, topic, partition, offset=0, limit=100, tags=None, wait_seconds=0):
+        name(topic)
+        integer(partition, 0, 63)
+        filters = tags_filter(tags)
+
+        def page():
+            with self.operations.hold(partition_key(topic, partition)):
+                result = self._fetch(topic, partition, offset, limit, filters)
+                return result, result["next_offset"] != offset
+
+        return self._poll(page, wait_seconds)
+
+    def _fetch(self, topic, partition, offset=0, limit=100, filters=None):
         integer(offset)
         integer(limit, 1, 1000)
-        with self.transaction() as db:
+        with self.transaction(write=False) as db:
             part = self.part(db, topic, partition)
         if offset < part["floor"]:
             raise Error(410, "offset expired; explicitly reset to earliest")
@@ -460,219 +400,74 @@ class Coordinator:
                 "floor": part["floor"],
             }
         part, leader, _ = self._leader(part)
-        values = self.call(
-            leader,
-            "/read",
-            {
-                "topic": topic,
-                "partition": partition,
-                "offset": offset,
-                "limit": min(limit, part["hwm"] - offset + 1),
-            },
-        )["records"]
+        values = self._read_replica(
+            part, leader, offset, min(limit, part["hwm"] - offset + 1)
+        )
         visible = []
+        next_offset = offset
+        now = self._now()
         for value in values:
-            if value["record"]["not_before"] > self.clock():
+            if value["record"]["not_before"] > now:
                 break
-            visible.append(value["record"])
+            next_offset += 1
+            if filters is None or filters.intersection(value["record"].get("tags", [])):
+                visible.append(value["record"])
         return {
             "records": visible,
-            "next_offset": offset + len(visible),
+            "next_offset": next_offset,
             "high_water": part["hwm"],
             "floor": part["floor"],
             "leader": leader,
             "epoch": part["epoch"],
         }
 
-    def _expire(self, db, topic, group):
-        count = db.execute(
-            "DELETE FROM members WHERE topic=? AND group_name=? AND expires<=?",
-            (topic, group, self.clock()),
-        ).rowcount
-        if count:
-            db.execute(
-                "UPDATE groups SET generation=generation+1 WHERE topic=? AND name=?",
-                (topic, group),
-            )
-            db.execute(
-                "DELETE FROM delivered WHERE topic=? AND group_name=?", (topic, group)
-            )
-
-    def _membership(
-        self, db, topic, group, member, session, generation=None, partition=None
-    ):
-        self._expire(db, topic, group)
-        metadata = db.execute(
-            "SELECT generation FROM groups WHERE topic=? AND name=?", (topic, group)
-        ).fetchone()
-        row = db.execute(
-            "SELECT * FROM members WHERE topic=? AND group_name=? AND id=?",
-            (topic, group, member),
-        ).fetchone()
-        if not metadata or not row or row["session"] != session:
-            raise Error(409, "consumer session expired or replaced")
-        if generation is not None and metadata[0] != generation:
-            raise Error(409, "consumer generation fenced; refresh assignments")
-        members = [
-            r[0]
-            for r in db.execute(
-                "SELECT id FROM members WHERE topic=? AND group_name=? ORDER BY id",
-                (topic, group),
-            )
-        ]
-        options = self.topic(db, topic)
-        assigned = [
-            p
-            for p in range(options["partitions"])
-            if members[p % len(members)] == member
-        ]
-        if partition is not None and partition not in assigned:
-            raise Error(409, "consumer no longer owns partition")
-        return {
-            "generation": metadata[0],
-            "assignments": assigned,
-            "session": session,
-            "member": member,
-        }
-
-    def join(self, topic, group, member):
-        name(group)
-        name(member)
-        with self.transaction() as db:
-            self.topic(db, topic)
-            db.execute("INSERT OR IGNORE INTO groups VALUES(?,?,0)", (topic, group))
-            self._expire(db, topic, group)
-            session = uuid.uuid4().hex
-            db.execute(
-                "INSERT INTO members VALUES(?,?,?,?,?) ON CONFLICT(topic,group_name,id) DO UPDATE SET session=excluded.session,expires=excluded.expires",
-                (topic, group, member, session, self.clock() + self.lease_seconds),
-            )
-            db.execute(
-                "UPDATE groups SET generation=generation+1 WHERE topic=? AND name=?",
-                (topic, group),
-            )
-            db.execute(
-                "DELETE FROM delivered WHERE topic=? AND group_name=?", (topic, group)
-            )
-            return self._membership(db, topic, group, member, session)
-
-    def heartbeat(self, topic, group, member, session):
-        with self.transaction() as db:
-            result = self._membership(db, topic, group, member, session)
-            db.execute(
-                "UPDATE members SET expires=? WHERE topic=? AND group_name=? AND id=?",
-                (self.clock() + self.lease_seconds, topic, group, member),
-            )
-            return result
-
-    def _cursor(self, db, topic, group, partition):
-        row = db.execute(
-            "SELECT next FROM cursors WHERE topic=? AND group_name=? AND partition=?",
-            (topic, group, partition),
-        ).fetchone()
-        return row[0] if row else 0
-
-    def group_fetch(
-        self,
-        topic,
-        group,
-        member,
-        session,
-        generation,
-        partition,
-        limit=100,
-        semantics="at_least_once",
-    ):
-        if semantics not in ("at_least_once", "at_most_once"):
-            raise ValueError("invalid delivery semantics")
-        with self.transaction() as db:
-            self._membership(db, topic, group, member, session, generation, partition)
-            offset = self._cursor(db, topic, group, partition)
-        result = self.fetch(topic, partition, offset, limit)
-        with self.transaction() as db:
-            self._membership(db, topic, group, member, session, generation, partition)
-            old = db.execute(
-                "SELECT next FROM delivered WHERE topic=? AND group_name=? AND partition=? AND generation=?",
-                (topic, group, partition, generation),
-            ).fetchone()
-            delivered = max(result["next_offset"], old[0] if old else 0)
-            db.execute(
-                "INSERT INTO delivered VALUES(?,?,?,?,?) ON CONFLICT(topic,group_name,partition) DO UPDATE SET generation=excluded.generation,next=excluded.next",
-                (topic, group, partition, generation, delivered),
-            )
-            if semantics == "at_most_once":
-                db.execute(
-                    "INSERT INTO cursors VALUES(?,?,?,?) ON CONFLICT(topic,group_name,partition) DO UPDATE SET next=excluded.next",
-                    (topic, group, partition, result["next_offset"]),
-                )
-        return {**result, "semantics": semantics, "generation": generation}
-
-    def _validate_commit(
-        self,
-        db,
-        topic,
-        group,
-        member,
-        session,
-        generation,
-        partition,
-        next_offset,
-        expected=None,
-    ):
-        integer(next_offset)
-        self._membership(db, topic, group, member, session, generation, partition)
-        current = self._cursor(db, topic, group, partition)
-        bound = db.execute(
-            "SELECT next FROM delivered WHERE topic=? AND group_name=? AND partition=? AND generation=?",
-            (topic, group, partition, generation),
-        ).fetchone()
-        if (
-            next_offset < current
-            or not bound
-            or next_offset > bound[0]
-            or expected is not None
-            and expected != current
-        ):
-            raise Error(409, "commit exceeds delivery bound or input cursor changed")
-
-    def commit(self, topic, group, member, session, generation, partition, next_offset):
-        with self.transaction() as db:
-            self._validate_commit(
-                db, topic, group, member, session, generation, partition, next_offset
-            )
-            db.execute(
-                "INSERT INTO cursors VALUES(?,?,?,?) ON CONFLICT(topic,group_name,partition) DO UPDATE SET next=excluded.next",
-                (topic, group, partition, next_offset),
-            )
-        return {"next_offset": next_offset}
-
-    def reset(
-        self, topic, group, member, session, generation, partition, offset="earliest"
-    ):
-        with self.transaction() as db:
-            self._membership(db, topic, group, member, session, generation, partition)
-            part = self.part(db, topic, partition)
-            target = (
-                part["floor"]
-                if offset == "earliest"
-                else part["hwm"] + 1
-                if offset == "latest"
-                else integer(offset)
-            )
-            if not part["floor"] <= target <= part["hwm"] + 1:
-                raise Error(416, "reset offset outside retained range")
-            db.execute(
-                "INSERT INTO cursors VALUES(?,?,?,?) ON CONFLICT(topic,group_name,partition) DO UPDATE SET next=excluded.next",
-                (topic, group, partition, target),
-            )
-            db.execute(
-                "DELETE FROM delivered WHERE topic=? AND group_name=? AND partition=?",
-                (topic, group, partition),
-            )
-            return {"next_offset": target}
-
     def process(self, txid, source, expected_offset, next_offset, outputs):
         name(txid)
+        integer(expected_offset)
+        integer(next_offset)
+        if not isinstance(source, dict) or set(source) != {
+            "topic",
+            "group",
+            "member",
+            "session",
+            "generation",
+            "partition",
+        }:
+            raise ValueError("complete consumer source required")
+        source = json.loads(dumps(source))
+        for field in ("topic", "group", "member", "session"):
+            name(source[field])
+        integer(source["generation"])
+        integer(source["partition"], 0, 63)
+        if not isinstance(outputs, list) or not 1 <= len(outputs) <= 10:
+            raise ValueError("transaction requires 1..10 output batches")
+        captured = list(outputs)
+        outputs = []
+        destinations = []
+        for output in captured:
+            if (
+                not isinstance(output, dict)
+                or not {"topic", "messages"} <= set(output)
+                or set(output) - {"topic", "messages", "partition"}
+            ):
+                raise ValueError("invalid transaction output")
+            destinations.append(
+                partition_key(
+                    name(output["topic"]), integer(output.get("partition", 0), 0, 63)
+                )
+            )
+            outputs.append({**output, "messages": freeze_messages(output["messages"])})
+        if len(set(destinations)) != len(destinations):
+            raise ValueError("combine outputs for each destination partition")
+        keys = [
+            ("transaction", txid),
+            partition_key(source["topic"], source["partition"]),
+            *destinations,
+        ]
+        with self.operations.hold(*keys):
+            return self._process(txid, source, expected_offset, next_offset, outputs)
+
+    def _process(self, txid, source, expected_offset, next_offset, outputs):
         fingerprint = hashlib.sha256(
             dumps([source, expected_offset, next_offset, outputs]).encode()
         ).hexdigest()
@@ -689,8 +484,6 @@ class Coordinator:
             )
             if next_offset <= expected_offset:
                 raise ValueError("transaction must advance its input cursor")
-        if not isinstance(outputs, list) or not 1 <= len(outputs) <= 10:
-            raise ValueError("transaction requires 1..10 output batches")
         pending_batches = []
         partitions = set()
         try:
@@ -743,86 +536,23 @@ class Coordinator:
                     "INSERT INTO transactions VALUES(?,?,?)",
                     (txid, fingerprint, dumps(response)),
                 )
+            self._notify()
             return response
         except BaseException:
             with self.transaction() as db:
                 for pending in pending_batches:
                     db.execute(
-                        "DELETE FROM pending WHERE topic=? AND partition=?",
-                        (pending["topic"], pending["partition"]),
+                        "DELETE FROM pending WHERE topic=? AND partition=? AND json_extract(body,'$.transaction')=?",
+                        (pending["topic"], pending["partition"], txid),
                     )
             raise
 
-    def retain(self, topic):
-        plans = []
-        with self.transaction() as db:
-            options = self.topic(db, topic)
-            for row in db.execute(
-                "SELECT * FROM parts WHERE topic=?", (topic,)
-            ).fetchall():
-                part = dict(row)
-                records = db.execute(
-                    "SELECT * FROM records WHERE topic=? AND partition=? ORDER BY offset",
-                    (topic, part["partition"]),
-                ).fetchall()
-                size = sum(r["size"] for r in records)
-                floor, base_hash = part["floor"], part["base_hash"]
-                for record in records:
-                    if (
-                        record["timestamp"] > self.clock() - options["retention"]
-                        and size <= options["max_bytes"]
-                    ):
-                        break
-                    floor, base_hash = record["offset"] + 1, record["hash"]
-                    size -= record["size"]
-                if floor > part["floor"]:
-                    db.execute(
-                        "UPDATE parts SET floor=?,base_hash=? WHERE topic=? AND partition=?",
-                        (floor, base_hash, topic, part["partition"]),
-                    )
-                    db.execute(
-                        "DELETE FROM records WHERE topic=? AND partition=? AND offset<?",
-                        (topic, part["partition"], floor),
-                    )
-                    db.execute(
-                        "DELETE FROM receipts WHERE topic=? AND partition=? AND last_offset<?",
-                        (topic, part["partition"], floor),
-                    )
-                    plans.append(
-                        {
-                            "topic": topic,
-                            "partition": part["partition"],
-                            "base": floor,
-                            "base_hash": base_hash,
-                        }
-                    )
-        for plan in plans:
-            for node in self.brokers:
-                try:
-                    self.call(node, "/retain", plan)
-                except (OSError, ValueError):
-                    pass
-        return {"retention": plans}
-
-    def maintenance(self):
-        with self.lock:
-            with self.transaction() as db:
-                pending = [dict(row) for row in db.execute("SELECT * FROM pending")]
-                topics = [row[0] for row in db.execute("SELECT name FROM topics")]
-            for row in pending:
-                if not json.loads(row["body"]).get("transaction"):
-                    try:
-                        self._flush(row["topic"], row["partition"])
-                    except (Error, OSError, ValueError):
-                        pass
-            for topic in topics:
-                self.retain(topic)
-
     def metadata(self):
-        with self.transaction() as db:
+        with self.transaction(write=False) as db:
             return {
                 "role": "coordinator",
                 "metadata_ha": False,
+                "coordinator_maintenance_error": self.last_error,
                 "brokers": sorted(self.brokers),
                 "topics": [dict(r) for r in db.execute("SELECT * FROM topics")],
                 "partitions": [
@@ -832,22 +562,27 @@ class Coordinator:
             }
 
     def dispatch(self, path, body):
-        with self.lock:
-            methods = {
-                "/topic": self.create,
-                "/producer": self.producer_open,
-                "/produce": self.produce,
-                "/fetch": self.fetch,
-                "/join": self.join,
-                "/heartbeat": self.heartbeat,
-                "/group-fetch": self.group_fetch,
-                "/commit": self.commit,
-                "/reset": self.reset,
-                "/process": self.process,
-                "/retain": self.retain,
-            }
-            if path in ("/health", "/metadata"):
-                return self.metadata()
-            if path not in methods:
-                raise Error(404, "unknown coordinator endpoint")
-            return methods[path](**body)
+        methods = {
+            "/topic": self.create,
+            "/expand": self.expand,
+            "/producer": self.producer_open,
+            "/produce": self.produce,
+            "/fetch": self.fetch,
+            "/join": self.join,
+            "/leave": self.leave,
+            "/heartbeat": self.heartbeat,
+            "/group-fetch": self.group_fetch,
+            "/commit": self.commit,
+            "/reset": self.reset,
+            "/process": self.process,
+            "/retain": self.retain,
+        }
+        if not isinstance(body, dict):
+            raise ValueError("request object required")
+        if path in ("/health", "/metadata"):
+            if body:
+                raise ValueError("metadata request must be empty")
+            return self.metadata()
+        if path not in methods:
+            raise Error(404, "unknown coordinator endpoint")
+        return methods[path](**body)

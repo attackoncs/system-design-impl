@@ -1,0 +1,28 @@
+{
+  "scope": "independent localhost HTTP, three separate broker disks, one durable coordinator and three TCP proxies; synthetic text only",
+  "buffered_records": 8,
+  "buffered_quorum_confirmed": true,
+  "keyed_partitions": [
+    0,
+    1
+  ],
+  "tag_filtered_records": 4,
+  "filter_cursors_reached_high_water": true,
+  "assignments_after_leave": [
+    0,
+    1
+  ],
+  "assignments_after_expansion": [
+    0,
+    1,
+    2
+  ],
+  "new_partition_offsets": [
+    0
+  ],
+  "scheduled_long_poll_records": [
+    "due",
+    "behind"
+  ],
+  "scheduled_not_delivered_early": true
+}
