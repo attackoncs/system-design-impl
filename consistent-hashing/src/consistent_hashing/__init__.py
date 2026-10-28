@@ -19,7 +19,12 @@ from consistent_hashing.hash_functions import (
     sha256_hash,
 )
 from consistent_hashing.ring import ConsistentHashRing, RingSnapshot
-from consistent_hashing.migration import AffectedRange, affected_ranges
+from consistent_hashing.migration import (
+    AffectedRange,
+    KeyMigration,
+    affected_ranges,
+    iter_migrations,
+)
 from consistent_hashing.stats import (
     DistributionStats,
     compute_distribution,
@@ -31,6 +36,8 @@ __all__ = [
     "RingSnapshot",
     "AffectedRange",
     "affected_ranges",
+    "KeyMigration",
+    "iter_migrations",
     "HashFunction",
     "sha1_hash",
     "md5_hash",

@@ -1,348 +1,148 @@
-# Consistent Hashing
+# Consistent Hashing — Chapter 6
 
-A Python implementation of the consistent hashing algorithm with virtual nodes for balanced key distribution across servers. Designed for distributed systems like caches, databases, and load balancers.
+Hash-ring placement with virtual nodes, immutable read views, atomic weight
+changes and streaming migration selection. Runtime dependencies: standard library
+only. [中文](README_CN.md) · [chapter review](docs/chapter06-review.md) ·
+[design](docs/design.md) · [measurements](benchmarks/REPORT.md).
 
-> 中文文档请参阅 [README_CN.md](./README_CN.md)
+The chapter's core algorithms were already implemented. This review adds missing
+key filtering, one-pass batch APIs, safe weight updates, resource validation and
+faster bulk construction/range planning. **154 tests pass**, including the
+existing Hypothesis properties; an independent four-process probe verifies
+deterministic primary/replica selection.
 
-## Features
+## Run
 
-- **O(log N) key lookup** using binary search on sorted virtual node positions
-- **Virtual nodes** for balanced distribution across heterogeneous servers
-- **Minimal redistribution** — adding/removing a server only moves ~1/N of keys
-- **Configurable hash functions** — SHA-1 (default), MD5, SHA-256, or custom
-- **Per-server weighting** — assign more ring space to higher-capacity servers
-- **Replication support** — `get_nodes(key, count)` returns multiple distinct servers
-- **Distribution statistics** — analyze balance and redistribution impact
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           Public API Layer                               │
-│                                                                         │
-│   ConsistentHashRing • compute_distribution • compute_redistribution   │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         Hash Ring Data Structure                         │
-│                                                                         │
-│   Sorted virtual node positions + bisect_right for O(log N) lookup     │
-│   Position-to-node mapping • Virtual node generation                    │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           Hash Function Layer                            │
-│                                                                         │
-│           SHA-1 (default) • MD5 • SHA-256 • Custom                      │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                       Statistics & Utilities                             │
-│                                                                         │
-│   DistributionStats • Balance analysis • Redistribution tracking       │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-### Component Responsibilities
-
-| Component | Role |
-|-----------|------|
-| `ConsistentHashRing` | Core data structure, server management, key lookup |
-| `Hash Functions` | Map strings to ring positions (0 to 2^160 - 1) |
-| `DistributionStats` | Key distribution analysis and balance metrics |
-| `compute_redistribution` | Track key movement during topology changes |
-
-## Installation
-
-```bash
-cd consistent-hashing
-pip install -e .
-```
-
-With development dependencies:
-
-```bash
+```sh
 pip install -e ".[dev]"
+python -m pytest tests -q
+python examples/demo.py
+python examples/chapter_comparison.py
+python tools/process_probe.py --output benchmarks/process-local.json
+python tools/benchmark.py --output benchmarks/local.json
 ```
 
-### Requirements
+Python3.9+ source syntax, executed on Python3.13.9. Optional dev dependencies are
+pytest and Hypothesis. In the review environment, inaccessible existing pytest
+cache/temp directories require `-p no:cacheprovider` and a fresh `--basetemp`
+inside `.test-tmp`; unrelated plugin autoload is disabled. All154 tests run with
+`-W error`, without skips or warning filters.
 
-- Python >= 3.9
-
-## Quick Start
+## Routing and snapshots
 
 ```python
 from consistent_hashing import ConsistentHashRing, compute_distribution
 
-# Create a ring with 3 servers
-ring = ConsistentHashRing(
-    nodes=["web-1", "web-2", "web-3"],
-    num_virtual_nodes=150,
-)
+ring = ConsistentHashRing(["web-1", "web-2", "web-3"], num_virtual_nodes=150,
+                          max_virtual_nodes=1_000_000)
+print(ring.get_node("user:42"))
+print(ring.get_nodes("user:42", count=2))  # distinct candidate servers
 
-# Look up which server handles a key
-server = ring.get_node("user:12345")
-print(f"user:12345 -> {server}")
-
-# Get multiple servers for replication
-replicas = ring.get_nodes("user:12345", count=2)
-print(f"Replicas: {replicas}")
-
-# Add a server dynamically
+view = ring.snapshot()
+stream = ring.iter_assignments(f"key-{i}" for i in range(1000))
 ring.add_node("web-4")
-
-# Remove a server
-ring.remove_node("web-2")
-
-# Check distribution statistics
-keys = [f"key:{i}" for i in range(1000)]
-stats = compute_distribution(ring, keys)
-print(f"Balance ratio: {stats.balance_ratio:.4f}")
+print(list(stream))  # topology captured at method call, before the addition
+print(view.get_keys("web-1", ["user:42", "user:43"]))
+print(compute_distribution(view, (f"key-{i}" for i in range(1000))))
 ```
 
-## Algorithm
+SHA-1 is the default, with the full160-bit integer space. MD5 and SHA-256 use
+their full128/256-bit spaces. A custom callable receives strings and returns
+exact Python integers (not bool). It must remain deterministic, thread safe and
+stable for retained snapshots; it must not mutate this ring or wait for its
+writers. Custom integer positions may be signed; no modulus is imposed.
 
-### Hash Ring
+Virtual nodes hash `node#0` through `node#(count-1)`. Entries retain collisions,
+ordered by position, physical name and virtual index. Lookup preserves the
+historical **strict-clockwise** convention: `bisect_right` selects the first
+position strictly greater than the key, then wraps. Exact equality skips every
+entry at that position. Changing to inclusive lookup would change routing.
 
-The consistent hash ring maps both servers and keys onto a circular hash space (0 to 2^160 - 1 for SHA-1). Each server is placed at one or more positions on the ring by hashing its identifier.
+Readers capture topology under a short publication lock, then search immutable
+tuples. A retained view remains valid after live node removal. Views/iterators
+retain topology memory until released; no data keys are stored in the ring.
+An empty ring raises on routing/batch routing, while `get_nodes(key, 0)` returns[].
 
-To find which server handles a key:
-1. Hash the key to get its position on the ring
-2. Traverse clockwise until the first server position is found
-3. That server is responsible for the key
-
-### Virtual Nodes
-
-Each physical server is represented by multiple "virtual nodes" on the ring. For a server named `"web-1"` with 150 virtual nodes, positions are generated by hashing:
-- `"web-1#0"`, `"web-1#1"`, ..., `"web-1#149"`
-
-Virtual nodes provide:
-- **Better balance** — more positions means more uniform key distribution
-- **Weighted servers** — higher-capacity servers get more virtual nodes
-- **Smoother redistribution** — adding a server takes small slices from many servers
-
-### Clockwise Lookup (O(log N))
-
-Key lookup uses `bisect_right` on a sorted list of virtual node positions:
+## Membership and weights
 
 ```python
-idx = bisect_right(sorted_positions, hash(key))
-if idx == len(sorted_positions):
-    idx = 0  # wrap around
-server = sorted_entries[idx][1]  # entries preserve hash collisions
-```
-
-This gives O(log N) lookup where N is the total number of virtual nodes.
-
-## API Reference
-
-### ConsistentHashRing
-
-```python
-ConsistentHashRing(
-    nodes: list[str] | None = None,
-    num_virtual_nodes: int = 150,
-    hash_function: Callable[[str], int] | None = None,
-)
-```
-
-**Methods:**
-
-| Method | Description |
-|--------|-------------|
-| `add_node(node, num_virtual_nodes=None)` | Add a server to the ring |
-| `remove_node(node)` | Remove a server from the ring |
-| `get_node(key) -> str` | Get the server responsible for a key |
-| `get_nodes(key, count) -> list[str]` | Get multiple distinct servers for replication |
-
-**Properties:**
-
-| Property | Description |
-|----------|-------------|
-| `nodes` | List of physical server names |
-| `total_virtual_nodes` | Total virtual node count on the ring |
-
-### Hash Functions
-
-```python
-from consistent_hashing import sha1_hash, md5_hash, sha256_hash
-
-# Use a different hash function
-ring = ConsistentHashRing(hash_function=md5_hash)
-```
-
-| Function | Output Range | Notes |
-|----------|--------------|-------|
-| `sha1_hash` | 0 to 2^160 - 1 | Default, excellent distribution |
-| `md5_hash` | 0 to 2^128 - 1 | Faster, smaller hash space |
-| `sha256_hash` | 0 to 2^256 - 1 | Cryptographically stronger |
-
-### Statistics
-
-```python
-from consistent_hashing import compute_distribution
-from consistent_hashing.stats import compute_redistribution
-
-# Distribution analysis
-stats = compute_distribution(ring, keys)
-# Returns: DistributionStats(total_keys, num_servers, keys_per_server,
-#          mean, std_dev, min_keys, max_keys, balance_ratio)
-
-# Redistribution analysis
-before = {k: ring.get_node(k) for k in keys}
-ring.add_node("new-server")
-after = {k: ring.get_node(k) for k in keys}
-result = compute_redistribution(keys, before, after)
-# Returns: {"moved": {key: {"from": ..., "to": ...}}, "total_moved": int}
-```
-
-## Minimal Redistribution
-
-When a server is added or removed, only the keys that fall between the affected positions move:
-
-```
-Before: [S1] ---- [S2] ---- [S3] ---- [S1]  (wrap)
-Keys:   k1        k2        k3
-
-After adding S4:
-        [S1] -- [S4] -- [S2] ---- [S3] ---- [S1]
-Keys:   k1      k4      k2        k3
-
-Only k4 moved (from S1 to S4). Others unchanged.
-```
-
-Theoretical bound: Adding/removing a server redistributes ~1/N of keys (where N is the new total server count).
-
-## Example Output
-
-```
-$ python examples/demo.py
-
-============================================================
-  1. Creating Hash Ring with 3 Servers
-============================================================
-
-  Servers: ['web-1', 'web-2', 'web-3']
-  Total virtual nodes: 450
-
-============================================================
-  3. Distribution Statistics (3 Servers)
-============================================================
-
-  Total keys: 1000
-  Mean keys/server: 333.3
-  Std deviation: 18.9
-  Balance ratio: 0.0568 (lower is better)
-  Keys per server:
-           web-1:  358 #######
-           web-2:  330 ######
-           web-3:  312 ######
-
-============================================================
-  4. Adding Server 'web-4'
-============================================================
-
-  Keys redistributed: 249/1000 (24.9%)
-  Theoretical ideal: ~250 (25.0%)
-
-============================================================
-  6. Removing Server 'web-2'
-============================================================
-
-  Keys redistributed: 239/1000 (23.9%)
-```
-
-## Performance
-
-| Operation | Time Complexity | Notes |
-|-----------|----------------|-------|
-| `get_node(key)` | O(log N) | Binary search, N = virtual nodes |
-| `add_node(node)` | O((N+K) log(N+K)) | K = virtual nodes for this server |
-| `remove_node(node)` | O(N log N) | K = virtual nodes for this server |
-| Space per server | O(K) | K = virtual node count |
-
-## Running Tests
-
-```bash
-pip install -e ".[dev]"
-pytest                              # All tests
-pytest tests/test_ring.py           # Ring tests
-pytest tests/test_stats.py          # Statistics tests
-pytest tests/test_properties.py     # Property-based tests
-pytest --hypothesis-show-statistics # Detailed PBT stats
-```
-
-### Test Coverage
-
-- **Unit tests**: Core operations, edge cases, error handling
-- **Property-based tests**: Determinism, minimal redistribution, balanced distribution, coverage
-
-## Project Structure
-
-```
-consistent-hashing/
-├── pyproject.toml
-├── README.md
-├── README_CN.md
-├── docs/
-│   ├── requirements.md
-│   ├── design.md
-│   └── tasks.md
-├── src/
-│   └── consistent_hashing/
-│       ├── __init__.py
-│       ├── ring.py              # ConsistentHashRing class
-│       ├── migration.py         # affected hash ranges
-│       ├── hash_functions.py    # SHA-1, MD5, SHA-256
-│       └── stats.py             # Distribution analysis
-├── tests/
-│   ├── test_ring.py
-│   ├── test_hash_functions.py
-│   ├── test_stats.py
-│   └── test_properties.py      # Hypothesis PBT
-└── examples/
-    └── demo.py
-```
-
-## References
-
-- Karger et al., "Consistent Hashing and Random Trees" (1997)
-- DeCandia et al., "Dynamo: Amazon's Highly Available Key-value Store" (2007)
-
-## License
-
-MIT
-
-## Snapshot concurrency contract
-
-Each lookup searches one immutable topology snapshot. Writers are serialized,
-while readers hold only a short snapshot-publication lock. Hash collisions keep
-separate entries ordered by node name and virtual-node index; removal does not
-recompute hashes. A failed update leaves the previous topology usable.
-
-Virtual-node counts must be positive integers. Replica count zero returns an
-empty list; negative/non-integer counts are rejected. Exact-position lookups
-retain the original strictly-clockwise (`bisect_right`) behavior. Custom hash
-functions must be deterministic and thread safe. Different API calls may observe
-different snapshots. Snapshot copying costs memory and read synchronization has
-a measurable cost; see [the engineering review](../ENGINEERING_REVIEW.md).
-
-## Chapter 06 coverage and new APIs
-
-The book's affected-key-range analysis is now implemented by `affected_ranges(before, after)`, returning changed hash intervals and old/new primary owners without enumerating keys. `ring.snapshot()` exposes a stable read view; distribution statistics pin one topology during concurrent updates. See [the design and coverage matrix](docs/design.md).
-
-```python
-from consistent_hashing import ConsistentHashRing, affected_ranges
-ring = ConsistentHashRing(["a", "b"])
+ring.add_node("large", num_virtual_nodes=300)
 before = ring.snapshot()
-ring.add_node("c")
-for interval in affected_ranges(before, ring.snapshot()):
-    print(interval.start, interval.end, interval.previous_owner, interval.new_owner)
+ring.set_virtual_nodes("large", 600)
+ring.remove_node("web-2")
 ```
 
-Intervals are `[start, end)`, wrapping if start > end and covering the whole ring if equal, consistent with historical strict-clockwise lookup. Snapshots must share the same hash callable. Empty owners are None. No physical migration or replication is executed; retained snapshots retain memory.
+Construction accepts a sequence of unique nonempty node names; strings/sets are
+rejected as ambiguous containers. Bulk construction hashes all entries and sorts
+once. Addition, removal and weight changes publish one complete replacement
+under the writer lock. Hash/capacity failures leave the old state intact.
 
-Run `python examples/chapter_comparison.py` for modulo expansion and 1/100/200 virtual-node comparisons. On 10,000 fixed keys, expansion moves 969 keys with consistent hashing versus 9066 with modulo. Finite samples need not improve monotonically with more virtual nodes; a single hot key is not split. Full test suite: **108 passed**.
+Increasing a weight adds only new virtual indices; decreasing removes highest
+indices. Retained positions are never rehashed, and there is no remove/add gap.
+Setting the existing weight is a no-op. Counts must be positive integers, and
+total entries are capped by `max_virtual_nodes` (default1,000,000); capacity is
+checked before hashing and again against the current writer state. This is a
+per-topology limit, not a bound on all retained historical snapshots.
+
+## Find affected ranges and keys
+
+```python
+from consistent_hashing import affected_ranges, iter_migrations
+
+before = ring.snapshot()
+ring.add_node("new")
+after = ring.snapshot()
+for interval in affected_ranges(before, after):
+    print(interval.start, interval.end, interval.previous_owner, interval.new_owner)
+for item in iter_migrations(before, after, candidates_from_storage):
+    print(item.key, item.previous_owner, item.new_owner)
+```
+
+Both inputs must be explicit snapshots using the same hash callable instance.
+Intervals are disjoint **[start,end)** under strict-clockwise routing; start>end
+wraps, equal bounds mean the full ring, and None owners represent an empty ring.
+Adjacent intervals are retained. Planning merges position boundaries and walks
+both ordered topologies; it performs no key scan or hash calls.
+
+`iter_migrations` plans immediately, then hashes each supplied candidate once and
+binary-searches affected intervals. It streams records without building two full
+assignment maps. Duplicate candidates are retained; no-change plans consume none.
+`get_keys(node, candidates)` filters supplied keys on one snapshot and raises for
+unknown nodes; it cannot discover stored keys without an external index or scan.
+
+`compute_distribution` pins a topology and accepts one-pass iterables, counting
+duplicate samples. `compute_redistribution(..., strict=True)` checks complete
+assignment maps and counts explicit None-to/from-owner changes; its defaultFalse
+preserves legacy behavior of ignoring missing/unassigned pairs. Its moved map
+counts distinct keys. Caller-supplied maps must remain stable during analysis.
+
+## Guarantees and costs
+
+Adding a node only moves primary keys to that node; removing one only moves keys
+owned by it. Equal-capacity uniform-hash expectations are about1/(N+1) on addition
+to N servers and1/N on removal, **not hard bounds** for finite samples. Virtual
+nodes improve placement balance statistically; a single hot key still has one
+primary owner, and key balance is not request/byte balance.
+
+Let V be total entries, K the changed node's entries and B union boundaries:
+
+| Operation | Cost, excluding the application hash function |
+|---|---|
+| Single owner | O(log V); live access also captures a view |
+| Replica candidates | O(log V + V) worst case, skips duplicate physical nodes |
+| Bulk construction | O(V log V), one sort |
+| Add/grow weight | copy plus sorting changed entries / merging two ordered runs |
+| Remove | O(V + K log K), including index-ordered return positions |
+| Shrink weight | O(V) |
+| Range plan | two-run boundary merge plus O(V_before+V_after+B) sweep |
+| Migration candidates | plan plus O(keys * log(max(2, changed intervals))) |
+
+The optimized ordered-run merges use CPython's adaptive built-in sort, avoiding
+Python heap iteration. A conservative sort upper bound remains O(V log V) on
+other implementations. State memory is O(V); writers and retained snapshots can
+temporarily hold multiple versions.
+
+Measurements show faster bulk construction and planning, with slightly slower
+lookups/additions; see [raw comparisons](benchmarks/REPORT.md). Thread safety does
+not imply multicore throughput scaling. No physical migration, replication,
+membership discovery, consensus or failure detector is provided.

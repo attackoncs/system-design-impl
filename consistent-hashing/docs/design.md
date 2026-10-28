@@ -1,46 +1,92 @@
-# Chapter 06 consistent hashing: implemented design
+# Chapter 6 implemented design
 
-The source of the coverage review is chapter 06 in the repository's System Design Interview.md. Named systems such as Dynamo and Cassandra are applications of the technique, not additional systems to implement in this chapter.
+The source is System Design Interview.md lines1508–1734. The chapter describes
+placement; systems cited as applications are not extra implementations to build.
+[Review](chapter06-review.md) · [measurements](../benchmarks/REPORT.md).
 
-## Chapter coverage
+| Book topic | Implementation and evidence |
+|---|---|
+| Modulo rehashing | chapter_comparison.py compares ten-to-eleven expansion |
+| Ring space, clockwise lookup | SHA-1 full160 bits, wrapping binary search |
+| Server/key mapping, local changes | RingSnapshot and add/remove locality properties |
+| Virtual nodes and unequal partitions | Default/per-node counts, weight updates, distribution samples |
+| Memory/balance tradeoff | 1/100/200-vnode experiment; measured construction peak |
+| Find affected ranges/keys | affected_ranges, iter_migrations and get_keys |
+| Scaling/hotspots | Placement only; explicitly no split of a single hot key |
 
-| Topic | Implementation |
-| --- | --- |
-| Modulo rehashing problem | examples/chapter_comparison.py compares routing before/after expansion |
-| SHA-1 space, hash ring, clockwise lookup | Full 160-bit hash; sorted virtual positions and wrapping binary search |
-| Node/key mapping, addition/removal locality | ring.py and existing property tests |
-| Unequal partitions and virtual nodes | Configurable per-node/default counts; distribution statistics |
-| Virtual-node memory/balance tradeoff | Reproducible 1/100/200-node experiment |
-| Find affected keys/ranges | migration.py topology-only affected_ranges planner |
-| Scaling and hotspots | Placement only; one hot key is not split across servers |
+## Boundaries and ownership
 
-## Responsibilities and concurrency
+ring.py owns immutable _RingState and RingSnapshot. State contains sorted
+(position,node,index) entries, positions and insertion-ordered node names.
+Publication uses a short lock; writers serialize separately. Hashing/sorting
+never hold the publication lock, so slow writers do not block old-view readers.
+Writer reentry from the same hash callback raises; callbacks must not wait for
+other writers either. Hashes must remain stable and thread safe for all views.
 
-ring.py owns immutable topology state, RingSnapshot read views and serialized topology writers. snapshot() captures a coherent topology under a short publication lock. Retained snapshots support consistent batch routing without a per-key publication lock, and remain usable after live nodes are removed. They retain topology memory until released. Hash callables must be deterministic, thread safe and stable.
+Construction freezes and validates the membership sequence, checks total budget,
+hashes all entries and sorts once. Add/grow prepares a sorted added run; CPython's
+native adaptive sort merges two ordered runs, avoiding the slower Python heap
+iteration found in the first review measurement. Remove/shrink retain entry
+order; removal separately sorts removed entries by index for API compatibility.
+Only after all work succeeds is the new state published. The default1,000,000
+entry budget is checked against the latest state under the writer lock.
 
-migration.py compares primary ownership across two snapshots; stats.py captures one snapshot for a distribution report, preventing mixed-version totals. hash_functions.py supplies deterministic string-to-integer functions. Existing public routing methods retain their behavior; get_nodes only selects distinct candidate nodes, it does not replicate data.
+set_virtual_nodes grows/shrinks contiguous index prefixes in one publication.
+It never rehashes retained entries or exposes a remove/add intermediate state.
+Old views retain topology memory; the entry cap does not cap all retained views.
 
-## Migration contract
+## Read/analysis APIs
 
-```python
-from consistent_hashing import ConsistentHashRing, affected_ranges
-ring = ConsistentHashRing(["a", "b"])
-before = ring.snapshot()
-ring.add_node("c")
-after = ring.snapshot()
-ranges = affected_ranges(before, after)
-```
+Live routing captures one view per call. iter_assignments captures at method call,
+then consumes supplied keys lazily. get_keys filters candidates on one view;
+there is no key registry. compute_distribution captures a view before reading
+its input and counts actual consumed samples, supporting one-pass iterables.
+Duplicate sample keys are counted, not silently deduplicated.
 
-Each immutable AffectedRange has start, end, previous_owner, new_owner and contains(position). Ranges are disjoint, clockwise **[start, end)**, following the existing strict-clockwise bisect_right convention. Equal key/node hashes route to the next greater position. start > end wraps; start == end denotes the whole ring. Adjacent ranges are not merged. Equal-position entries are retained and ordered by physical name and virtual index.
+Hash input/output validation is shared in hash_functions.py. A callable with a
+false boolean value is still used; only None selects the default. Node containers
+must be sequences, not a single string or set. Custom integer positions may be
+signed; built-ins use their complete digest widths.
 
-The planner uses the union of position boundaries, compares owners at each interval start and emits only changes. Empty-ring owners are None. Both snapshots must use the same hash callable instance; custom function equivalence cannot safely be inferred. Multiple intervening updates yield their net difference. Callers must coordinate data transfer and topology activation themselves; this is not a migration executor or a replica-set planner.
+## Migration protocol
 
-## Cost and evidence
+affected_ranges requires explicit snapshots with the same callable identity.
+It merges position boundaries, then walks both ordered topologies once using
+monotonic cursors. Equal positions are skipped together, matching historical
+strict-clockwise bisect_right. Results are disjoint [start,end) ranges; wrap and
+whole-ring cases are represented directly. Empty owners are None; adjacent
+ranges remain separate. No arbitrary boundary sort/hash recomputation or per-
+boundary owner binary search is needed after the ordered-run merge.
 
-For N ring entries and K added entries: lookup O(log N), distinct-replica scan worst-case O(N), copy/sort addition conservatively O((N+K) log(N+K)), removal conservatively O(N log N), and state memory O(N). For B union boundaries migration costs O(B log B + B log(N_before+N_after)), with O(B) output. Snapshot construction is a short reference capture. No throughput improvement is claimed without measurements.
+iter_migrations constructs the range plan immediately and stores interval starts.
+For each caller-supplied candidate it hashes once, finds the predecessor start
+with binary search, and verifies interval containment before yielding immutable
+KeyMigration. This covers both sides of wrap intervals and gaps between changes.
+No-change plans consume none; duplicate candidates remain duplicate records.
+Cost: planning plus O(keys * log(max(2,R))) for R changed ranges; output streams.
 
-Run `python -m pytest tests -q -p no:cacheprovider` and `python examples/chapter_comparison.py`. Full suite: **108 passed**, including 22 new cases for migration boundaries, wraparound, collisions, empty transitions, incompatible hash functions, retained views and statistics during topology deletion.
+Legacy compute_redistribution ignores missing/unassigned pairs by default. Its
+strict=True mode rejects missing keys/invalid owner types, and counts explicit
+None transitions. It returns one moved-map entry per distinct key. Supplied maps
+are caller-owned and must remain stable; use immutable-view migration selection
+when analyzing concurrent ring changes.
 
-Deterministic experiment: 10 servers and 10,000 sample keys, 1/100/200 virtual nodes per server give 10/1000/2000 entries and standard-deviation/mean 1.01794/0.05789/0.06078. Adding server 11 moves 969 keys with consistent hashing versus 9066 with modulo. Finite samples do not guarantee monotonically improving balance or the book's illustrative ratios. Key balance is not traffic balance; a hot key still has one primary owner.
+## Costs and proof
 
-Membership discovery, failure detection, consensus, transfer execution and cross-machine load testing are outside this chapter. See design_cn.md for the Chinese coverage matrix and root DEEP_REVIEW_PROGRESS.md for sequential review status.
+Single lookup O(log V), distinct candidates O(log V+V) worst case, construction
+O(V log V), removal O(V+K log K), shrinking O(V). Add/grow sorts K new entries
+and merges retained/new ordered runs; the native CPython two-run merge is linear.
+Planning merges boundaries and sweeps in O(V_before+V_after+B) on CPython for B
+boundaries. Conservatively sorting costs O(V log V) on other implementations.
+All costs additionally include application hash time. Published state is O(V).
+
+154 tests include previous Hypothesis properties and46 added regressions. A
+separate four-process probe compares three built-in hashes at initial/weighted/
+expanded/reduced phases with different membership insertion orders. This proves
+same-input placement for those cases, not distributed membership coordination.
+The measured lookup/addition regressions are retained alongside build/plan gains.
+
+Membership discovery, consensus, failure detection, transfer execution, replica
+copying and cross-machine load tests are not provided. Primary range plans do
+not describe all replica-set changes. Historical strict-clockwise equality
+behavior is retained; changing it would repartition exact-hash keys.

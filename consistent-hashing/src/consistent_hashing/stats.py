@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -41,9 +42,11 @@ class DistributionStats:
 
 
 def compute_redistribution(
-    keys: list[str],
-    assignment_before: dict[str, str],
-    assignment_after: dict[str, str],
+    keys: Iterable[str],
+    assignment_before: Mapping[str, str | None],
+    assignment_after: Mapping[str, str | None],
+    *,
+    strict: bool = False,
 ) -> dict[str, object]:
     """Compute which keys moved between two assignments.
 
@@ -51,6 +54,9 @@ def compute_redistribution(
         keys: All keys.
         assignment_before: {key: server} mapping before change.
         assignment_after: {key: server} mapping after change.
+        strict: Reject missing keys/invalid owners and count explicit None
+            transitions. False retains legacy behavior of skipping missing or
+            unassigned pairs. Duplicate keys contribute one moved-map entry.
 
     Returns:
         Dictionary with:
@@ -58,16 +64,23 @@ def compute_redistribution(
             moved key.
             "total_moved": int count of keys that changed server.
     """
-    moved: dict[str, dict[str, str]] = {}
+    if type(strict) is not bool:
+        raise ValueError("strict must be bool")
+    moved: dict[str, dict[str, str | None]] = {}
 
     for key in keys:
+        if strict and (key not in assignment_before or key not in assignment_after):
+            raise KeyError(f"missing assignment for {key!r}")
         old_server = assignment_before.get(key)
         new_server = assignment_after.get(key)
+        if strict and any(
+            value is not None and not isinstance(value, str)
+            for value in (old_server, new_server)
+        ):
+            raise ValueError("assignment owners must be strings or None")
 
-        if (
-            old_server is not None
-            and new_server is not None
-            and old_server != new_server
+        if old_server != new_server and (
+            strict or (old_server is not None and new_server is not None)
         ):
             moved[key] = {"from": old_server, "to": new_server}
 
@@ -75,13 +88,13 @@ def compute_redistribution(
 
 
 def compute_distribution(
-    ring: "ConsistentHashRing | RingSnapshot", keys: list[str]
+    ring: "ConsistentHashRing | RingSnapshot", keys: Iterable[str]
 ) -> DistributionStats:
     """Compute distribution statistics for a set of keys on the ring.
 
     Args:
         ring: The consistent hash ring.
-        keys: List of keys to analyze.
+        keys: One-pass iterable of keys to analyze; duplicates count as samples.
 
     Returns:
         DistributionStats with per-server counts and aggregate metrics.
@@ -92,16 +105,15 @@ def compute_distribution(
     # One capture prevents mixed-topology totals while nodes change.
     ring = ring.snapshot()
     keys_per_server: dict[str, int] = {node: 0 for node in ring.nodes}
-
-    for key in keys:
-        node = ring.get_node(key)
-        keys_per_server[node] = keys_per_server.get(node, 0) + 1
-
-    total_keys = len(keys)
-    num_servers = len(keys_per_server)
-
-    if num_servers == 0:
+    if not keys_per_server:
         raise RuntimeError("Hash ring is empty - no nodes available.")
+
+    total_keys = 0
+    for _, node in ring.iter_assignments(keys):
+        keys_per_server[node] += 1
+        total_keys += 1
+
+    num_servers = len(keys_per_server)
 
     counts = list(keys_per_server.values())
     mean = total_keys / num_servers

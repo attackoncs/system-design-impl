@@ -1,348 +1,116 @@
-# Consistent Hashing 一致性哈希
+# 一致性哈希 — 第6章
 
-一个 Python 实现的一致性哈希算法库，通过虚拟节点实现跨服务器的均衡键分布。适用于分布式缓存、数据库和负载均衡器等场景。
+实现虚拟节点哈希环、不可变读快照、原子权重调整和流式迁移键筛选，运行时
+只依赖标准库。[English](README.md) · [章节复审](docs/chapter06-review.md) ·
+[设计](docs/design_cn.md) · [实测](benchmarks/REPORT.md)。
 
-> English documentation: [README.md](./README.md)
+本轮保留已有章节算法，补齐指定节点键筛选/一次性迭代批处理，增加安全权重
+变更与资源校验，优化批量建环和区间规划。154项测试通过，另用四个独立进程
+验证三种哈希函数的主节点/副本候选路由一致。
 
-## 核心特性
+## 运行
 
-- **O(log N) 键查找** — 使用二分查找在排序的虚拟节点位置中查找
-- **虚拟节点** — 跨异构服务器实现均衡分布
-- **最小重分布** — 添加/删除服务器仅移动约 1/N 的键
-- **可配置哈希函数** — SHA-1（默认）、MD5、SHA-256 或自定义
-- **服务器权重** — 为高容量服务器分配更多环空间
-- **副本支持** — `get_nodes(key, count)` 返回多个不同的服务器
-- **分布统计** — 分析均衡性和重分布影响
-
-## 系统架构
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                             用户接口层                                    │
-│                                                                         │
-│   ConsistentHashRing • compute_distribution • compute_redistribution   │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                          哈希环数据结构                                   │
-│                                                                         │
-│   排序的虚拟节点位置 + bisect_right 实现 O(log N) 查找                   │
-│   位置到节点映射 • 虚拟节点生成                                          │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                            哈希函数层                                     │
-│                                                                         │
-│           SHA-1（默认）• MD5 • SHA-256 • 自定义                          │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         统计与工具层                                      │
-│                                                                         │
-│   DistributionStats • 均衡分析 • 重分布追踪                              │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-### 组件职责
-
-| 组件 | 职责 |
-|------|------|
-| `ConsistentHashRing` | 核心数据结构、服务器管理、键查找 |
-| `Hash Functions` | 将字符串映射到环位置（0 到 2^160 - 1） |
-| `DistributionStats` | 键分布分析和均衡指标 |
-| `compute_redistribution` | 追踪拓扑变化时的键移动 |
-
-## 安装
-
-```bash
-cd consistent-hashing
-pip install -e .
-```
-
-安装开发依赖：
-
-```bash
+```sh
 pip install -e ".[dev]"
+python -m pytest tests -q
+python examples/demo.py
+python examples/chapter_comparison.py
+python tools/process_probe.py --output benchmarks/process-local.json
+python tools/benchmark.py --output benchmarks/local.json
 ```
 
-### 环境要求
+源码语法支持Python3.9+，实测3.13.9；pytest/Hypothesis为可选开发依赖。
+复审环境既有pytest缓存/临时目录不可访问，使用-p no:cacheprovider、工作区
+.test-tmp下新的--basetemp并禁用无关插件自动加载。154项均以-Werror执行，
+没有跳过或过滤项目警告。
 
-- Python >= 3.9
-
-## 快速开始
+## 路由与批处理
 
 ```python
 from consistent_hashing import ConsistentHashRing, compute_distribution
-
-# 创建包含 3 个服务器的哈希环
-ring = ConsistentHashRing(
-    nodes=["web-1", "web-2", "web-3"],
-    num_virtual_nodes=150,
-)
-
-# 查找键对应的服务器
-server = ring.get_node("user:12345")
-print(f"user:12345 -> {server}")
-
-# 获取多个服务器用于副本
-replicas = ring.get_nodes("user:12345", count=2)
-print(f"副本: {replicas}")
-
-# 动态添加服务器
+ring = ConsistentHashRing(["web-1", "web-2", "web-3"], num_virtual_nodes=150,
+                          max_virtual_nodes=1_000_000)
+print(ring.get_node("user:42"))
+print(ring.get_nodes("user:42", 2))  # 不同物理节点候选，不执行复制
+view = ring.snapshot()
+stream = ring.iter_assignments(f"key-{i}" for i in range(1000))
 ring.add_node("web-4")
-
-# 移除服务器
-ring.remove_node("web-2")
-
-# 检查分布统计
-keys = [f"key:{i}" for i in range(1000)]
-stats = compute_distribution(ring, keys)
-print(f"均衡比率: {stats.balance_ratio:.4f}")
+print(list(stream))  # 调用方法时已捕获旧拓扑，消费时不会换新拓扑
+print(view.get_keys("web-1", ["user:42", "user:43"]))
+print(compute_distribution(view, (f"key-{i}" for i in range(1000))))
 ```
 
-## 算法原理
+默认SHA-1完整160位，MD5/SHA-256为128/256位；自定义函数输入字符串，
+返回严格整数（不接受bool），允许有符号位置，不自动取模。函数必须确定、
+线程安全且在快照存活期间保持稳定，不能修改同一环或等待其写入线程。
 
-### 哈希环
+虚拟节点为node#0至node#(count-1)，排序按位置/物理名/索引，碰撞条目全部
+保留。保持历史严格顺时针bisect_right语义：选择严格大于键位置的首个节点，
+越界回绕；相等时跳过该位置所有条目。改为包含等号会改变路由，因此本轮
+保留已有协议，并相应使用[start,end)迁移区间。
 
-一致性哈希环将服务器和键都映射到一个环形哈希空间（SHA-1 为 0 到 2^160 - 1）。每个服务器通过哈希其标识符被放置在环上的一个或多个位置。
+读者只在捕获快照时短暂持锁，随后访问不可变元组；删除全部在线节点后旧
+快照仍可用。快照/迭代器会保留旧拓扑内存，释放后才能回收。环不保存数据
+键注册表。空环路由/批路由抛异常，get_nodes(key,0)直接返回空列表。
 
-查找键对应的服务器：
-1. 对键进行哈希，获取其在环上的位置
-2. 顺时针遍历直到找到第一个服务器位置
-3. 该服务器负责此键
-
-### 虚拟节点
-
-每个物理服务器在环上由多个"虚拟节点"表示。对于名为 `"web-1"` 的服务器，如果有 150 个虚拟节点，则通过哈希以下字符串生成位置：
-- `"web-1#0"`, `"web-1#1"`, ..., `"web-1#149"`
-
-虚拟节点的优势：
-- **更好的均衡性** — 更多位置意味着更均匀的键分布
-- **服务器权重** — 高容量服务器获得更多虚拟节点
-- **平滑重分布** — 添加服务器从多个服务器各取一小部分
-
-### 顺时针查找 (O(log N))
-
-键查找使用 `bisect_right` 在排序的虚拟节点位置列表上：
+## 节点、权重与资源
 
 ```python
-idx = bisect_right(sorted_positions, hash(key))
-if idx == len(sorted_positions):
-    idx = 0  # 绕回开头
-server = sorted_entries[idx][1]  # entries preserve hash collisions
-```
-
-时间复杂度为 O(log N)，其中 N 是虚拟节点总数。
-
-## API 参考
-
-### ConsistentHashRing
-
-```python
-ConsistentHashRing(
-    nodes: list[str] | None = None,
-    num_virtual_nodes: int = 150,
-    hash_function: Callable[[str], int] | None = None,
-)
-```
-
-**方法：**
-
-| 方法 | 说明 |
-|------|------|
-| `add_node(node, num_virtual_nodes=None)` | 向环添加服务器 |
-| `remove_node(node)` | 从环移除服务器 |
-| `get_node(key) -> str` | 获取负责某键的服务器 |
-| `get_nodes(key, count) -> list[str]` | 获取多个不同服务器用于副本 |
-
-**属性：**
-
-| 属性 | 说明 |
-|------|------|
-| `nodes` | 物理服务器名称列表 |
-| `total_virtual_nodes` | 环上虚拟节点总数 |
-
-### 哈希函数
-
-```python
-from consistent_hashing import sha1_hash, md5_hash, sha256_hash
-
-# 使用不同的哈希函数
-ring = ConsistentHashRing(hash_function=md5_hash)
-```
-
-| 函数 | 输出范围 | 说明 |
-|------|----------|------|
-| `sha1_hash` | 0 到 2^160 - 1 | 默认，分布优秀 |
-| `md5_hash` | 0 到 2^128 - 1 | 更快，哈希空间较小 |
-| `sha256_hash` | 0 到 2^256 - 1 | 加密强度更高 |
-
-### 统计函数
-
-```python
-from consistent_hashing import compute_distribution
-from consistent_hashing.stats import compute_redistribution
-
-# 分布分析
-stats = compute_distribution(ring, keys)
-# 返回: DistributionStats(total_keys, num_servers, keys_per_server,
-#         mean, std_dev, min_keys, max_keys, balance_ratio)
-
-# 重分布分析
-before = {k: ring.get_node(k) for k in keys}
-ring.add_node("new-server")
-after = {k: ring.get_node(k) for k in keys}
-result = compute_redistribution(keys, before, after)
-# 返回: {"moved": {key: {"from": ..., "to": ...}}, "total_moved": int}
-```
-
-## 最小重分布
-
-添加或删除服务器时，只有落在受影响位置之间的键会移动：
-
-```
-添加前: [S1] ---- [S2] ---- [S3] ---- [S1]  (绕回)
-键:    k1        k2        k3
-
-添加 S4 后:
-       [S1] -- [S4] -- [S2] ---- [S3] ---- [S1]
-键:    k1      k4      k2        k3
-
-只有 k4 移动了（从 S1 到 S4）。其他不变。
-```
-
-理论界限：添加/删除服务器重分布约 1/N 的键（N 为新的服务器总数）。
-
-## 示例输出
-
-```
-$ python examples/demo.py
-
-============================================================
-  1. 创建包含 3 个服务器的哈希环
-============================================================
-
-  服务器: ['web-1', 'web-2', 'web-3']
-  虚拟节点总数: 450
-
-============================================================
-  3. 分布统计（3 个服务器）
-============================================================
-
-  总键数: 1000
-  每服务器平均键数: 333.3
-  标准差: 18.9
-  均衡比率: 0.0568（越低越好）
-  每服务器键数:
-           web-1:  358 #######
-           web-2:  330 ######
-           web-3:  312 ######
-
-============================================================
-  4. 添加服务器 'web-4'
-============================================================
-
-  重分布键数: 249/1000 (24.9%)
-  理论理想值: ~250 (25.0%)
-
-============================================================
-  6. 移除服务器 'web-2'
-============================================================
-
-  重分布键数: 239/1000 (23.9%)
-```
-
-## 性能
-
-| 操作 | 时间复杂度 | 说明 |
-|------|-----------|------|
-| `get_node(key)` | O(log N) | 二分查找，N = 虚拟节点数 |
-| `add_node(node)` | O((N+K) log(N+K)) | K = 该服务器的虚拟节点数 |
-| `remove_node(node)` | O(N log N) | K = 该服务器的虚拟节点数 |
-| 每服务器空间 | O(K) | K = 虚拟节点数 |
-
-## 运行测试
-
-```bash
-pip install -e ".[dev]"
-pytest                              # 所有测试
-pytest tests/test_ring.py           # 哈希环测试
-pytest tests/test_stats.py          # 统计测试
-pytest tests/test_properties.py     # 属性测试
-pytest --hypothesis-show-statistics # 详细 PBT 统计
-```
-
-### 测试覆盖
-
-- **单元测试**：核心操作、边界情况、错误处理
-- **属性测试**：确定性、最小重分布、均衡分布、覆盖性
-
-## 项目结构
-
-```
-consistent-hashing/
-├── pyproject.toml
-├── README.md
-├── README_CN.md
-├── docs/
-│   ├── requirements.md
-│   ├── design.md
-│   └── tasks.md
-├── src/
-│   └── consistent_hashing/
-│       ├── __init__.py
-│       ├── ring.py              # ConsistentHashRing 类
-│       ├── migration.py         # affected hash ranges
-│       ├── hash_functions.py    # SHA-1, MD5, SHA-256
-│       └── stats.py             # 分布分析
-├── tests/
-│   ├── test_ring.py
-│   ├── test_hash_functions.py
-│   ├── test_stats.py
-│   └── test_properties.py      # Hypothesis 属性测试
-└── examples/
-    └── demo.py
-```
-
-## 参考文献
-
-- Karger et al., "Consistent Hashing and Random Trees" (1997)
-- DeCandia et al., "Dynamo: Amazon's Highly Available Key-value Store" (2007)
-
-## License
-
-MIT
-
-## Snapshot concurrency contract
-
-Each lookup searches one immutable topology snapshot. Writers are serialized,
-while readers hold only a short snapshot-publication lock. Hash collisions keep
-separate entries ordered by node name and virtual-node index; removal does not
-recompute hashes. A failed update leaves the previous topology usable.
-
-Virtual-node counts must be positive integers. Replica count zero returns an
-empty list; negative/non-integer counts are rejected. Exact-position lookups
-retain the original strictly-clockwise (`bisect_right`) behavior. Custom hash
-functions must be deterministic and thread safe. Different API calls may observe
-different snapshots. Snapshot copying costs memory and read synchronization has
-a measurable cost; see [the engineering review](../ENGINEERING_REVIEW.md).
-
-## 第 06 章原书核对与新增接口
-
-原书的“Find affected keys”现已补齐为 `affected_ranges(before, after)`：返回受影响哈希区间及旧/新主属节点，不必先枚举全部键。`ring.snapshot()` 提供固定拓扑的只读视图，分布统计也固定同一个快照，避免并发增删造成混合版本。章节逐项覆盖、复杂度与边界见 [design_cn.md](docs/design_cn.md)。
-
-```python
-from consistent_hashing import ConsistentHashRing, affected_ranges
-ring = ConsistentHashRing(["a", "b"])
+ring.add_node("large", num_virtual_nodes=300)
 before = ring.snapshot()
-ring.add_node("c")
-for interval in affected_ranges(before, ring.snapshot()):
-    print(interval.start, interval.end, interval.previous_owner, interval.new_owner)
+ring.set_virtual_nodes("large", 600)
+ring.remove_node("web-2")
 ```
 
-区间为 `[start, end)`，跨环尾时 `start > end`，相等表示全环；匹配历史 `bisect_right` 规则。前后快照必须使用同一哈希函数对象。空环归属为 None；这里只规划主属变化，不执行数据迁移或复制。保留快照会保留相应内存。
+构造接受唯一非空节点名的序列，拒绝字符串/集合等模糊容器；批量计算后
+只排序一次。增删节点和改权重都在写锁下只发布一次完整拓扑；哈希失败或
+容量越界保留旧状态。增权只补高索引，减权只删除高索引，既有位置不重算，
+不经过先删除再添加的中间窗口；相同权重为no-op。
 
-运行 `python examples/chapter_comparison.py` 对照取模扩容和 1/100/200 个虚拟节点。固定 10,000 键实验中扩容迁移 969 个键，取模为 9066 个；虚拟节点增多并不保证有限样本每次都更均匀，更不能拆分单个热点键。完整测试 **108 项通过**。
+虚拟节点数为正整数，总条目受max_virtual_nodes限制，默认1000000，构造
+与更新在哈希前校验，写者按最新状态检查总量。该上限限制单个拓扑，不限制
+调用方保留的所有历史快照；自定义哈希同线程重入写入会显式报错而非死锁。
+
+## 受影响区间与键
+
+```python
+from consistent_hashing import affected_ranges, iter_migrations
+before = ring.snapshot()
+ring.add_node("new")
+after = ring.snapshot()
+for interval in affected_ranges(before, after):
+    print(interval.start, interval.end, interval.previous_owner, interval.new_owner)
+for item in iter_migrations(before, after, candidates_from_storage):
+    print(item.key, item.previous_owner, item.new_owner)
+```
+
+必须传入显式快照，且共享同一哈希函数实例；不能证明任意自定义函数等价。
+区间互不重叠、[start,end)，start>end回绕，start==end表示全环；空环owner
+为None。保留相邻区间，不合并。规划合并有序边界并单向扫描两个拓扑，
+不读取数据键，不调用哈希函数。
+
+iter_migrations在调用时规划，消费时每候选键只哈希一次并二分区间，流式返回
+KeyMigration，不构建两份全量映射；重复候选保留，无变化时不消费候选。
+get_keys(node,candidates)在同一快照筛选，未知节点抛KeyError；真实数据键
+必须来自外部索引/扫描，本库不能自动发现存储数据。
+
+compute_distribution接受一次性迭代器，重复键按样本计数。
+compute_redistribution(...,strict=True)校验映射完整性，统计显式None与owner
+之间的变化；默认False兼容旧行为，忽略缺失/未分配对，返回字典按唯一键
+计迁移数量。调用方需保证输入映射在分析期间稳定。
+
+## 复杂度与边界
+
+设V为条目数、K为变更节点条目数：单owner二分O(log V)，多副本候选最差
+扫描O(V)，批量建环O(V log V)。新增/增权复制并排序新增项、合并有序段；
+移除O(V+K log K)，减权O(V)。区间规划先合并边界，再单向扫描条目/边界；
+CPython采用原生自适应排序合并两个有序段，保守排序上界O(V log V)。
+迁移键筛选在规划后每键一次哈希、二分变化区间。状态O(V)，写者和旧快照
+可能同时保留多个版本。线程安全不代表多核吞吐线性增长。
+
+均匀哈希/等权条件下，N节点加一节点的平均期望迁移约1/(N+1)，删除约1/N，
+不是任意输入的硬上限。虚拟节点改善均衡是统计规律，单个热点键不会拆分，
+键数量均衡不代表流量或字节均衡。本轮建环/规划加快，查找及新增节点略慢，
+全部原始比较见[实测](benchmarks/REPORT.md)。
+
+未实现物理数据迁移/复制、成员发现、故障检测、一致性协议或跨主机存储服务。

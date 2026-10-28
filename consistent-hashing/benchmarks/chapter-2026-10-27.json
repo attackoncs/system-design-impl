@@ -1,0 +1,38 @@
+{
+  "sample_keys": 10000,
+  "distribution": [
+    {
+      "virtual_nodes_per_server": 1,
+      "ring_entries": 10,
+      "std_dev_over_mean": 1.0179422380469336
+    },
+    {
+      "virtual_nodes_per_server": 100,
+      "ring_entries": 1000,
+      "std_dev_over_mean": 0.05788955000688811
+    },
+    {
+      "virtual_nodes_per_server": 200,
+      "ring_entries": 2000,
+      "std_dev_over_mean": 0.060778285596090977
+    }
+  ],
+  "add_server": {
+    "consistent_moved": 969,
+    "modulo_moved": 9066,
+    "affected_intervals": 200,
+    "selected_keys": 969
+  },
+  "remove_server": {
+    "moved": 848,
+    "only_removed_owner_moves": true
+  },
+  "weight_change": {
+    "from": 200,
+    "to": 400,
+    "moved": 767,
+    "restored_routes": true
+  },
+  "keys_for_server_0": 966,
+  "limits": "Uniform key sample, not traffic. Virtual nodes do not split a single hot key. No data transfer performed."
+}

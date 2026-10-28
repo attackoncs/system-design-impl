@@ -6,7 +6,17 @@ on the hash ring.
 """
 
 import hashlib
-from typing import Protocol
+from typing import Callable, Protocol
+
+
+def hash_position(function: Callable[[str], int], key: str) -> int:
+    """Validate the shared ring/key contract, including custom callables."""
+    if not isinstance(key, str):
+        raise ValueError("key must be a string")
+    value = function(key)
+    if type(value) is not int:
+        raise ValueError("hash function must return an integer")
+    return value
 
 
 class HashFunction(Protocol):

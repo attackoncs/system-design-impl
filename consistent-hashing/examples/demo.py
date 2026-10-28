@@ -6,10 +6,9 @@ analysis, and distribution statistics.
 """
 
 import sys
+from pathlib import Path
 
-sys.path.insert(
-    0, str(__import__("pathlib").Path(__file__).resolve().parent.parent / "src")
-)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import consistent_hashing.stats
 from consistent_hashing import ConsistentHashRing, compute_distribution
@@ -75,7 +74,7 @@ def main() -> None:
     print_separator("4. Adding Server 'web-4'")
 
     # Record assignments before
-    assignment_before = {k: ring.get_node(k) for k in keys}
+    assignment_before = dict(ring.iter_assignments(keys))
 
     # Add new server
     ring.add_node("web-4")
@@ -83,16 +82,18 @@ def main() -> None:
     print(f"  Total virtual nodes: {ring.total_virtual_nodes}")
 
     # Record assignments after
-    assignment_after = {k: ring.get_node(k) for k in keys}
+    assignment_after = dict(ring.iter_assignments(keys))
 
     # Compute redistribution
-    redist = consistent_hashing.stats.compute_redistribution(keys, assignment_before, assignment_after)
+    redist = consistent_hashing.stats.compute_redistribution(
+        keys, assignment_before, assignment_after, strict=True
+    )
     moved_count = redist["total_moved"]
     print(
         f"\n  Keys redistributed: {moved_count}/{len(keys)}"
-        f" ({moved_count/len(keys)*100:.1f}%)"
+        f" ({moved_count / len(keys) * 100:.1f}%)"
     )
-    print(f"  Theoretical ideal: ~{len(keys)//4} ({100/4:.1f}%)")
+    print(f"  Theoretical ideal: ~{len(keys) // 4} ({100 / 4:.1f}%)")
 
     # Show some moved keys
     moved = redist["moved"]
@@ -111,21 +112,21 @@ def main() -> None:
     # --- 6. Removing a Server ---
     print_separator("6. Removing Server 'web-2'")
 
-    assignment_before_remove = {k: ring.get_node(k) for k in keys}
+    assignment_before_remove = dict(ring.iter_assignments(keys))
 
     ring.remove_node("web-2")
     print(f"  Servers after remove: {ring.nodes}")
     print(f"  Total virtual nodes: {ring.total_virtual_nodes}")
 
-    assignment_after_remove = {k: ring.get_node(k) for k in keys}
+    assignment_after_remove = dict(ring.iter_assignments(keys))
 
     redist_remove = consistent_hashing.stats.compute_redistribution(
-        keys, assignment_before_remove, assignment_after_remove
+        keys, assignment_before_remove, assignment_after_remove, strict=True
     )
     moved_count_remove = redist_remove["total_moved"]
     print(
         f"\n  Keys redistributed: {moved_count_remove}/{len(keys)}"
-        f" ({moved_count_remove/len(keys)*100:.1f}%)"
+        f" ({moved_count_remove / len(keys) * 100:.1f}%)"
     )
 
     # Show where removed server's keys went
@@ -147,16 +148,16 @@ def main() -> None:
 
     # --- 8. Summary ---
     print_separator("8. Summary")
-    print("  Consistent hashing ensures:")
+    print("  This sample demonstrates:")
     print("    - Deterministic key-to-server mapping")
     print("    - Minimal redistribution on topology changes")
-    print("    - Balanced distribution with virtual nodes")
+    print("    - Measured key balance with virtual nodes")
     print(
-        f"\n  Adding 'web-4': only {moved_count/len(keys)*100:.1f}% of keys"
+        f"\n  Adding 'web-4': only {moved_count / len(keys) * 100:.1f}% of keys"
         " moved (ideal: 25%)"
     )
     print(
-        f"  Removing 'web-2': only {moved_count_remove/len(keys)*100:.1f}% of"
+        f"  Removing 'web-2': only {moved_count_remove / len(keys) * 100:.1f}% of"
         " keys moved"
     )
     print()

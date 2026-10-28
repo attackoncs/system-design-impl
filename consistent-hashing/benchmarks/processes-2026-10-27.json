@@ -1,0 +1,35 @@
+{
+  "processes": 4,
+  "keys_per_phase": 2002,
+  "phases": 4,
+  "membership_order_varies": true,
+  "identical_routes": true,
+  "elapsed_seconds": 0.3674780000001192,
+  "routes": {
+    "sha1_hash": {
+      "initial": "1cea0f078f7a5eee591e37980ea26d472f07e45cea50dc0e907a8b9760d38a7e",
+      "weighted": "8f793d910a7292b3d2101daf75a3561b41c3511cc00b17b61d9cb82240aee7b1",
+      "expanded": "58c27be223d6a6b60b8cde2d804ce08a1f43fec80303c8a9c1b322954cb5d260",
+      "reduced": "71e431c5d6addb90ac58050e75ffdbcab75304b275698d0d765c0c89fa8389d4",
+      "moved_add": 180,
+      "moved_remove": 140
+    },
+    "md5_hash": {
+      "initial": "65887327a0b1a3da1c2d5af6cb176e2c5a6e1dae6880c261ea7f1fca2bafc940",
+      "weighted": "4100f629cf27f4cb5f9dc244eb656c83588fc04d71cb29dfa84b10c91b0849b9",
+      "expanded": "58ba7cb2f744626d3d162890625492e7a760b4ffdc3b4109892da1c8e99c5219",
+      "reduced": "03070cbff05538903904822cc9d89117bf15fc5caf926867f58ec4f2896c2708",
+      "moved_add": 165,
+      "moved_remove": 145
+    },
+    "sha256_hash": {
+      "initial": "408cea488bf1ebe3e5de1ef7b15d841465619bc0d15331cdb1141e1d5ec226fd",
+      "weighted": "b5410a2697a9dc289a280a316217c336b45fec270c647ecd76bb4a90dd6174b5",
+      "expanded": "d225023cd87585f6ad7449d37059cf3d2ef8f7bb5a28fdb7ee15adc8af767078",
+      "reduced": "7afcea174589e4934fee6ad40b703bd42472b234891f0013cff4f5afc1722341",
+      "moved_add": 166,
+      "moved_remove": 150
+    }
+  },
+  "scope": "Independent local processes; placement only, no network data transfer or distributed membership."
+}
