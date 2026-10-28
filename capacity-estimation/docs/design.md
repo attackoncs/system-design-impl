@@ -31,4 +31,8 @@ Cache fraction means a fraction of all retained write records, not a hit ratio; 
 
 Sensitivity analysis creates independent copies of one input scenario, replacing only a whitelisted field, at most20 scenarios. It does not optimize parameters or imply certainty. There are no live prices, stale hardware tables or third-party services.
 
-Nine tests check reference arithmetic, decimal/binary conversion, compression/index/replica ordering, bandwidth bits, node ceilings, Little's law, availability boundaries, invalid inputs, sensitivity monotonicity and actual CLI processes. See `../benchmarks/REPORT.md` for commands and saved outputs. A production capacity plan still requires measured workloads, bottleneck identification, growth distribution, redundancy/failure domains and operational SLO definitions.
+Fourteen tests check reference arithmetic, decimal/binary conversion, compression/index/replica ordering, bandwidth bits, node ceilings, Little's law, availability boundaries, invalid inputs, sensitivity monotonicity and actual CLI processes. See `../benchmarks/REPORT.md` for commands and saved outputs. A production capacity plan still requires measured workloads, bottleneck identification, growth distribution, redundancy/failure domains and operational SLO definitions.
+
+## Engineering organization (2026-10-23)
+
+quantities.py owns unit parsing and an independent 80-digit half-even decimal context; scenario.py validates inputs; model.py owns formulas. Caller rounding, exponent limits and traps do not leak into calculations, including concurrent callers. Sweep containers are explicitly validated. Five additional regression cases cover these contracts.

@@ -47,3 +47,7 @@ Serving nodes are rounded **up** from peak mixed-workload QPS, supplied per-node
 Concurrency uses assumed peak arrival rate × **mean** latency, not p99. Availability uses a30-day month/365-day year and no SLA exclusions; 99.99% yields8.64 seconds/day and3153.6 seconds/year. Neither a replica multiplier nor this arithmetic proves achieved availability.
 
 The book's old operation-latency table is historical context, not a current hardware default. Supply measured latency through `mean_latency_ms`; use the chapter2 laboratory and later project benchmarks for workload-specific observations. See [design](docs/design.md) and [verification](benchmarks/REPORT.md).
+
+## Numerical isolation and module responsibilities
+
+`quantities.py` owns explicit units and decimal validation; `scenario.py` validates scenario fields; `model.py` calculates estimates. Existing public imports remain supported. Each calculation uses an independent 80-digit decimal context with half-even rounding, unaffected by caller/thread rounding, precision or traps. Sensitivity sweeps require a scenario dict and a list/tuple of values. The deep-review suite passes 14 tests, including concurrent callers with different numeric settings. See [review progress](../DEEP_REVIEW_PROGRESS.md).

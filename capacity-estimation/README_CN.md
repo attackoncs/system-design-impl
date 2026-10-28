@@ -52,3 +52,7 @@ python -m capacity_estimation.cli availability 99.99
 停机预算采用30天月、365天年，不计SLA排除条款。99.99%对应每天8.64秒、每年3153.6秒；这些是算术预算，不是已达到的可用性。原书旧延迟表仅作历史说明，工具不将其作为当前硬件常量，`mean_latency_ms` 应由调用者测量后提供。
 
 详见[设计](docs/design.md)与[验证报告](benchmarks/REPORT.md)。
+
+## Numerical isolation and module responsibilities
+
+`quantities.py` owns explicit units and decimal validation; `scenario.py` validates scenario fields; `model.py` calculates estimates. Existing public imports remain supported. Each calculation uses an independent 80-digit decimal context with half-even rounding, unaffected by caller/thread rounding, precision or traps. Sensitivity sweeps require a scenario dict and a list/tuple of values. The deep-review suite passes 14 tests, including concurrent callers with different numeric settings. See [review progress](../DEEP_REVIEW_PROGRESS.md).
