@@ -1,5 +1,8 @@
-import copy
 import json
+import os
+import tempfile
+import threading
+import time
 from pathlib import Path
 
 from .common import (
@@ -15,98 +18,17 @@ from .common import (
 )
 
 
-def intent(body):
-    if not isinstance(body, dict) or set(body) != {
-        "transaction_id",
-        "from_account",
-        "to_account",
-        "amount",
-        "currency",
-    }:
-        raise ValueError("exact transfer fields required")
-    for field in ("transaction_id", "from_account", "to_account"):
-        identifier(body[field])
-    integer(body["amount"], 1, 100_000_000)
-    if body["currency"] != "USD" or body["from_account"] == body["to_account"]:
-        raise ValueError("USD transfer between distinct accounts required")
-    return body
-
-
-def reduce_event(state, event):
-    """Pure deterministic projection: replay never invokes another service."""
-    if event["kind"] == "genesis":
-        if state:
-            raise ValueError("duplicate genesis")
-        return {
-            "accounts": {
-                key: {"available": integer(value), "held": 0}
-                for key, value in event["accounts"].items()
-            },
-            "parts": {},
-        }
-    state = copy.deepcopy(state)
-    body = intent(event["intent"])
-    id = body["transaction_id"]
-    source, destination, amount = (
-        body["from_account"],
-        body["to_account"],
-        body["amount"],
-    )
-    old = state["parts"].get(id)
-    if old and old["intent"] != body:
-        raise ValueError("participant identity conflict")
-    kind, role = event["kind"], event["role"]
-    accounts = state["accounts"]
-    if kind == "local":
-        if old:
-            raise ValueError("duplicate local event")
-        valid = (
-            source in accounts
-            and destination in accounts
-            and accounts[source]["available"] >= amount
-        )
-        status = "CONFIRMED" if valid else "REJECTED"
-        if valid:
-            accounts[source]["available"] -= amount
-            accounts[destination]["available"] += amount
-    elif kind == "prepare":
-        if old:
-            raise ValueError("duplicate prepare event")
-        account = source if role == "source" else destination
-        valid = account in accounts and (
-            role == "destination" or accounts[account]["available"] >= amount
-        )
-        status = "PREPARED" if valid else "REJECTED"
-        if valid and role == "source":
-            accounts[source]["available"] -= amount
-            accounts[source]["held"] += amount
-    elif kind == "confirm":
-        if not old or old["status"] != "PREPARED":
-            raise ValueError("confirm requires durable prepare")
-        if role == "source":
-            accounts[source]["held"] -= amount
-        else:
-            accounts[destination]["available"] += amount
-        status = "CONFIRMED"
-    elif kind == "cancel":
-        if old and old["status"] == "CONFIRMED":
-            raise ValueError("confirmed participant cannot cancel")
-        if old and old["status"] == "PREPARED" and role == "source":
-            accounts[source]["held"] -= amount
-            accounts[source]["available"] += amount
-        status = "CANCELED"
-    else:
-        raise ValueError("unsupported shard event")
-    if any(min(row.values()) < 0 for row in accounts.values()):
-        raise ValueError("negative projection")
-    state["parts"][id] = {"intent": body, "role": role, "status": status}
-    return state
+from .contracts import intent as intent
+from .projection import reduce_event as reduce_event
 
 
 class Shard(Fence):
     def __init__(self, path, index, count, accounts, epoch=1, leader="coordinator"):
         super().__init__(path)
+        integer(count, 1, 100)
+        integer(index, 0, count - 1)
         self.index, self.count = index, count
+        self.snapshot_lock = threading.RLock()
         self.init_fence(epoch, leader)
         self.initialize("""
         CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY,body TEXT);
@@ -154,6 +76,10 @@ class Shard(Fence):
         return updated
 
     def rebuild(self):
+        with self.snapshot_lock:
+            return self._rebuild()
+
+    def _rebuild(self):
         with self.transaction() as db:
             rows = self.rows(db)
             state = self.replay(rows)
@@ -177,7 +103,7 @@ class Shard(Fence):
             return state
 
     def action(self, body, kind, role, epoch, leader):
-        intent(body)
+        body = intent(body)
         if (
             role not in ("source", "destination", "local")
             or kind not in ("local", "prepare", "confirm", "cancel")
@@ -215,38 +141,82 @@ class Shard(Fence):
             return state["parts"][body["transaction_id"]]
 
     def view(self, at=None):
-        with self.connection() as db:
-            rows = self.rows(db)
-            state = (
-                json.loads(db.execute("SELECT state FROM projection").fetchone()[0])
-                if at is None
-                else self.replay(rows[: integer(at, 1, len(rows))])
-            )
+        with self.read_transaction() as db:
+            if at is None:
+                tail = json.loads(
+                    db.execute(
+                        "SELECT body FROM events ORDER BY seq DESC LIMIT 1"
+                    ).fetchone()[0]
+                )
+                state = json.loads(
+                    db.execute("SELECT state FROM projection").fetchone()[0]
+                )
+            else:
+                rows = self.rows(db)
+                at = integer(at, 1, len(rows))
+                tail = rows[at - 1]
+                state = self.replay(rows[:at])
             return {
                 "shard": self.index,
-                "seq": rows[-1]["seq"] if at is None else at,
-                "head": rows[-1]["hash"] if at is None else rows[at - 1]["hash"],
+                "seq": tail["seq"],
+                "head": tail["hash"],
                 **state,
             }
 
+    def participant(self, transaction_id):
+        identifier(transaction_id)
+        return self.view()["parts"].get(transaction_id)
+
+    def balance(self, account, at=None):
+        identifier(account)
+        view = self.view(at)
+        if account not in view["accounts"]:
+            raise Error(404, "account missing")
+        return {
+            "account": account,
+            "currency": "USD",
+            "shard": view["shard"],
+            "sequence": view["seq"],
+            **view["accounts"][account],
+        }
+
     def snapshot(self):
-        with self.connection() as db:
+        with self.snapshot_lock:
+            return self._snapshot()
+
+    def _snapshot(self):
+        with self.read_transaction() as db:
             rows = self.rows(db)
             state = self.replay(rows)
             payload = {"seq": len(rows), "head": rows[-1]["hash"], "state": state}
         path = Path(str(self.path) + ".snapshot.json")
-        temporary = path.with_suffix(".tmp")
-        with temporary.open("w") as stream:
-            stream.write(encode({"payload": payload, "checksum": checksum(payload)}))
-            stream.flush()
-            import os
-
-            os.fsync(stream.fileno())
-        temporary.replace(path)
+        # Own publication separately from the money writer. Unique files avoid
+        # collisions; serialization also keeps snapshot prefixes monotonic.
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=path.name + ".", suffix=".tmp", dir=path.parent
+        )
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                stream.write(
+                    encode({"payload": payload, "checksum": checksum(payload)})
+                )
+                stream.flush()
+                os.fsync(stream.fileno())
+            for attempt in range(10):
+                try:
+                    os.replace(temporary, path)
+                    break
+                except PermissionError:
+                    if attempt == 9:
+                        raise
+                    # Windows may briefly retain a just-closed destination.
+                    time.sleep(0.01 * (attempt + 1))
+        finally:
+            Path(temporary).unlink(missing_ok=True)
         return {"seq": payload["seq"], "head": payload["head"]}
 
     def audit(self):
-        with self.connection() as db:
+        with self.read_transaction() as db:
             replayed = self.replay(self.rows(db))
             projected = json.loads(
                 db.execute("SELECT state FROM projection").fetchone()[0]
@@ -254,4 +224,5 @@ class Shard(Fence):
             return {
                 "matches": replayed == projected,
                 "events": db.execute("SELECT count(*) FROM events").fetchone()[0],
+                "head": self.rows(db)[-1]["hash"],
             }

@@ -1,0 +1,77 @@
+{
+  "processes": 7,
+  "synthetic_only": true,
+  "during_partial_commit": {
+    "errors": [],
+    "in_transit": 700,
+    "matches": true,
+    "opening_supply": 30000,
+    "quorum": {
+      "acks": 3,
+      "events": 2
+    },
+    "shards": [
+      {
+        "events": 3,
+        "head": "b66e0fd28be988d71c4415bacc7fe974b406130fdf12eb5f31e634b3cd51869d",
+        "matches": true
+      },
+      {
+        "events": 2,
+        "head": "e919b2dff3f5b2f64cb05d18bd78e8d3a3eccb5597900f15ca5074187f1ab5ff",
+        "matches": true
+      }
+    ],
+    "wallet_total": 29300
+  },
+  "balances": [
+    {
+      "account": "alice_0",
+      "available": 9000,
+      "currency": "USD",
+      "held": 0,
+      "sequence": 4,
+      "shard": 0
+    },
+    {
+      "account": "peer_3",
+      "available": 10300,
+      "currency": "USD",
+      "held": 0,
+      "sequence": 4,
+      "shard": 0
+    },
+    {
+      "account": "bob_0",
+      "available": 10700,
+      "currency": "USD",
+      "held": 0,
+      "sequence": 3,
+      "shard": 1
+    }
+  ],
+  "final_audit": {
+    "errors": [],
+    "in_transit": 0,
+    "matches": true,
+    "opening_supply": 30000,
+    "quorum": {
+      "acks": 3,
+      "events": 5
+    },
+    "shards": [
+      {
+        "events": 4,
+        "head": "342c4b19faf33b0c6fbc87747cda6d802c35b97419842f04cc7bfe7588eee4b9",
+        "matches": true
+      },
+      {
+        "events": 3,
+        "head": "547eccee0da988aec0c67a994bbe7c5c333830d7c5c32e7565607587a0e87024",
+        "matches": true
+      }
+    ],
+    "wallet_total": 30000
+  },
+  "elapsed_seconds_including_lab": 5.966893200002232
+}

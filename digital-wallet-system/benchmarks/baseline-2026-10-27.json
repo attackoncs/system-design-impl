@@ -1,0 +1,65 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "processes": 7,
+  "transfers": 20,
+  "local_transfers": 10,
+  "cross_shard_transfers": 10,
+  "clients": 4,
+  "elapsed_seconds": 18.33826709999994,
+  "completed_transfers_per_second": 1.090615590390221,
+  "accept_to_terminal_p50_ms": 3644.2603999967105,
+  "accept_to_terminal_p95_ms": 3812.4934999977995,
+  "audit": {
+    "errors": [],
+    "in_transit": 0,
+    "matches": true,
+    "opening_supply": 30000,
+    "quorum": {
+      "acks": 3,
+      "events": 50
+    },
+    "shards": [
+      {
+        "events": 31,
+        "matches": true
+      },
+      {
+        "events": 21,
+        "matches": true
+      }
+    ],
+    "wallet_total": 30000
+  },
+  "balances": [
+    {
+      "account": "alice_0",
+      "available": 8000,
+      "currency": "USD",
+      "held": 0,
+      "sequence": 31,
+      "shard": 0
+    },
+    {
+      "account": "peer_3",
+      "available": 11000,
+      "currency": "USD",
+      "held": 0,
+      "sequence": 31,
+      "shard": 0
+    },
+    {
+      "account": "bob_0",
+      "available": 11000,
+      "currency": "USD",
+      "held": 0,
+      "sequence": 21,
+      "shard": 1
+    }
+  ],
+  "scope": "Single fixed coordinator; 2-of-3 real HTTP journal replicas; two unreplicated SQLite participants; includes terminal-state polling, excludes startup and final audit.",
+  "baseline_sha": "7c1a49cc5f655def2f3522fcfe6fee5c91dba4c4",
+  "measurement_date": "2026-10-27",
+  "completion": "poll",
+  "baseline_source": "Read-only git show HEAD copy in an isolated temporary directory"
+}

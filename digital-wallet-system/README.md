@@ -18,7 +18,7 @@ python examples/network_demo.py
 python tools/benchmark.py --transfers 20 --clients 4
 ```
 
-The 14 tests include six real HTTP process tests. The demo pauses after source confirmation, checks in-transit funds, restarts the coordinator using its original database and completes the transfer exactly once. It also executes a local transfer. Labs create private temporary configurations and stop only their own processes; temporary databases are removed afterward. The benchmark checks final balances and reconciliation, not just response codes.
+The 54 tests include seven real HTTP process tests. The demo pauses after source confirmation, checks in-transit funds, restarts the coordinator using its original database and completes the transfer exactly once. It also executes a local transfer. Labs create private temporary configurations and stop only their own processes; temporary databases are removed afterward. The benchmark checks final balances and reconciliation, not just response codes.
 
 For a persistent lab, run `python tools/init_config.py` once. It creates `.runtime/private-config.json` without overwriting existing files. Set `PYTHONPATH=src` in seven separate terminals and run:
 
@@ -52,6 +52,8 @@ Use `Authorization: Bearer <owners.alice token>` for Alice's accounts, or the se
 
 The amount is a positive integer in **USD cents**, not a decimal string or float. Booleans are rejected. Identifiers accept 1–80 ASCII letters, digits, underscores or hyphens. The same transaction ID and body return the existing transfer; changed content returns 409. Different IDs mean different instructions, so always retain the original ID after a timeout or 503. A 503 may have left a durable intent that will later commit.
 
+Use `POST /v1/wallet/balance_transfer?wait_ms=2000` or `GET /v1/transfers/<transaction_id>?wait_ms=2000` for a bounded completion wait. `wait_ms` accepts integers 0–2000, default 0. A committed terminal fact notifies waiters; timeout returns the current `PENDING` without canceling money movement. At most eight waiters are admitted. Query using the original ID after a restart/disconnect; this is not a durable push channel.
+
 Poll `GET /v1/transfers/<transaction_id>`. Acceptance returns `PENDING`, not successful money movement. Terminal results are `SUCCEEDED`, `CANCELED` or `REJECTED` (local insufficient funds). Cross-shard insufficient funds selects cancellation. Transport ambiguity leaves the transfer pending, with retry/dead details available to administrators.
 
 `GET /v1/accounts/<account>` returns available/held cents and a shard-local event sequence. `?at=<sequence>` reconstructs that account from the shard event prefix. Sequence 1 is genesis. Sequences from different shards are not a shared transaction timestamp. These read projections expose TCC intermediate states and are not a globally atomic two-account read.
@@ -64,7 +66,7 @@ Poll `GET /v1/transfers/<transaction_id>`. Acceptance returns `PENDING`, not suc
 - **Unknown response:** inspect participant state and resume the original command. Holds have no automatic expiry. Five consecutive participant failures mark recovery work dead for manual inspection, without reporting a financial failure or releasing funds.
 - **Conservation:** wallet available + held + confirmed-source/uncredited-destination in-transit funds equals configured opening supply. The audit checks journal commands, participant effects and replayed projections under serialized coordinator access.
 
-The coordinator serializes its API and worker steps. Mutations require a reachable two-replica journal quorum and matching persisted shard epochs. A participant may commit before its response is lost; its stable transaction ID prevents another debit. A journal append may reach only one replica before failure; its original durable intent remains on coordinator disk and is replicated before later work. **Do not start a new authority with an empty or copied stale disk.** There is no recovery/promotion protocol for loss of that disk.
+The coordinator serializes money mutations and worker steps; balance reads and completion waits run concurrently. Pending transfers progress round-robin. Three owned RPC workers replicate journal prefixes in parallel, under a shared append/sync lock; only the acknowledged snapshot is marked committed. Mutations require a reachable two-replica journal quorum and matching persisted shard epochs. A participant may commit before its response is lost; its stable transaction ID prevents another debit. A journal append may reach only one replica before failure; its original durable intent remains on coordinator disk and is replicated before later work. **Do not start a new authority with an empty or copied stale disk.** There is no recovery/promotion protocol for loss of that disk.
 
 ## Administration
 
@@ -86,6 +88,14 @@ Fault injection: shard `POST /admin/control` accepts `{"lose_reply":false,"rejec
 
 ## Evidence and limits
 
-See [design](docs/design.md), [verification report](benchmarks/REPORT.md) and [raw sample](benchmarks/latest.json). Million TPS and 99.99% availability are unproven book targets. No cross-host durability, authority-disk loss recovery, automatic elections, replicated participant balances, bank integration, FX, deposits, withdrawals, fees, chargebacks or production identity/key management is implemented.
+See the [chapter review and remaining gaps](docs/chapter28-review.md), [design](docs/design.md), [verification report](benchmarks/REPORT.md) and [current wait sample](benchmarks/review-wait-2026-10-27.json), [poll sample](benchmarks/review-poll-2026-10-27.json) and [historical sample](benchmarks/latest.json). Million TPS and 99.99% availability are unproven book targets. No cross-host durability, authority-disk loss recovery, automatic elections, replicated participant balances, bank integration, FX, deposits, withdrawals, fees, chargebacks or production identity/key management is implemented.
 
-The reference bounds configuration to 100 accounts and accepted history to 1,000 transfers, retains all logs, replays coordinator history on reads, and uses full shard state for audit. It needs pagination, indexed histories, streaming replication/replay, partition-map migration, stronger deployment/security and operational backup/recovery before larger workloads.
+The reference bounds configuration to 100 accounts and accepted history to 1,000 transfers, retains all logs, incrementally caches committed coordinator facts in a rebuildable read model, and uses full shard state for audit. It needs pagination, indexed histories, streaming replication/replay, partition-map migration, stronger deployment/security and operational backup/recovery before larger workloads.
+
+## Engineering limits in this review
+
+HTTP admits 32 active connections, with 16 coordinator operation contexts and at most eight completion waiters. The total I/O budget is 15 seconds; each replica RPC is capped at 0.5 seconds, each shard RPC at 0.75 seconds, within the shared deadline. Incoming JSON is limited to 1 MiB and RPC/output to 8 MiB. Duplicate fields, non-finite numbers, repeated credentials, ambiguous framing, unknown/repeated queries and extra admin fields are rejected. Internal RPC bypasses environment proxies and does not follow redirects.
+
+Commands are copied and validated before writer waits. Participant receipts must match the complete intent, role and valid state. SQLite read transactions pin balances, sequence and audit checks to a coherent snapshot. Current balance and individual participant replies avoid transferring complete history. Snapshot publication uses unique temporary files, an owned publication lock, fsync and atomic replacement, alongside ordinary money writes. Socket deadlines cannot force-stop SQL/CPU or arbitrary blocking adapters; accepted tasks retain ownership until they exit.
+
+The retained authority binds account owners, opening balances and shard count. Ordinary restarts reject changes; legacy databases establish this binding on their first upgrade, so verify configuration against retained history before that upgrade. Epoch/leader still follow manual fencing. Shutdown closes the listener, cancels waits and drains owned replica RPCs; bind failures close coordinator resources too.

@@ -1,0 +1,65 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "processes": 7,
+  "transfers": 20,
+  "local_transfers": 10,
+  "cross_shard_transfers": 10,
+  "clients": 4,
+  "completion": "poll",
+  "elapsed_seconds": 12.905340299999807,
+  "completed_transfers_per_second": 1.5497460380800883,
+  "accept_to_terminal_p50_ms": 1091.2276999988535,
+  "accept_to_terminal_p95_ms": 4647.822899998573,
+  "audit": {
+    "errors": [],
+    "in_transit": 0,
+    "matches": true,
+    "opening_supply": 30000,
+    "quorum": {
+      "acks": 3,
+      "events": 50
+    },
+    "shards": [
+      {
+        "events": 31,
+        "head": "c4b25cdf17a25f2cdc89bf701cc0c90f9d50239a8a34d79f974b351f99b9b1e5",
+        "matches": true
+      },
+      {
+        "events": 21,
+        "head": "37857682f3f2b03e6c98f260ed1662bb71dd19b31664b5227fa08cbd01133df7",
+        "matches": true
+      }
+    ],
+    "wallet_total": 30000
+  },
+  "balances": [
+    {
+      "account": "alice_0",
+      "available": 8000,
+      "currency": "USD",
+      "held": 0,
+      "sequence": 31,
+      "shard": 0
+    },
+    {
+      "account": "peer_3",
+      "available": 11000,
+      "currency": "USD",
+      "held": 0,
+      "sequence": 31,
+      "shard": 0
+    },
+    {
+      "account": "bob_0",
+      "available": 11000,
+      "currency": "USD",
+      "held": 0,
+      "sequence": 21,
+      "shard": 1
+    }
+  ],
+  "scope": "Single fixed coordinator; 2-of-3 real HTTP journal replicas; two unreplicated SQLite participants; includes terminal-state polling or bounded completion wait (see completion), excludes startup and final audit.",
+  "measurement_note": "This exploratory polling sample overlapped code-review-graph refresh. Retained for transparency; use review-poll-2026-10-27.json for the subsequent isolated sample."
+}

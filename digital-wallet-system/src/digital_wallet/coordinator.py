@@ -1,58 +1,74 @@
 import threading
+import copy
+import math
 import time
 
 from .common import Error, request, shard_for
 from .journal import Journal
-from .shard import intent
+from .contracts import freeze, intent, participant
+from .runtime import Runtime
+from .audit import AuditMixin
 
 
-def project(rows):
-    state = {}
-    for row in rows:
-        event = row["event"]
-        id = event["transaction_id"]
-        if event["kind"] == "accepted":
-            if id in state:
-                raise ValueError("duplicate accepted command in journal")
-            state[id] = {
-                "intent": event["intent"],
-                "decision": None,
-                "status": "PENDING",
-            }
-        elif event["kind"] == "decision":
-            if state[id]["decision"] is not None or event["decision"] not in (
-                "COMMIT",
-                "CANCEL",
-            ):
-                raise ValueError("invalid or duplicate decision")
-            state[id]["decision"] = event["decision"]
-        elif event["kind"] == "completed":
-            if state[id]["status"] != "PENDING" or event["status"] not in (
-                "SUCCEEDED",
-                "CANCELED",
-                "REJECTED",
-            ):
-                raise ValueError("invalid terminal status")
-            state[id]["status"] = event["status"]
-        else:
-            raise ValueError("unknown coordinator event")
-    return state
+from .coordinator_projection import project as project
 
 
-class Coordinator:
+class Coordinator(AuditMixin):
     def __init__(self, path, config, clock=time.time):
-        self.config, self.clock = config, clock
-        self.journal = Journal(path, config)
-        self.lock = threading.RLock()
+        self.config, self.clock = freeze(config), clock
+        self.runtime = Runtime()
+        self.journal = Journal(path, self.config)
+        self.cache_lock = threading.Lock()
+        self.cached, self.cached_seq = {}, 0
+        self.changed = threading.Condition()
+        self.wait_slots = threading.BoundedSemaphore(8)
+        self.cursor = None
         self.journal.initialize(
             "CREATE TABLE IF NOT EXISTS retries(id TEXT PRIMARY KEY,failures INTEGER,due REAL,dead INTEGER,error TEXT);"
         )
 
     def state(self):
-        return project(self.journal.records())
+        with self.cache_lock:
+            rows = self.journal.records(after=self.cached_seq)
+            if rows:
+                self.cached = project(rows, self.cached)
+                self.cached_seq = rows[-1]["seq"]
+            return copy.deepcopy(self.cached)
+
+    def sync(self):
+        return self.journal.sync(**self.runtime.context())
+
+    def close(self):
+        self.runtime.closing.set()
+        with self.changed:
+            self.changed.notify_all()
+        self.journal.close()
+
+    def wait_owned(self, id, owner, wait_ms=0):
+        from .common import integer
+
+        integer(wait_ms, 0, 2000)
+        if not wait_ms:
+            return self.owned(id, owner)
+        if not self.wait_slots.acquire(False):
+            raise Error(503, "completion waiter capacity exhausted")
+        context = self.runtime.context()
+        until = min(context["deadline"], time.monotonic() + wait_ms / 1000)
+        try:
+            with self.changed:
+                while True:
+                    self.runtime.live(**context)
+                    value = self.owned(id, owner)
+                    if value["status"] != "PENDING" or time.monotonic() >= until:
+                        return value
+                    # Notifications reduce latency; periodic checks recover a
+                    # commit whose HTTP caller disconnected before notification.
+                    self.changed.wait(min(0.25, max(0, until - time.monotonic())))
+        finally:
+            self.wait_slots.release()
 
     def create(self, body, owner):
-        intent(body)
+        body = intent(body)
         accounts = self.config["accounts"]
         if (
             body["from_account"] not in accounts
@@ -61,8 +77,8 @@ class Coordinator:
             raise Error(403, "only owned source accounts may transfer")
         if body["to_account"] not in accounts:
             raise Error(404, "destination account missing")
-        with self.lock:
-            self.journal.sync()
+        with self.runtime.mutation():
+            self.sync()
             old = self.state().get(body["transaction_id"])
             if old:
                 if old["intent"] != body:
@@ -72,13 +88,7 @@ class Coordinator:
                 raise Error(
                     429, "reference command history is limited to 1000 transfers"
                 )
-            self.journal.append(
-                {
-                    "kind": "accepted",
-                    "transaction_id": body["transaction_id"],
-                    "intent": body,
-                }
-            )
+            self.append(body["transaction_id"], "accepted", intent=body)
             return self.state()[body["transaction_id"]]
 
     def owned(self, id, owner):
@@ -95,7 +105,8 @@ class Coordinator:
             self.config["shards"][index] + path,
             self.config["internal_token"],
             body,
-            timeout=0.5,
+            timeout=0.75,
+            **self.runtime.context(),
         )
 
     def indices(self, body):
@@ -106,19 +117,41 @@ class Coordinator:
 
     def action(self, index, body, kind, role):
         # The shard also checks the persisted epoch inside its monetary transaction.
-        return self.shard(
+        result = self.shard(
             index,
             "/internal/action",
             {**self.journal.credentials, "intent": body, "kind": kind, "role": role},
         )
+        if result is None:
+            raise Error(502, "participant action returned no receipt")
+        return self.check_part(result, body, role)
+
+    @staticmethod
+    def check_part(result, body, role):
+        try:
+            return participant(result, body, role)
+        except (ValueError, TypeError, KeyError):
+            raise Error(502, "participant returned a conflicting receipt") from None
+
+    def read_part(self, index, body, role):
+        result = self.shard(index, "/internal/participants/" + body["transaction_id"])
+        if not isinstance(result, dict) or set(result) != {"participant"}:
+            raise Error(502, "invalid participant response")
+        return self.check_part(result["participant"], body, role)
 
     def append(self, id, kind, **fields):
-        self.journal.append({"kind": kind, "transaction_id": id, **fields})
+        self.journal.append(
+            {"kind": kind, "transaction_id": id, **fields}, **self.runtime.context()
+        )
+        with self.changed:
+            self.changed.notify_all()
 
     def advance(self, id, value):
         body = value["intent"]
         source, destination = self.indices(body)
-        left = self.shard(source, "/internal/view")["parts"].get(id)
+        left = self.read_part(
+            source, body, "local" if source == destination else "source"
+        )
         if source == destination:
             part = left or self.action(source, body, "local", "local")
             self.append(
@@ -127,7 +160,7 @@ class Coordinator:
                 status="SUCCEEDED" if part["status"] == "CONFIRMED" else "REJECTED",
             )
             return
-        right = self.shard(destination, "/internal/view")["parts"].get(id)
+        right = self.read_part(destination, body, "destination")
         if value["decision"] is None:
             if any(
                 part and part["status"] in ("REJECTED", "CANCELED")
@@ -138,8 +171,12 @@ class Coordinator:
                 self.action(source, body, "prepare", "source")
             elif not right:
                 self.action(destination, body, "prepare", "destination")
-            else:
+            elif left["status"] == right["status"] == "PREPARED":
                 self.append(id, "decision", decision="COMMIT")
+            else:
+                raise Error(
+                    502, "participant confirmed without durable coordinator decision"
+                )
         elif value["decision"] == "COMMIT":
             if not left or left["status"] != "CONFIRMED":
                 self.action(source, body, "confirm", "source")
@@ -156,20 +193,30 @@ class Coordinator:
                 self.append(id, "completed", status="CANCELED")
 
     def step(self):
-        with self.lock:
-            self.journal.sync()  # No quorum => no participant action, even for a prior decision.
+        with self.runtime.mutation():
+            state = self.state()
+            if not self.journal.has_pending() and not any(
+                value["status"] == "PENDING" for value in state.values()
+            ):
+                return {"idle": True}
+            # No quorum => no participant action, even for a prior decision.
+            self.sync()
+            now = self.clock()
+            if type(now) not in (int, float) or not math.isfinite(now) or now < 0:
+                raise ValueError("finite nonnegative retry clock required")
             with self.journal.connection() as db:
                 retry = {
                     row["id"]: dict(row) for row in db.execute("SELECT * FROM retries")
                 }
-            for id, value in self.state().items():
+            commands = list(self.state().items())
+            ids = [key for key, _ in commands]
+            offset = ids.index(self.cursor) + 1 if self.cursor in ids else 0
+            commands = commands[offset:] + commands[:offset]
+            for id, value in commands:
                 row = retry.get(id, {"dead": 0, "due": 0, "failures": 0})
-                if (
-                    value["status"] != "PENDING"
-                    or row["dead"]
-                    or row["due"] > self.clock()
-                ):
+                if value["status"] != "PENDING" or row["dead"] or row["due"] > now:
                     continue
+                self.cursor = id
                 try:
                     self.advance(id, value)
                     with self.journal.transaction() as db:
@@ -194,7 +241,7 @@ class Coordinator:
                             (
                                 id,
                                 failures,
-                                self.clock() + min(10, 0.1 * 2**failures),
+                                now + min(10, 0.1 * 2 ** min(failures, 10)),
                                 int(failures >= 5),
                                 str(exc)[:300],
                             ),
@@ -207,8 +254,8 @@ class Coordinator:
             return {"idle": True}
 
     def cancel(self, id):
-        with self.lock:
-            self.journal.sync()
+        with self.runtime.mutation():
+            self.sync()
             value = self.state().get(id)
             if not value:
                 raise Error(404, "transfer missing")
@@ -226,7 +273,7 @@ class Coordinator:
             return self.state()[id]
 
     def retry(self, id):
-        with self.lock:
+        with self.runtime.mutation():
             if id not in self.state():
                 raise Error(404, "transfer missing")
             with self.journal.transaction() as db:
@@ -239,22 +286,33 @@ class Coordinator:
             or self.config["accounts"][account]["owner"] != owner
         ):
             raise Error(404, "account missing")
-        with self.lock:
-            suffix = "" if at is None else "?at=" + str(at)
-            result = self.shard(
-                shard_for(account, len(self.config["shards"])),
-                "/internal/view" + suffix,
-            )
-            return {
-                "account": account,
-                "currency": "USD",
-                "shard": result["shard"],
-                "sequence": result["seq"],
-                **result["accounts"][account],
-            }
+        suffix = "" if at is None else "?at=" + str(at)
+        result = self.shard(
+            shard_for(account, len(self.config["shards"])),
+            "/internal/accounts/" + account + suffix,
+        )
+        try:
+            if (
+                not isinstance(result, dict)
+                or set(result)
+                != {"account", "currency", "shard", "sequence", "available", "held"}
+                or result["account"] != account
+                or result["currency"] != "USD"
+                or result["shard"] != shard_for(account, len(self.config["shards"]))
+            ):
+                raise ValueError("invalid balance receipt")
+            from .common import integer
+
+            integer(result["shard"], 0, len(self.config["shards"]) - 1)
+            integer(result["sequence"], 1)
+            integer(result["available"])
+            integer(result["held"])
+        except (ValueError, TypeError, KeyError):
+            raise Error(502, "participant returned an invalid balance") from None
+        return result
 
     def status(self):
-        with self.lock, self.journal.connection() as db:
+        with self.runtime.mutation(), self.journal.connection() as db:
             state = self.state()
             return {
                 "transfers": len(state),
@@ -264,72 +322,4 @@ class Coordinator:
                 "events": len(self.journal.records()),
                 "retries": [dict(row) for row in db.execute("SELECT * FROM retries")],
                 "fixed_leader": self.journal.credentials,
-            }
-
-    def audit(self):
-        with self.lock:
-            quorum = self.journal.sync()
-            views = [
-                self.shard(i, "/internal/view")
-                for i in range(len(self.config["shards"]))
-            ]
-            checks = [self.shard(i, "/internal/audit") for i in range(len(views))]
-            total = sum(
-                balance["available"] + balance["held"]
-                for view in views
-                for balance in view["accounts"].values()
-            )
-            transit = 0
-            errors = []
-            commands = self.state()
-            for id, value in commands.items():
-                source, destination = self.indices(value["intent"])
-                if source == destination:
-                    part = views[source]["parts"].get(id)
-                    if value["status"] == "SUCCEEDED" and (
-                        not part or part["status"] != "CONFIRMED"
-                    ):
-                        errors.append("missing local effect: " + id)
-                    continue
-                left = views[source]["parts"].get(id, {"status": "ABSENT"})["status"]
-                right = views[destination]["parts"].get(id, {"status": "ABSENT"})[
-                    "status"
-                ]
-                if left == "CONFIRMED" and right != "CONFIRMED":
-                    if value["decision"] != "COMMIT":
-                        errors.append("uncommitted source confirmation: " + id)
-                    transit += value["intent"]["amount"]
-                if right == "CONFIRMED" and (
-                    left != "CONFIRMED" or value["decision"] != "COMMIT"
-                ):
-                    errors.append(
-                        "destination credited before source confirmation: " + id
-                    )
-                if value["status"] == "SUCCEEDED" and (left, right) != (
-                    "CONFIRMED",
-                    "CONFIRMED",
-                ):
-                    errors.append("missing completed effect: " + id)
-                if value["status"] == "CANCELED" and (left, right) != (
-                    "CANCELED",
-                    "CANCELED",
-                ):
-                    errors.append("missing cancellation: " + id)
-            for view in views:
-                for id, part in view["parts"].items():
-                    if id not in commands or commands[id]["intent"] != part["intent"]:
-                        errors.append("orphan or mismatched participant: " + id)
-            expected = sum(row["opening"] for row in self.config["accounts"].values())
-            if total + transit != expected:
-                errors.append("supply mismatch")
-            if not all(value["matches"] for value in checks):
-                errors.append("event/projection mismatch")
-            return {
-                "matches": not errors,
-                "errors": errors,
-                "wallet_total": total,
-                "in_transit": transit,
-                "opening_supply": expected,
-                "shards": checks,
-                "quorum": quorum,
             }
