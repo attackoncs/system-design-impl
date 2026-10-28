@@ -82,3 +82,48 @@ All registered players, including zero-score players, enter the month. Rank is `
 - GET `/internal/status` on authority/projectors requires the internal token and exposes source heads, projection position/lineage, poll time/errors. Projection query/feed routes are internal-only. Redis namespaces isolate rebuild/reset; tests only flush wholly owned disposable instances.
 
 The reference supports 10000 registered players and at most 10^9 wins each. Catalog/journal SQLite is not replicated, and no game anti-cheat, full account auth, TLS, online sharding, multi-host HA or automatic history/log cleanup is supplied. No production 25M-user or 2500-score-QPS claim is made. Details: [design](docs/design.md).
+
+## Chapter 26 engineering review — 2026-10-27
+
+The core chapter flows are present: trusted +1 wins, monthly zero-score
+membership, Top10, shared competition ranks, exact individual positions and
+four neighboring display rows. The review separates journal contracts, RESP,
+Lua scripts, candidate validation, profile cache, transport and service runtime.
+
+Ordinary rank queries now share a source read gate; source writes, reconciliation
+and rebuilds take exclusive ownership. New-month initialization releases the
+read gate before preparing zero-score membership, then captures a fresh shared
+snapshot. Eight public operations share sixteen RPC workers; HTTP admits32
+requests. All shard phases validate identity, exact source heads and a stable
+Redis epoch. A reset between phases fails503, rather than merging generations.
+Internal feeds/status bypass public capacity so projection can satisfy barriers.
+
+Names use a process-local1024-entry/1MiB LRU keyed by authoritative
+profile_revision and player ID. Renaming invalidates reuse; scores and Top10 are
+always queried from Redis. This is not a shared Redis profile cache. Journal
+inputs are frozen before writer waits; time is sampled once after acquiring the
+writer. Regular wins no longer scan all players. Names are fetched in SQL batches.
+
+Lua prevalidates known key types/index/score transitions before mutation, fences
+old poll/reset epochs, and applies absolute scores with position atomically.
+Unchanged empty polls validate their epoch without writing AOF. RESP limits total
+bytes, nesting and items, and Redis/HTTP calls share deadlines and cancellation.
+Accepted work is drained at shutdown; arbitrary SQL/CPU/DNS cannot be forcibly
+terminated. Multiple reachable Redis masters still fail closed; promotion remains
+an explicitly fenced manual procedure, not consensus.
+
+Validation: **72 tests passed39.110s**, no skips, `-W error`, real Redis8.0.5
+under WSL and seven processes. HEAD baseline8 tests passed38.686s in an isolated
+snapshot. The added real-Lua test verifies prevalidation, stale rebuild epoch
+rejection, replay and no AOF growth during idle polls. The original demo passed
+with ranks[1,1,3,3], one duplicate and independent reconciliation,742.600ms.
+
+Measured60 sequential fully projected wins:7.36/s,p50/p95141.863/197.049ms.
+Four-client40-query samples:Top10 p50/p95118.700/146.256ms,32.93QPS;
+rank+neighbors207.717/240.098ms,18.68QPS. These are small localhost samples,
+not controlled speedup or25M-user/2500-QPS evidence. See
+[review](docs/chapter26-review.md) and [measurements](benchmarks/results.md).
+
+Authority HA, automatic Redis election, TLS/full accounts, anti-cheat, online
+resharding, score-range/DynamoDB alternatives, achieved-time tie breaks and
+historical retention remain outside this bounded reference. No commit or push.

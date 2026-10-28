@@ -1,13 +1,10 @@
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
-from io import BytesIO
 import json
 from pathlib import Path
 import re
 import sqlite3
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError
 
 
 class Error(Exception):
@@ -95,30 +92,18 @@ class Database:
             db.close()
 
 
-def http_json(url, token, body=None, method=None):
-    request = Request(
+def http_json(
+    url, token, body=None, method=None, timeout=5, *, deadline=None, cancel=None
+):
+    """Use a direct bounded connection; callers may share one monotonic budget."""
+    from .transport import request
+
+    return request(
         url,
-        data=None if body is None else dumps(body).encode(),
-        method=method,
-        headers={
-            "Authorization": "Bearer " + token,
-            "Content-Type": "application/json",
-        },
+        method or ("GET" if body is None else "POST"),
+        body=body,
+        token=token,
+        timeout=timeout,
+        deadline=deadline,
+        cancel=cancel,
     )
-    try:
-        response = urlopen(request, timeout=5)
-    except HTTPError as exc:
-        try:
-            payload = exc.read(1024 * 1024)
-        finally:
-            exc.close()
-        # Preserve status/body for callers without leaving a failed socket open
-        # during projection readiness retries.
-        raise HTTPError(
-            exc.url, exc.code, exc.msg, exc.headers, BytesIO(payload)
-        ) from None
-    with response:
-        data = response.read(8 * 1024 * 1024 + 1)
-        if len(data) > 8 * 1024 * 1024:
-            raise Error(413, "response budget exceeded")
-        return json.loads(data)

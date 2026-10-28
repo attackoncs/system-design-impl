@@ -1,58 +1,75 @@
-"""Small RESP2 client; always talks to an actual Redis server."""
+"""One-command RESP2 connections with bounded framing and shared deadlines."""
 
+import math
 import socket
+import time
 
-
-class RedisError(Exception):
-    pass
+from .redis_protocol import Reader, RedisError as RedisError, encode
+from .transport import Deadline, interrupt_socket
 
 
 class Redis:
     def __init__(self, host, port, password):
+        if (
+            not isinstance(host, str)
+            or not host
+            or type(port) is not int
+            or not 1 <= port <= 65535
+        ):
+            raise ValueError("invalid Redis endpoint")
+        if not isinstance(password, str) or not password:
+            raise ValueError("Redis password required")
         self.host, self.port, self.password = host, port, password
 
+    encode = staticmethod(encode)
+
     @staticmethod
-    def encode(args):
-        chunks = [b"*" + str(len(args)).encode() + b"\r\n"]
-        for arg in args:
-            data = arg if isinstance(arg, bytes) else str(arg).encode()
-            chunks.extend([b"$" + str(len(data)).encode() + b"\r\n", data, b"\r\n"])
-        return b"".join(chunks)
+    def read(stream):
+        return Reader(stream).read()
 
-    @classmethod
-    def read(cls, stream):
-        line = stream.readline(1024 * 1024)
-        if not line or not line.endswith(b"\r\n"):
-            raise RedisError("truncated RESP response")
-        marker, value = line[:1], line[1:-2]
-        if marker == b"+":
-            return value.decode()
-        if marker == b"-":
-            raise RedisError(value.decode(errors="replace"))
-        if marker == b":":
-            return int(value)
-        length = int(value)
-        if length == -1:
-            return None
-        if length < 0 or length > 8 * 1024 * 1024:
-            raise RedisError("RESP response exceeds budget")
-        if marker == b"$":
-            data = stream.read(length + 2)
-            if len(data) != length + 2 or not data.endswith(b"\r\n"):
-                raise RedisError("truncated RESP bulk")
-            return data[:-2].decode()
-        if marker == b"*":
-            return [cls.read(stream) for _ in range(length)]
-        raise RedisError("unsupported RESP type")
-
-    def command(self, *args, timeout=3):
+    def command(self, *args, timeout=3, deadline=None, cancel=None):
+        if (
+            type(timeout) not in (int, float)
+            or not math.isfinite(timeout)
+            or timeout <= 0
+        ):
+            raise ValueError("positive finite Redis timeout required")
+        if deadline is not None and (
+            type(deadline) not in (int, float) or not math.isfinite(deadline)
+        ):
+            raise ValueError("finite Redis deadline required")
+        end = (
+            min(time.monotonic() + timeout, deadline)
+            if deadline is not None
+            else time.monotonic() + timeout
+        )
+        remaining = end - time.monotonic()
+        if remaining <= 0 or (cancel is not None and cancel.is_set()):
+            raise TimeoutError("Redis command cancelled or deadline exceeded")
+        payload, auth = self.encode(args), self.encode(["AUTH", self.password])
+        # Connect is separately bounded; DNS is outside socket cancellation.
         with socket.create_connection(
-            (self.host, self.port), timeout=min(0.3, timeout)
+            (self.host, self.port), timeout=min(0.3, remaining)
         ) as connection:
-            connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            connection.settimeout(timeout)
-            with connection.makefile("rb") as stream:
-                connection.sendall(self.encode(["AUTH", self.password]))
-                self.read(stream)
-                connection.sendall(self.encode(args))
-                return self.read(stream)
+            with Deadline(end, lambda: interrupt_socket(connection), cancel):
+                connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                connection.settimeout(max(0.001, end - time.monotonic()))
+                with connection.makefile("rb") as stream:
+                    if time.monotonic() >= end or (
+                        cancel is not None and cancel.is_set()
+                    ):
+                        raise TimeoutError(
+                            "Redis command cancelled or deadline exceeded"
+                        )
+                    connection.sendall(auth)
+                    if self.read(stream) != "OK":
+                        raise RedisError("invalid Redis authentication acknowledgement")
+                    connection.sendall(payload)
+                    result = self.read(stream)
+                    if time.monotonic() >= end or (
+                        cancel is not None and cancel.is_set()
+                    ):
+                        raise TimeoutError(
+                            "Redis command cancelled or deadline exceeded"
+                        )
+                    return result

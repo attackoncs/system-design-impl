@@ -1,3 +1,18 @@
+# Review — 2026-10-27
+
+72tests39.110s,-Werror,no skips.Real Redis8.0.5/WSL and seven processes.
+60fully projected matches/21players:8.153s,7.36/s,p50/p95141.863/197.049ms.
+4clients40queries:Top10 p50/p95118.700/146.256ms,32.93QPS;
+rank+neighbors207.717/240.098ms,18.68QPS. Independent SQL/Redis reconciliation matches.
+SQLite-only bytes81920 excludes WAL/SHM; not total storage size.
+[Raw results](review-2026-10-27.json),[review](../docs/chapter26-review.md).
+Bounded shared queries replace serialized rank execution; no controlled speedup
+or25M-player/2500QPS proof is claimed. Historical results remain below.
+
+---
+
+## Historical report — 2026-10-21
+
 # Validation and local measurements
 
 Date: 2026-10-21, Asia/Shanghai. Python 3.13.9, Windows 11 build 26100, actual Redis 8.0.5 in WSL Ubuntu-26.04. The test used an existing unpacked local executable and its library directory; that executable is not bundled or installed by this module. Raw benchmark output: [results.json](results.json).

@@ -6,7 +6,7 @@ The lab has seven processes: one authoritative SQLite/HTTP service, two HTTP pro
 
 SQLite WAL with synchronous FULL stores profiles, registration time, seasons, absolute authoritative scores, unique match receipts, and contiguous event sequences for each score shard. Score changes, events and receipt commit in one transaction. A pre-commit failure rolls back all of them. A source lineage UUID and immutable shard/grace configuration survive restart. Missing/recreated authority state is not silently treated as the same dataset.
 
-The authority serializes public mutations and multi-phase reads with a process lock. Internal event feeds bypass that lock so projectors can catch up while a public request waits for its barrier. Thus source scores cannot change between the phases of one global rank query. This deliberately trades throughput for an assessable snapshot model; multiple active authority processes or independently writing clients bypassing this coordinator are unsupported. Authority SQLite has no replication or automatic failover.
+The authority shares a read gate between rank queries and exclusively gates mutations, rebuilds and reconciliation. Internal event feeds bypass that lock so projectors can catch up while a public request waits for its barrier. Thus source scores cannot change between the phases of one global rank query. This deliberately trades throughput for an assessable snapshot model; multiple active authority processes or independently writing clients bypassing this coordinator are unsupported. Authority SQLite has no replication or automatic failover.
 
 ## Trusted matches and monthly membership
 
@@ -39,9 +39,9 @@ The event feed has shard ownership, source lineage, contiguous local sequence an
 
 Redis progress is stored alongside its projected data. Lost Redis state starts at position zero and replays all retained authority events, including season registrations at zero. A changed source lineage fails closed until an explicit rebuild. Administrative rebuild clears only this application's namespace/month keys, then the normal projector replays. Old other applications' Redis data is not flushed; FLUSHALL is used only in a test against a wholly owned disposable instance.
 
-Before a public read, the authority captures all current source heads and waits for matching Redis lineage/positions. The public authority lock prevents newer writes during its multi-phase read, so projections reaching those heads give a coherent source barrier across user shards. Normal write responses wait up to roughly one second for projection: 200 means projected, 202 means the match is durably accepted but not yet fully projected. Reads that cannot establish a complete barrier fail 503. Network deadlines are best-effort, not a hard response-time SLA.
+Before a public read, the authority captures all current source heads and waits for matching Redis lineage/positions. A shared source read gate prevents newer writes during each multi-phase read, so projections reaching those heads give a coherent source barrier across user shards. Normal write responses wait up to roughly one second for projection: 200 means projected, 202 means the match is durably accepted but not yet fully projected. Reads that cannot establish a complete barrier fail 503. Network deadlines are best-effort, not a hard response-time SLA.
 
-Profile names are loaded from the SQL authority for the returned user IDs. There is no profile or Top 10 application cache masking freshness. Internal status exposes projection positions, observed source heads, poll time and errors. Independent reconciliation compares all projected `(user,score)` pairs with authoritative SQL, bounded by the same read barrier. It is an administrative full scan for the 10000-player reference limit, not a production distributed audit engine.
+Profile names use a bounded source-revision cache; cache misses load returned IDs in SQL batches. Top10 scores are never cached. Internal status exposes projection positions, observed source heads, poll time and errors. Independent reconciliation compares all projected `(user,score)` pairs with authoritative SQL, bounded by the same read barrier. It is an administrative full scan for the 10000-player reference limit, not a production distributed audit engine.
 
 ## Primary/replica and recovery semantics
 
@@ -59,4 +59,49 @@ Score-range partitions can derive rank from counts of higher partitions but requ
 
 A NoSQL score-sort index would also need write sharding for a hot monthly partition and cross-shard rank aggregation; eventual secondary-index visibility complicates read barriers. No DynamoDB, Cassandra, score-range migration or Redis Cluster implementation/benchmark is claimed. The code implements and validates the hash-sharded algorithm only.
 
-Static admin/read/game/internal credentials are distinct; players cannot directly assign points. Servers and Redis endpoints use loopback. No full account auth, TLS, rate-limit gateway, anti-cheat, authority HA, automatic failover, online topology changes or log/season retention policy is provided. Two indexes, retained receipts/events and historical seasons consume extra space. The lab's 10000-player/10^9-score limits, serialized coordinator and measured latency do not establish the book's 25M MAU/2500 peak-score-QPS target.
+Static admin/read/game/internal credentials are distinct; players cannot directly assign points. Servers and Redis endpoints use loopback. No full account auth, TLS, rate-limit gateway, anti-cheat, authority HA, automatic failover, online topology changes or log/season retention policy is provided. Two indexes, retained receipts/events and historical seasons consume extra space. The lab's 10000-player/10^9-score limits, single-active coordinator and measured latency do not establish the book's 25M MAU/2500 peak-score-QPS target.
+
+## Chapter 26 engineering review — 2026-10-27
+
+The core chapter flows are present: trusted +1 wins, monthly zero-score
+membership, Top10, shared competition ranks, exact individual positions and
+four neighboring display rows. The review separates journal contracts, RESP,
+Lua scripts, candidate validation, profile cache, transport and service runtime.
+
+Ordinary rank queries now share a source read gate; source writes, reconciliation
+and rebuilds take exclusive ownership. New-month initialization releases the
+read gate before preparing zero-score membership, then captures a fresh shared
+snapshot. Eight public operations share sixteen RPC workers; HTTP admits32
+requests. All shard phases validate identity, exact source heads and a stable
+Redis epoch. A reset between phases fails503, rather than merging generations.
+Internal feeds/status bypass public capacity so projection can satisfy barriers.
+
+Names use a process-local1024-entry/1MiB LRU keyed by authoritative
+profile_revision and player ID. Renaming invalidates reuse; scores and Top10 are
+always queried from Redis. This is not a shared Redis profile cache. Journal
+inputs are frozen before writer waits; time is sampled once after acquiring the
+writer. Regular wins no longer scan all players. Names are fetched in SQL batches.
+
+Lua prevalidates known key types/index/score transitions before mutation, fences
+old poll/reset epochs, and applies absolute scores with position atomically.
+Unchanged empty polls validate their epoch without writing AOF. RESP limits total
+bytes, nesting and items, and Redis/HTTP calls share deadlines and cancellation.
+Accepted work is drained at shutdown; arbitrary SQL/CPU/DNS cannot be forcibly
+terminated. Multiple reachable Redis masters still fail closed; promotion remains
+an explicitly fenced manual procedure, not consensus.
+
+Validation: **72 tests passed39.110s**, no skips, `-W error`, real Redis8.0.5
+under WSL and seven processes. HEAD baseline8 tests passed38.686s in an isolated
+snapshot. The added real-Lua test verifies prevalidation, stale rebuild epoch
+rejection, replay and no AOF growth during idle polls. The original demo passed
+with ranks[1,1,3,3], one duplicate and independent reconciliation,742.600ms.
+
+Measured60 sequential fully projected wins:7.36/s,p50/p95141.863/197.049ms.
+Four-client40-query samples:Top10 p50/p95118.700/146.256ms,32.93QPS;
+rank+neighbors207.717/240.098ms,18.68QPS. These are small localhost samples,
+not controlled speedup or25M-user/2500-QPS evidence. See
+[review](chapter26-review.md) and [measurements](../benchmarks/results.md).
+
+Authority HA, automatic Redis election, TLS/full accounts, anti-cheat, online
+resharding, score-range/DynamoDB alternatives, achieved-time tie breaks and
+historical retention remain outside this bounded reference. No commit or push.

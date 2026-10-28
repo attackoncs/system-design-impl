@@ -1,107 +1,76 @@
+"""Validated score projection with Redis-atomic epochs and bounded I/O."""
+
+from contextlib import contextmanager
 import json
 import threading
 import time
+import uuid
 
-from .common import Error, digest, dumps, http_json, integer, month_bounds, shard_for
+from .common import Error, dumps, http_json, identifier, integer
+from .projection_contracts import batch_copy, query_copy
+from .projection_scripts import APPLY as APPLY, QUERY as QUERY, RESET as RESET, SNAPSHOT
 from .redis import Redis, RedisError
-
-APPLY = r"""
-local root=KEYS[1]
-local batch=cjson.decode(ARGV[1])
-local generation=redis.call('GET',root..':lineage')
-if generation and generation~=batch.lineage then return redis.error_reply('LINEAGE changed') end
-local pos=tonumber(redis.call('GET',root..':position') or '0')
-if pos~=batch.after then return cjson.encode({stale=true,position=pos}) end
-local nextpos=pos
-for _,e in ipairs(batch.events) do
-  if e.seq~=nextpos+1 then return redis.error_reply('OFFSET gap') end
-  for _,kind in ipairs({'score','order'}) do
-    local t=redis.call('TYPE',root..':'..kind..':'..e.payload.month).ok
-    if t~='none' and t~='zset' then return redis.error_reply('TYPE corrupt') end
-  end
-  nextpos=e.seq
-end
-for _,e in ipairs(batch.events) do
-  local p=e.payload
-  local sk=root..':score:'..p.month
-  local ok=root..':order:'..p.month
-  local old=redis.call('ZSCORE',sk,p.user)
-  if old then redis.call('ZREM',ok,string.format('%010d',1000000000+tonumber(old))..':'..p.user) end
-  redis.call('ZADD',sk,-p.score,p.user)
-  redis.call('ZADD',ok,0,string.format('%010d',1000000000-p.score)..':'..p.user)
-  redis.call('SADD',root..':months',p.month)
-end
-redis.call('SET',root..':lineage',batch.lineage)
-redis.call('SET',root..':position',nextpos)
-return cjson.encode({position=nextpos})
-"""
-
-QUERY = r"""
-local root=KEYS[1]
-local q=cjson.decode(ARGV[1])
-if redis.call('GET',root..':lineage')~=q.lineage then return redis.error_reply('NOTREADY lineage') end
-local pos=tonumber(redis.call('GET',root..':position') or '0')
-if pos<q.minimum then return redis.error_reply('NOTREADY position') end
-local sk=root..':score:'..q.month
-local ok=root..':order:'..q.month
-if redis.call('ZCARD',sk)~=redis.call('ZCARD',ok) then return redis.error_reply('INDEX corrupt; rebuild required') end
-local function rows(members)
-  local result={}
-  for _,m in ipairs(members) do
-    table.insert(result,{user=string.sub(m,12),score=1000000000-tonumber(string.sub(m,1,10)),lex=m})
-  end
-  return result
-end
-local result={position=pos,shard=q.shard}
-if q.mode=='top' then
-  result.rows=rows(redis.call('ZRANGE',ok,0,q.limit-1))
-elseif q.mode=='target' then
-  local score=redis.call('ZSCORE',sk,q.user)
-  if score then result.target={user=q.user,score=-tonumber(score),lex=string.format('%010d',1000000000+tonumber(score))..':'..q.user} end
-elseif q.mode=='around' then
-  result.higher=redis.call('ZCOUNT',sk,'-inf','('..tostring(-q.score))
-  result.before=redis.call('ZLEXCOUNT',ok,'-','('..q.pivot)
-  result.above=rows(redis.call('ZREVRANGEBYLEX',ok,'('..q.pivot,'-','LIMIT',0,q.radius))
-  result.below=rows(redis.call('ZRANGEBYLEX',ok,'('..q.pivot,'+','LIMIT',0,q.radius))
-elseif q.mode=='counts' then
-  result.counts={}
-  for _,score in ipairs(q.scores) do result.counts[tostring(score)]=redis.call('ZCOUNT',sk,'-inf','('..tostring(-score)) end
-elseif q.mode=='dump' then
-  if redis.call('ZCARD',sk)>10000 then return redis.error_reply('BUDGET exceeded') end
-  result.rows=rows(redis.call('ZRANGE',ok,0,-1))
-else return redis.error_reply('MODE unknown') end
-return cjson.encode(result)
-"""
-
-RESET = r"""
-local root=KEYS[1]
-for _,month in ipairs(redis.call('SMEMBERS',root..':months')) do
-  redis.call('DEL',root..':score:'..month,root..':order:'..month)
-end
-redis.call('DEL',root..':months',root..':lineage',root..':position')
-return 1
-"""
+from .transport import loads
 
 
 class Projection:
     def __init__(self, config, shard):
-        self.config, self.shard = config, shard
-        self.root = config["namespace"] + ":shard:" + str(shard)
+        self.config = json.loads(dumps(config))
+        integer(shard, "shard", 0, len(config["projection_urls"]) - 1)
+        self.shard = shard
+        self.root = identifier(config["namespace"]) + ":shard:" + str(shard)
         self.clients = [
             Redis(n["host"], n["port"], config["redis_password"])
             for n in config["redis_nodes"][shard]
         ]
         self.lock = threading.RLock()
+        self._state_lock = threading.Lock()
         self.state = {"error": "starting", "last_poll": 0}
 
-    def master(self):
+    @staticmethod
+    def _budget(deadline, cancel, default=5):
+        end = time.monotonic() + default if deadline is None else deadline
+        if (
+            type(end) not in (int, float)
+            or end != end
+            or end in (float("inf"), -float("inf"))
+        ):
+            raise ValueError("finite monotonic deadline required")
+        if end <= time.monotonic() or (cancel is not None and cancel.is_set()):
+            raise TimeoutError("projection operation cancelled or deadline exceeded")
+        return end
+
+    @contextmanager
+    def _writer(self, deadline, cancel):
+        while not self.lock.acquire(
+            timeout=min(0.05, max(0.001, deadline - time.monotonic()))
+        ):
+            self._budget(deadline, cancel)
+        try:
+            self._budget(deadline, cancel)
+            yield
+        finally:
+            self.lock.release()
+
+    def master(self, *, deadline=None, cancel=None):
+        deadline = self._budget(deadline, cancel)
         masters = []
         for client in self.clients:
             try:
-                if client.command("ROLE", timeout=0.2)[0] == "master":
+                role = client.command(
+                    "ROLE", timeout=0.2, deadline=deadline, cancel=cancel
+                )
+                if (
+                    not isinstance(role, list)
+                    or not role
+                    or role[0] not in ("master", "slave")
+                ):
+                    raise RedisError("invalid Redis role response")
+                if role[0] == "master":
                     masters.append(client)
             except (OSError, RedisError):
                 pass
+        self._budget(deadline, cancel)
         if len(masters) != 1:
             raise Error(
                 503,
@@ -109,86 +78,162 @@ class Projection:
             )
         return masters[0]
 
-    def position(self, client=None):
-        return int(
-            (client or self.master()).command("GET", self.root + ":position") or 0
-        )
-
-    def apply(self, batch):
-        if batch["shard"] != self.shard:
-            raise Error(409, "wrong event shard")
-        expected = batch["after"]
-        for entry in batch["events"]:
-            p = entry["payload"]
-            month_bounds(p["month"])
-            integer(p["score"], "score", 0, 1_000_000_000)
-            if (
-                shard_for(p["user"], len(self.config["projection_urls"])) != self.shard
-                or entry["seq"] != expected + 1
-                or digest(p) != entry["hash"]
-            ):
-                raise Error(409, "event checksum, offset or ownership mismatch")
-            expected = entry["seq"]
-        return json.loads(
-            self.master().command("EVAL", APPLY, 1, self.root, dumps(batch))
-        )
-
-    def poll_once(self):
-        with self.lock:
-            after = self.position()
-            batch = http_json(
-                self.config["authority_url"]
-                + f"/internal/feed?shard={self.shard}&after={after}",
-                self.config["internal_token"],
+    def _snapshot(self, client, deadline, cancel):
+        result = loads(
+            client.command(
+                "EVAL", SNAPSHOT, 1, self.root, deadline=deadline, cancel=cancel
             )
-            client = self.master()
-            generation = client.command("GET", self.root + ":lineage")
-            if (
-                not batch["events"]
-                and generation == batch["lineage"]
-                and self.position(client) == after
-            ):
-                result = {"position": after}
-            else:
-                result = self.apply(batch)
-            self.state.update(
-                error=None,
-                last_poll=time.time(),
-                source_head=batch["head"],
-                position=result["position"],
+        )
+        if not isinstance(result, dict) or set(result) != {
+            "position",
+            "lineage",
+            "epoch",
+        }:
+            raise RedisError("invalid projection snapshot")
+        integer(result["position"], "position", 0, 2**53 - 1)
+        for field in ("lineage", "epoch"):
+            if result[field] is not None:
+                identifier(result[field])
+        return result
+
+    def status(self, *, deadline=None, cancel=None):
+        deadline = self._budget(deadline, cancel)
+        result = self._snapshot(
+            self.master(deadline=deadline, cancel=cancel), deadline, cancel
+        )
+        with self._state_lock:
+            worker = dict(self.state)
+        return {"shard": self.shard, **result, "worker": worker}
+
+    def position(self, client=None, *, deadline=None, cancel=None):
+        deadline = self._budget(deadline, cancel)
+        return self._snapshot(
+            client or self.master(deadline=deadline, cancel=cancel), deadline, cancel
+        )["position"]
+
+    def _apply(self, batch, client, snapshot, deadline, cancel):
+        value = {**batch, "epoch": snapshot["epoch"], "next_epoch": uuid.uuid4().hex}
+        result = loads(
+            client.command(
+                "EVAL",
+                APPLY,
+                1,
+                self.root,
+                dumps(value),
+                deadline=deadline,
+                cancel=cancel,
             )
+        )
+        if (
+            not isinstance(result, dict)
+            or set(result) - {"stale", "position", "epoch"}
+            or not {"position", "epoch"} <= set(result)
+        ):
+            raise RedisError("invalid projection apply receipt")
+        integer(result["position"], "position", 0, 2**53 - 1)
+        identifier(result["epoch"])
+        if not result.get("stale") and result["position"] != batch["after"] + len(
+            batch["events"]
+        ):
+            raise RedisError("projection apply position mismatch")
+        return result
+
+    def apply(self, batch, *, deadline=None, cancel=None):
+        deadline = self._budget(deadline, cancel)
+        batch = batch_copy(batch, self.shard, len(self.config["projection_urls"]))
+        with self._writer(deadline, cancel):
+            client = self.master(deadline=deadline, cancel=cancel)
+            return self._apply(
+                batch,
+                client,
+                self._snapshot(client, deadline, cancel),
+                deadline,
+                cancel,
+            )
+
+    def poll_once(self, *, deadline=None, cancel=None):
+        deadline = self._budget(deadline, cancel)
+        with self._writer(deadline, cancel):
+            client = self.master(deadline=deadline, cancel=cancel)
+            snapshot = self._snapshot(client, deadline, cancel)
+            after = snapshot["position"]
+            batch = batch_copy(
+                http_json(
+                    self.config["authority_url"]
+                    + f"/internal/feed?shard={self.shard}&after={after}",
+                    self.config["internal_token"],
+                    deadline=deadline,
+                    cancel=cancel,
+                ),
+                self.shard,
+                len(self.config["projection_urls"]),
+            )
+            if batch["after"] != after:
+                raise Error(409, "feed cursor disagrees with requested cursor")
+            # Always EVAL even for an empty page: bind lineage and epoch atomically
+            # and detect a reset after the feed was fetched by another process.
+            result = self._apply(batch, client, snapshot, deadline, cancel)
+            with self._state_lock:
+                self.state.update(
+                    error=None,
+                    last_poll=time.time(),
+                    source_head=batch["head"],
+                    position=result["position"],
+                    epoch=result["epoch"],
+                )
             return batch["head"] > result["position"]
 
     def run(self, stop):
         while not stop.is_set():
             try:
-                busy = self.poll_once()
+                busy = self.poll_once(deadline=time.monotonic() + 5, cancel=stop)
                 stop.wait(0.005 if busy else 0.03)
             except Exception as exc:
-                self.state["error"] = str(exc)
+                with self._state_lock:
+                    self.state["error"] = str(exc)
                 stop.wait(0.1)
 
-    def query(self, body):
-        month_bounds(body["month"])
-        integer(body["minimum"], "minimum")
-        if body["mode"] == "top":
-            integer(body["limit"], "limit", 1, 10)
-        if body["mode"] == "around":
-            integer(body["radius"], "radius", 0, 4)
-        with self.lock:
-            result = json.loads(
-                self.master().command(
-                    "EVAL", QUERY, 1, self.root, dumps({**body, "shard": self.shard})
-                )
+    def query(self, body, *, deadline=None, cancel=None):
+        deadline = self._budget(deadline, cancel)
+        body = query_copy(body, self.shard, len(self.config["projection_urls"]))
+        # Each Lua read is atomic and owns its socket; independent reads do not
+        # contend on the Python writer lock used by polling and resets.
+        result = loads(
+            self.master(deadline=deadline, cancel=cancel).command(
+                "EVAL",
+                QUERY,
+                1,
+                self.root,
+                dumps(body),
+                deadline=deadline,
+                cancel=cancel,
             )
-            # Redis Lua cjson encodes empty tables as {}; normalize array fields.
-            for key in ("rows", "above", "below"):
-                if key in result and result[key] == {}:
-                    result[key] = []
-            return result
+        )
+        if not isinstance(result, dict):
+            raise RedisError("invalid projection query result")
+        integer(result.get("position"), "position", body["minimum"], 2**53 - 1)
+        if (
+            result.get("shard") != self.shard
+            or result.get("lineage") != body["lineage"]
+        ):
+            raise RedisError("query projection identity mismatch")
+        identifier(result.get("epoch"))
+        if "epoch" in body and result["epoch"] != body["epoch"]:
+            raise RedisError("query epoch mismatch")
+        for key in ("rows", "above", "below"):
+            if key in result and result[key] == {}:
+                result[key] = []
+        return result
 
-    def reset(self):
-        with self.lock:
-            self.master().command("EVAL", RESET, 1, self.root)
-            self.state["error"] = "rebuilding"
-        return {"rebuilding": True, "shard": self.shard}
+    def reset(self, *, deadline=None, cancel=None):
+        deadline = self._budget(deadline, cancel)
+        epoch = uuid.uuid4().hex
+        with self._writer(deadline, cancel):
+            actual = self.master(deadline=deadline, cancel=cancel).command(
+                "EVAL", RESET, 1, self.root, epoch, deadline=deadline, cancel=cancel
+            )
+            if actual != epoch:
+                raise RedisError("invalid projection reset receipt")
+            with self._state_lock:
+                self.state["error"] = "rebuilding"
+        return {"rebuilding": True, "shard": self.shard, "epoch": epoch}

@@ -1,0 +1,29 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "redis": "8.0.5 (verified local binary)",
+  "processes": 7,
+  "redis_shards": 2,
+  "redis_replicas": 2,
+  "players": 21,
+  "unique_matches": 60,
+  "write_seconds": 8.153,
+  "projected_matches_per_second": 7.36,
+  "write_p50_ms": 141.863,
+  "write_p95_ms": 197.049,
+  "query_requests_per_kind": 40,
+  "query_clients": 4,
+  "top10": {
+    "p50_ms": 118.7,
+    "p95_ms": 146.256,
+    "requests_per_second": 32.93
+  },
+  "rank_with_neighbors": {
+    "p50_ms": 207.717,
+    "p95_ms": 240.098,
+    "requests_per_second": 18.68
+  },
+  "reconciliation_matches": true,
+  "journal_bytes": 81920,
+  "scope": "real localhost HTTP + four Redis primary/replica processes with AOF always; synchronous projection barrier, bounded concurrent reads, exclusive authority writes; not 25M-user scale"
+}
