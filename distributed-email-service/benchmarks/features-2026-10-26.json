@@ -1,0 +1,17 @@
+{
+  "processes": 9,
+  "notification_ms": 342.56,
+  "inbox_events": 1,
+  "same_send_id": true,
+  "folder_unread_before_read": 1,
+  "replica_read_barrier_version": 2,
+  "wrong_lineage_status": 409,
+  "resumed_versions": [
+    2,
+    3
+  ],
+  "deleted_version": 3,
+  "outsider_events": 0,
+  "metadata_cache_hits": 1,
+  "scope": "localhost HTTP/SMTP, durable log and metadata replicas; test marker scanner"
+}

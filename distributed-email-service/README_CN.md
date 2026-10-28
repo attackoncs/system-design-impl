@@ -73,3 +73,35 @@ SMTP 协议端口为 9847，9846 是其管理 HTTP 接口。配置生成器拒�
 SMTP 管理接口 `/admin/status` 和 `/admin/control` 使用管理令牌；控制正文 `{"lose_ack":true,"scanner_down":true}` 模拟持久接收后返回 451 和扫描服务不可用，全部重置 false 后恢复。本地合成测试不会外发。
 
 生产边界：暂无公网 SMTP、真实反病毒、完整 OAuth、TLS、DKIM/SPF/DMARC、HTML 客户端或 IMAP/POP。副本异步且无选主；对象与 SMTP 队列仍为单节点。无自动隐私保留、对象 GC 或变更日志清理。验证保留本地磁盘，不覆盖机器/磁盘丢失，也不代表原书十亿用户规模。更多细节见 [设计文档](docs/design.md)。
+
+## 第24章工程复核（2026-10-26）
+
+新增 `GET /v1/folders`（四个固定文件夹、总数及未读数）、
+`GET /v1/folders/{folder}/messages` 和 `GET /v1/changes?after=0&wait=2`。
+变更仅含本人邮件的 ID、版本、已读/删除标记和文件夹，不返回正文或附件。
+续取需同时带 `after` 与返回的 `lineage`，每页最多100事件，`more` 表示还有下一页；
+`position` 是续取游标，可能越过同分片其他用户的事件，`head` 是快照分片水位。
+长轮询最多2秒，是持久化 HTTP 通知回退，并非 WebSocket/JMAP。
+旧副本缺少历史日志时返回409，需重新拉取邮箱后从当前水位续取。
+
+GET 可带 `min_position=N&lineage=L`：落后返回503，lineage更换返回409。
+写回执包含同事务水位；未指定屏障的副本故障回退仍允许陈旧读取。
+文件夹/列表元数据用按用户、筛选及精确lineage/position绑定的进程内LRU，
+最多128项/4 MiB，返回私有副本，新提交后不复用旧缓存；没有真实Redis分布式缓存。
+
+拆分记录契约、复制应用、接收spool、路由、direct传输及有界服务器生命周期。
+发送claim租约30秒、共享20秒I/O预算；接收claim租约90秒、共享60秒预算，
+持写锁后检查token和到期时间。邮件/索引/变更/复制位点原子提交，副本校验历史重放
+并保留完整变更日志。SMTP AUTH用户名为 `local-worker`，配合私有SMTP令牌。
+HTTP与SMTP默认各32并发，关闭时取消socket并排空自有线程；无法强杀任意SQL/CPU/DNS。
+MIME验证解码后缺陷、重复字段、字符集及大小；嵌套message/rfc822或multipart容器附件
+明确拒绝，普通附件使用octet-stream。对象有界读取、严格回执与SHA256/长度校验，
+64个固定发布锁条带修复Windows重复上传替换竞争；对象目录仍须单进程拥有。
+
+最终 **96项测试通过，30.741秒**，使用 `-W error` 和真实本机HTTP/SMTP九进程。
+新增演示验证唯一入箱通知、续取版本2/3、副本读屏障及其他用户零事件。
+详见[章节记录](docs/chapter24-review.md)和[实测报告](benchmarks/results.md)。未提交或推送。
+
+真实AV/反垃圾和投递反馈、Cc/Bcc/会话线程、完整文件夹管理、公网SMTP/MX、TLS/OAuth/
+DKIM/SPF/DMARC、共识/自动切主、对象与spool复制、备份/保留及十亿用户跨机验收仍未实现。
+本地参考实现不代表章节全部生产要求已经完成。

@@ -12,9 +12,11 @@ from .common import (
     shard_for,
     terms,
 )
+from .mail_records import attachment, indexed_message
+from .replication import Replication
 
 
-class MailStore(Database):
+class MailStore(Replication, Database):
     def __init__(self, path, shard=0, shards=1, replica=False, clock=time.time):
         super().__init__(path)
         self.shard, self.shards, self.replica, self.clock = (
@@ -25,6 +27,8 @@ class MailStore(Database):
         )
         integer(shards, "shards", 1, 32)
         integer(shard, "shard", 0, shards - 1)
+        if type(replica) is not bool:
+            raise ValueError("replica must be boolean")
         self.initialize("""
         CREATE TABLE IF NOT EXISTS metadata(id INTEGER PRIMARY KEY CHECK(id=1),shard INTEGER,shards INTEGER,
             replica INTEGER,lineage TEXT,position INTEGER);
@@ -52,6 +56,10 @@ class MailStore(Database):
                 int(replica),
             ):
                 raise Error(409, "metadata topology/role changed")
+
+    @staticmethod
+    def watermark(db):
+        return dict(db.execute("SELECT lineage,position FROM metadata").fetchone())
 
     def owner(self, user):
         if shard_for(user, self.shards) != self.shard:
@@ -117,23 +125,16 @@ class MailStore(Database):
             "INSERT INTO mails(id,user,descriptor,read,version,deleted) VALUES(?,?,?,0,1,0)",
             (mail, user, dumps(descriptor)),
         )
-        postings = [
-            (mail, field, term)
-            for field, value in (
-                ("subject", descriptor["subject"]),
-                ("sender", descriptor["sender"]),
-                ("body", body),
-            )
-            for term in terms(value)
-        ]
-        if len(postings) > 4096:
-            raise Error(422, "message exceeds 4096 indexed field terms")
-        db.executemany("INSERT INTO postings VALUES(?,?,?)", postings)
+        _, postings = indexed_message(descriptor, body)
+        db.executemany(
+            "INSERT INTO postings VALUES(?,?,?)", [(mail, f, t) for f, t in postings]
+        )
         self.record(db, mail)
 
     def upload(self, user, descriptor):
         self.owner(user)
         self.writable()
+        descriptor = attachment(descriptor)
         upload = uuid.uuid4().hex
         with self.transaction(True) as db:
             db.execute(
@@ -143,7 +144,10 @@ class MailStore(Database):
 
     def attachments(self, user, ids):
         self.owner(user)
-        if not isinstance(ids, list) or len(ids) > 3 or len(set(ids)) != len(ids):
+        if not isinstance(ids, list) or len(ids) > 3:
+            raise ValueError("at most three distinct attachment uploads")
+        ids = [identifier(upload) for upload in ids]
+        if len(set(ids)) != len(ids):
             raise ValueError("at most three distinct attachment uploads")
         result = []
         with self.transaction() as db:
@@ -158,6 +162,8 @@ class MailStore(Database):
         return result
 
     def prior(self, user, key, fingerprint):
+        self.owner(user)
+        identifier(key)
         with self.transaction() as db:
             row = db.execute(
                 "SELECT * FROM receipts WHERE user=? AND key=?", (user, key)
@@ -165,13 +171,24 @@ class MailStore(Database):
             if row:
                 if row["hash"] != fingerprint:
                     raise Error(409, "send idempotency payload conflict")
-                return {"id": row["mail"], "duplicate": True}
+                return {"id": row["mail"], "duplicate": True, **self.watermark(db)}
         return None
 
     def enqueue(self, user, key, fingerprint, descriptor, body, raw):
         self.owner(user)
         self.writable()
         identifier(key)
+        descriptor, _ = indexed_message(descriptor, body)
+        if descriptor["folder"] != "sent":
+            raise ValueError("outbound message belongs in sent folder")
+        if (
+            not isinstance(fingerprint, str)
+            or not fingerprint
+            or len(fingerprint) > 200
+        ):
+            raise ValueError("invalid send fingerprint")
+        if not isinstance(raw, str) or not raw or len(raw) > 80:
+            raise ValueError("invalid raw object reference")
         mail = digest([user, key, "sent"])
         with self.transaction(True) as db:
             old = db.execute(
@@ -180,7 +197,7 @@ class MailStore(Database):
             if old:
                 if old["hash"] != fingerprint:
                     raise Error(409, "send idempotency payload conflict")
-                return {"id": old["mail"], "duplicate": True}
+                return {"id": old["mail"], "duplicate": True, **self.watermark(db)}
             self.insert_mail(db, user, mail, descriptor, body)
             db.execute(
                 "INSERT INTO receipts VALUES(?,?,?,?)", (user, key, fingerprint, mail)
@@ -197,11 +214,15 @@ class MailStore(Database):
                     self.clock(),
                 ),
             )
-            return {"id": mail, "duplicate": False}
+            return {"id": mail, "duplicate": False, **self.watermark(db)}
 
     def receive(self, user, delivery, descriptor, body):
         self.owner(user)
         self.writable()
+        identifier(delivery)
+        descriptor, _ = indexed_message(descriptor, body)
+        if descriptor["folder"] == "sent" or descriptor["delivery_id"] != delivery:
+            raise ValueError("invalid received delivery descriptor")
         fingerprint = digest({"descriptor": descriptor, "body": body})
         mail = digest([user, delivery, "inbox"])
         with self.transaction(True) as db:
@@ -211,17 +232,19 @@ class MailStore(Database):
             if prior:
                 if prior["hash"] != fingerprint:
                     raise Error(409, "delivery payload conflict")
-                return {"id": prior["mail"], "duplicate": True}
+                return {"id": prior["mail"], "duplicate": True, **self.watermark(db)}
             self.insert_mail(db, user, mail, descriptor, body)
             db.execute(
                 "INSERT INTO deliveries VALUES(?,?,?,?)",
                 (user, delivery, fingerprint, mail),
             )
-        return {"id": mail, "duplicate": False}
+            return {"id": mail, "duplicate": False, **self.watermark(db)}
 
     def update(self, user, mail, version, read=None, delete=False):
         self.writable()
         integer(version, "version", 1)
+        if type(delete) is not bool:
+            raise ValueError("delete must be boolean")
         if not delete and type(read) is not bool:
             raise ValueError("read must be boolean")
         with self.transaction(True) as db:
@@ -238,7 +261,12 @@ class MailStore(Database):
                     "UPDATE mails SET read=?,version=version+1 WHERE id=?", (read, mail)
                 )
             self.record(db, mail)
-            return {"id": mail, "version": version + 1, "deleted": delete}
+            return {
+                "id": mail,
+                "version": version + 1,
+                "deleted": delete,
+                **self.watermark(db),
+            }
 
     def listing(self, user, folder="inbox", read=None, before=2**53, q="", field="all"):
         self.owner(user)
@@ -285,8 +313,9 @@ class MailStore(Database):
                 "replica": self.replica,
             }
 
-    def claim(self):
+    def claim(self, lease_seconds=2):
         self.writable()
+        integer(lease_seconds, "lease seconds", 1, 60)
         with self.transaction(True) as db:
             now = self.clock()
             row = db.execute(
@@ -298,34 +327,44 @@ class MailStore(Database):
             token = uuid.uuid4().hex
             db.execute(
                 "UPDATE outbox SET status='inflight',attempts=attempts+1,lease=?,token=? WHERE id=?",
-                (now + 2, token, row["id"]),
+                (now + lease_seconds, token, row["id"]),
             )
             return {
                 **dict(row),
                 "token": token,
+                "lease": now + lease_seconds,
+                "attempts": row["attempts"] + 1,
+                "status": "inflight",
                 "recipients": json.loads(row["recipients"]),
             }
 
     def settle(self, job, error=None):
+        self.writable()
+        if not isinstance(job, dict):
+            raise ValueError("job must be an object")
+        identifier(job["id"])
+        identifier(job["token"])
         with self.transaction(True) as db:
+            now = self.clock()
             row = db.execute(
-                "SELECT * FROM outbox WHERE id=? AND token=? AND status='inflight'",
-                (job["id"], job["token"]),
+                "SELECT * FROM outbox WHERE id=? AND token=? AND status='inflight' AND lease>?",
+                (job["id"], job["token"], now),
             ).fetchone()
             if not row:
                 return False
             if error is not None:
                 db.execute(
-                    "UPDATE outbox SET status='pending',due=?,error=? WHERE id=?",
+                    "UPDATE outbox SET status='pending',due=?,error=?,lease=0,token='' WHERE id=?",
                     (
-                        self.clock() + min(10, 0.1 * 2 ** min(row["attempts"], 6)),
+                        now + min(10, 0.1 * 2 ** min(row["attempts"], 6)),
                         str(error)[:300],
                         row["id"],
                     ),
                 )
             else:
                 db.execute(
-                    "UPDATE outbox SET status='done',error='' WHERE id=?", (row["id"],)
+                    "UPDATE outbox SET status='done',error='',lease=0,token='' WHERE id=?",
+                    (row["id"],),
                 )
                 mail = db.execute(
                     "SELECT * FROM mails WHERE id=?", (row["mail"],)
@@ -338,79 +377,3 @@ class MailStore(Database):
                 )
                 self.record(db, row["mail"])
         return True
-
-    def changes(self, after):
-        integer(after, "after")
-        with self.transaction() as db:
-            meta = dict(db.execute("SELECT * FROM metadata").fetchone())
-            if after > meta["position"]:
-                raise Error(409, "replica cursor ahead of source")
-            changes = []
-            size = 0
-            for row in db.execute(
-                "SELECT * FROM changes WHERE seq>? ORDER BY seq LIMIT 100", (after,)
-            ):
-                entry = {
-                    "seq": row["seq"],
-                    "payload": json.loads(row["payload"]),
-                    "hash": row["hash"],
-                }
-                encoded = len(dumps(entry).encode())
-                if changes and size + encoded > 2 * 1024 * 1024:
-                    break
-                changes.append(entry)
-                size += encoded
-            return {
-                "lineage": meta["lineage"],
-                "shard": self.shard,
-                "shards": self.shards,
-                "head": meta["position"],
-                "changes": changes,
-            }
-
-    def apply(self, batch):
-        if not self.replica or (batch["shard"], batch["shards"]) != (
-            self.shard,
-            self.shards,
-        ):
-            raise Error(409, "replica topology mismatch")
-        with self.transaction(True) as db:
-            meta = dict(db.execute("SELECT * FROM metadata").fetchone())
-            if meta["lineage"] and meta["lineage"] != batch["lineage"]:
-                raise Error(409, "source lineage changed; explicit rebuild required")
-            position = meta["position"]
-            for change in batch["changes"]:
-                if change["seq"] <= position:
-                    continue
-                if (
-                    change["seq"] != position + 1
-                    or digest(change["payload"]) != change["hash"]
-                ):
-                    raise Error(409, "replication gap or checksum mismatch")
-                row = change["payload"]["record"]
-                self.owner(row["user"])
-                db.execute(
-                    "INSERT INTO mails VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET descriptor=excluded.descriptor,read=excluded.read,version=excluded.version,deleted=excluded.deleted",
-                    tuple(
-                        row[k]
-                        for k in (
-                            "local_seq",
-                            "id",
-                            "user",
-                            "descriptor",
-                            "read",
-                            "version",
-                            "deleted",
-                        )
-                    ),
-                )
-                db.execute("DELETE FROM postings WHERE mail=?", (row["id"],))
-                db.executemany(
-                    "INSERT INTO postings VALUES(?,?,?)",
-                    [(row["id"], f, t) for f, t in change["payload"]["terms"]],
-                )
-                position = change["seq"]
-            db.execute(
-                "UPDATE metadata SET lineage=?,position=?", (batch["lineage"], position)
-            )
-        return position

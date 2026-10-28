@@ -2,6 +2,7 @@ from email import policy
 from email.message import EmailMessage
 from email.parser import BytesParser
 from abc import ABC, abstractmethod
+import time
 
 from .common import Error, digest, identifier, text
 from .objects import Objects
@@ -20,19 +21,18 @@ def local_user(value, config):
     return user
 
 
-def send(store, config, user, body):
+def send(store, config, user, body, *, deadline=None, cancel=None):
+    deadline = time.monotonic() + 20 if deadline is None else deadline
     fields = {"request_key", "to", "subject", "body", "attachment_ids"}
     if not isinstance(body, dict) or set(body) != fields:
         raise ValueError("send requires request_key,to,subject,body,attachment_ids")
     identifier(body["request_key"])
-    if (
-        not isinstance(body["to"], list)
-        or not 1 <= len(body["to"]) <= 10
-        or len(set(body["to"])) != len(body["to"])
-    ):
+    if not isinstance(body["to"], list) or not 1 <= len(body["to"]) <= 10:
         raise ValueError("1..10 distinct local recipients required")
     for recipient in body["to"]:
         local_user(recipient, config)
+    if len(set(body["to"])) != len(body["to"]):
+        raise ValueError("1..10 distinct local recipients required")
     subject = text(body["subject"], "subject", 200)
     content = text(body["body"], "body", 65536)
     if "\r" in subject or "\n" in subject:
@@ -42,7 +42,7 @@ def send(store, config, user, body):
         return old
     attachments = store.attachments(user, body["attachment_ids"])
     objects = Objects(config)
-    body_object = objects.put(content.encode())
+    body_object = objects.put(content.encode(), deadline=deadline, cancel=cancel)
     delivery = digest([user, body["request_key"], "delivery"])
     message = EmailMessage(policy=policy.SMTP)
     message["From"], message["To"], message["Subject"] = (
@@ -55,14 +55,14 @@ def send(store, config, user, body):
     message.set_content(content)
     for attachment in attachments:
         message.add_attachment(
-            objects.get(attachment["key"]),
+            objects.get(attachment["key"], deadline=deadline, cancel=cancel),
             maintype="application",
             subtype="octet-stream",
             filename=attachment["filename"],
         )
     if attachments:
         message.set_boundary("local-mime-" + delivery)
-    raw = objects.put(message.as_bytes())["key"]
+    raw = objects.put(message.as_bytes(), deadline=deadline, cancel=cancel)["key"]
     descriptor = {
         "delivery_id": delivery,
         "sender": address(user),
@@ -100,48 +100,103 @@ class UnconfiguredScanner(Scanner):
         return "quarantine", "unscanned", "none"
 
 
-def parse_received(config, raw, sender, recipients, delivery):
-    if len(raw) > 8 * 1024 * 1024:
+def parse_received(
+    config, raw, sender, recipients, delivery, *, deadline=None, cancel=None
+):
+    deadline = time.monotonic() + 20 if deadline is None else deadline
+    if not isinstance(raw, bytes) or not 0 < len(raw) <= 8 * 1024 * 1024:
         raise ValueError("RFC message exceeds 8 MiB")
-    message = BytesParser(policy=policy.default).parsebytes(raw)
+    try:
+        message = BytesParser(policy=policy.default).parsebytes(raw)
+    except (RecursionError, LookupError) as exc:
+        raise ValueError("malformed MIME structure") from exc
     if message.defects:
         raise ValueError("malformed MIME message")
     objects = Objects(config)
     attachments = []
     bodies = []
     scan_bytes = bytearray(raw)
-    parts = list(message.walk())
-    if len(parts) > 20:
-        raise ValueError("too many MIME parts")
+    # An iterative traversal enforces a structural bound without recursively
+    # walking untrusted MIME nesting.
+    parts, pending = [], [message]
+    while pending:
+        part = pending.pop()
+        parts.append(part)
+        if len(parts) > 20:
+            raise ValueError("too many MIME parts")
+        if part.is_multipart():
+            pending.extend(reversed(part.get_payload()))
+    total_decoded = 0
+    attachment_data = []
     for part in parts:
+        for name in (
+            "Subject",
+            "From",
+            "To",
+            "Message-ID",
+            "X-Delivery-ID",
+            "Content-Type",
+            "Content-Transfer-Encoding",
+            "Content-Disposition",
+        ):
+            headers = part.get_all(name, [])
+            if len(headers) > 1 or any(
+                getattr(value, "defects", ()) for value in headers
+            ):
+                raise ValueError("duplicate or malformed MIME header")
         if part.defects:
             raise ValueError("malformed MIME part")
+        if part.get_content_maintype() == "message" or (
+            part.is_multipart() and part.get_content_disposition() == "attachment"
+        ):
+            raise ValueError(
+                "nested message/container attachments are unsupported; use octet-stream"
+            )
         if part.is_multipart():
             continue
         payload = part.get_payload(decode=True) or b""
+        # Transfer decoding itself can discover defects (notably bad base64).
+        if part.defects:
+            raise ValueError("malformed MIME transfer encoding")
+        total_decoded += len(payload)
+        if total_decoded > 8 * 1024 * 1024:
+            raise ValueError("decoded MIME exceeds 8 MiB")
         scan_bytes.extend(payload)
         if part.get_content_disposition() == "attachment" or part.get_filename():
-            if len(payload) > 2 * 1024 * 1024 or len(attachments) >= 3:
+            if len(payload) > 2 * 1024 * 1024 or len(attachment_data) >= 3:
                 raise ValueError("attachment limits exceeded")
             filename = text(part.get_filename() or "attachment.bin", "filename", 200)
-            attachments.append({**objects.put(payload), "filename": filename})
+            attachment_data.append((filename, payload))
         elif part.get_content_type() == "text/plain":
-            bodies.append(
-                payload.decode(part.get_content_charset() or "utf-8", errors="strict")
-            )
+            try:
+                bodies.append(
+                    payload.decode(
+                        part.get_content_charset() or "utf-8", errors="strict"
+                    )
+                )
+            except (LookupError, UnicodeError) as exc:
+                raise ValueError("invalid text MIME charset or payload") from exc
     body = text("\n".join(bodies), "body", 65536)
+    subject = text(str(message.get("Subject", "")), "subject", 200)
     scanner = (
         TestMarkerScanner()
         if config.get("scanner") == "test-markers"
         else UnconfiguredScanner()
     )
     folder, status, engine = scanner.scan(bytes(scan_bytes))
+    for filename, payload in attachment_data:
+        attachments.append(
+            {
+                **objects.put(payload, deadline=deadline, cancel=cancel),
+                "filename": filename,
+            }
+        )
     descriptor = {
         "delivery_id": delivery,
         "sender": sender,
         "recipients": recipients,
-        "subject": text(str(message.get("Subject", "")), "subject", 200),
-        "body_key": objects.put(body.encode())["key"],
+        "subject": subject,
+        "body_key": objects.put(body.encode(), deadline=deadline, cancel=cancel)["key"],
         "attachments": attachments,
         "folder": folder,
         "delivery": "received",

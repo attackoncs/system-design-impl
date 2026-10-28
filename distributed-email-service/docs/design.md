@@ -53,3 +53,51 @@ Each primary mutation appends a checksum-protected metadata/index change in the 
 Reads expose `lineage`, `position` and the chosen primary/replica source. The router prefers primary reads and falls back to the configured replica only on availability errors, or clients may request `replica=true`. Authoritative 404/409 responses are not masked by an older replica. A replica can serve its last durable state while the primary is unavailable, even while its poll status shows an error. This explicitly permits stale mail, read flags and deletion visibility. There is no read-your-writes barrier or linearizable read claim. Writes never fail over to the replica, and there is no election/split-brain promotion.
 
 Only mailbox metadata and postings replicate; send queues, upload ownership and dedup control tables stay on primaries. Thus the replicas cannot safely replace a lost primary for write service. Process-restart tests retain all local disks. Production reliability requires replicated primary storage/control tables, replicated objects/spool, an election/fencing protocol, privacy lifecycle and multi-host validation. The original billion-user/100k-send-QPS targets are not proven by this local lab.
+
+## Chapter 24 engineering review (2026-10-26)
+
+The review adds `GET /v1/folders` (four fixed folders with total/unread counts),
+`GET /v1/folders/{folder}/messages`, and `GET /v1/changes?after=0&wait=2`.
+Changes contain only the authenticated user's message ID, version, read/deleted
+flags and folder. Resume with both `after` and the returned `lineage`; pages
+contain at most 100 events, `more` indicates another page, and `position` is the
+next cursor (it can also advance past other users' shard events). `head` is the
+snapshot's shard watermark. Long polling waits at most two seconds. This is a
+durable HTTP notification fallback, not WebSocket/JMAP. A missing historical log
+on an older replica returns 409: refresh the mailbox and resume from its current
+watermark. No body or attachment content is included in notification events.
+
+GET requests accept `min_position=N&lineage=L`. A lagging node returns 503;
+replacement lineage returns 409. Write receipts include their transaction's
+watermark. Without a barrier, replica fallback can still be stale. Folder and
+listing metadata use a process-local LRU bounded to 128 entries/4 MiB, keyed by
+user, filters and exact lineage/position. Returned values are isolated copies;
+new commits invalidate reuse. This is not a distributed Redis cache.
+
+The code separates record validation, replica application, receiving spool,
+route contracts, direct transport and bounded server ownership. Sender claims
+use 30-second leases with a shared 20-second I/O budget; receive claims use
+90-second leases with a shared 60-second budget. Settlement checks token and
+expiry after the writer lock. Metadata/index/log/checkpoint update atomically;
+replicas validate replays and retain the full change log. SMTP AUTH requires
+`local-worker` plus the private SMTP token. SMTP and HTTP each admit at most
+32 concurrent connections/requests. Shutdown cancels socket I/O and drains owned
+threads; socket deadlines do not forcibly terminate arbitrary SQL/CPU/DNS work.
+
+MIME validates decoded defects, duplicate fields, charset and decoded budgets;
+nested message/rfc822 or multipart-container attachments are explicitly rejected
+(use octet-stream). Object reads are bounded, receipts verify SHA256/length, and
+64 fixed publication lock stripes protect duplicate uploads on Windows. One
+object-service process must own its data directory.
+
+Final validation: **96 tests passed, 30.741 seconds**, `-W error`, with actual
+localhost HTTP/SMTP and nine processes. The new notification demo verified one
+inbox event, versions 2/3 after resume, replica read barrier and zero outsider
+events. See [review evidence](chapter24-review.md) and
+[measurements](../benchmarks/results.md). No commits or pushes were made.
+
+Remaining chapter-scale work includes real AV/spam and deliverability feedback,
+Cc/Bcc and conversation threading, complete folder management, public SMTP/MX,
+TLS/OAuth/DKIM/SPF/DMARC, placement/consensus and write-primary failover, replicated
+objects/spool, backup/retention and multi-host/billion-user validation. This
+reference does not claim all production requirements are implemented.

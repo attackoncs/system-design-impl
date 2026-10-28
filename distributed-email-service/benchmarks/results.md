@@ -1,3 +1,22 @@
+# 2026-10-26 engineering review
+
+96 tests passed in30.741s (`-W error`, no skips). Actual nine-process feature
+notification342.560ms; original SMTP demo send-to-replica-search535.690ms.
+Forty accepted/unique SMTP deliveries/replica search matches:40/40/40.
+Admission1.002s,39.93messages/s; fully delivered and replicated4.973s,8.04messages/s.
+Forty repeated searches/four clients:p50/p9543.571/58.355ms,93.04QPS.
+Process-local metadata LRU now exists and may benefit repeated queries.
+SQLite sampled bytes1,175,552; object bytes18,000. Sidecar size sampling is an
+approximation, not an atomic storage snapshot. This small localhost measurement
+is not a controlled speedup comparison, sustained capacity or durability SLA.
+
+[Raw performance](review-2026-10-26.json), [feature evidence](features-2026-10-26.json),
+[chapter review](../docs/chapter24-review.md).
+
+---
+
+## Historical 2026-10-20 report (before the metadata cache)
+
 # Validation and measurements
 
 Date: 2026-10-20. Python 3.13.9, Windows 11 build 26100. All recipients are synthetic configured `local.test` accounts. No email was sent to an external system. Raw data: [results.json](results.json).

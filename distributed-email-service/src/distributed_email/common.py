@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 import re
 import sqlite3
-from urllib.request import Request, urlopen
 
 
 class Error(Exception):
@@ -81,18 +80,18 @@ class Database:
             db.close()
 
 
-def http_json(url, token, body=None, method=None, timeout=5):
-    request = Request(
+def http_json(
+    url, token, body=None, method=None, timeout=5, *, deadline=None, cancel=None
+):
+    """One direct, bounded RPC; credentials never follow proxies or redirects."""
+    from .transport import request
+
+    return request(
         url,
-        data=None if body is None else dumps(body).encode(),
-        method=method,
-        headers={
-            "Authorization": "Bearer " + token,
-            "Content-Type": "application/json",
-        },
+        method or ("POST" if body is not None else "GET"),
+        body,
+        token,
+        timeout=timeout,
+        deadline=deadline,
+        cancel=cancel,
     )
-    with urlopen(request, timeout=timeout) as response:
-        raw = response.read(20 * 1024 * 1024 + 1)
-        if len(raw) > 20 * 1024 * 1024:
-            raise Error(413, "response exceeds 20 MiB")
-        return json.loads(raw)
