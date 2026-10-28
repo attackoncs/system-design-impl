@@ -199,6 +199,8 @@ class SlidingWindowCounterAlgorithm(algorithms_base.BaseAlgorithm):
         keys = [key_prefix]
         args = [str(rule.limit), str(rule.window), str(now)]
 
+        args.append(str(2 * rule.window + 1))
+
         result = storage.execute_algorithm(
             LUA_SCRIPT, _memory_sliding_window_counter_script, keys, args
         )

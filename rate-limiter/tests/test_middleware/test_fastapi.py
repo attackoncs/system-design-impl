@@ -19,7 +19,9 @@ def _create_app(
     """Create a FastAPI app with rate limiting middleware configured."""
     app = fastapi.FastAPI()
 
-    config = rate_limiter.config.RateLimiterConfig(rules=rules, storage_backend="memory")
+    config = rate_limiter.config.RateLimiterConfig(
+        rules=rules, storage_backend="memory"
+    )
     limiter = rate_limiter.core.RateLimiter(config)
 
     app.add_middleware(
@@ -254,7 +256,12 @@ class TestIndependentRateLimits:
         counters.
         """
         rule = rate_limiter.config.RateLimitRule(
-            limit=1, window=60, algorithm=rate_limiter.config.Algorithm.TOKEN_BUCKET
+            limit=1,
+            window=60,
+            algorithm=rate_limiter.config.Algorithm.TOKEN_BUCKET,
+            key_func=lambda req: __import__(
+                "rate_limiter.keys", fromlist=["ip_key"]
+            ).ip_key(req, trust_forwarded=True),
         )
         app = _create_app([rule])
         client = starlette.testclient.TestClient(app)
@@ -328,18 +335,23 @@ def test_slow_storage_does_not_block_event_loop():
     from starlette.responses import Response
 
     release = threading.Event()
+
     class SlowLimiter:
+        config = rate_limiter.config.RateLimiterConfig()
+
         def check_request(self, request):
             if not release.wait(2):
-                raise AssertionError('synchronous storage blocked the event loop')
+                raise AssertionError("synchronous storage blocked the event loop")
             return RateLimitResult(True, 1, 2, 0, None)
 
     async def exercise():
         middleware = rate_limiter.middleware.fastapi.RateLimitMiddleware(
             None, limiter=SlowLimiter()
         )
+
         async def next_handler(request):
-            return Response('ok')
+            return Response("ok")
+
         task = asyncio.create_task(middleware.dispatch(None, next_handler))
         try:
             await asyncio.sleep(0.05)
@@ -348,4 +360,5 @@ def test_slow_storage_does_not_block_event_loop():
             assert response.status_code == 200
         finally:
             release.set()
+
     asyncio.run(exercise())

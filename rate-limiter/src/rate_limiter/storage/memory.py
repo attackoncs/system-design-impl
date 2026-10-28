@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import threading
 import time
+from collections import OrderedDict
 from typing import Any
 
 from rate_limiter.storage import base as storage_base
+from rate_limiter.storage.clocks import checked_time, delay_for_clock_regression
 
 
 class MemoryStorage(storage_base.BaseStorage):
@@ -18,10 +20,28 @@ class MemoryStorage(storage_base.BaseStorage):
     Atomicity provides mutual exclusion, not rollback on callback failure.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, max_keys: int = 100_000, clock=None) -> None:
+        if type(max_keys) is not int or max_keys < 4:
+            raise ValueError("max_keys must be an integer >= 4")
         self._data: dict[str, str] = {}
-        self._expiry: dict[str, float] = {}
+        self._expiry: dict[str, float] = OrderedDict()
         self._lock = threading.RLock()
+        self._max_keys = max_keys
+        self._clock = clock
+        self._next_sweep = 0.0
+
+    def _sweep(self, budget: int = 64, *, force: bool = False) -> None:
+        """Visit a bounded number of deadlines, including otherwise idle keys."""
+        now = time.monotonic()
+        if not force and now < self._next_sweep:
+            return
+        self._next_sweep = now + 0.05
+        for _ in range(min(budget, len(self._expiry))):
+            key, expiry = self._expiry.popitem(last=False)
+            if now >= expiry:
+                self._data.pop(key, None)
+            else:
+                self._expiry[key] = expiry
 
     def _is_expired(self, key: str) -> bool:
         """Check if a key has expired.
@@ -36,17 +56,6 @@ class MemoryStorage(storage_base.BaseStorage):
             return time.monotonic() >= self._expiry[key]
         return False
 
-    def _cleanup_expired(self) -> None:
-        """Remove all expired keys from storage.
-
-        This method should be called under the lock.
-        """
-        now = time.monotonic()
-        expired_keys = [key for key, expiry in self._expiry.items() if now >= expiry]
-        for key in expired_keys:
-            self._data.pop(key, None)
-            self._expiry.pop(key, None)
-
     def get(self, key: str) -> str | None:
         """Get a value by key, returning None if expired or missing.
 
@@ -58,6 +67,7 @@ class MemoryStorage(storage_base.BaseStorage):
             exist or has expired.
         """
         with self._lock:
+            self._sweep()
             return self.get_unlocked(key)
 
     def set(self, key: str, value: str, ttl: int | None = None) -> None:
@@ -69,6 +79,7 @@ class MemoryStorage(storage_base.BaseStorage):
             ttl: Time-to-live in seconds. None means no expiration.
         """
         with self._lock:
+            self._sweep()
             self.set_unlocked(key, value, ttl)
 
     def increment(self, key: str, amount: int = 1, ttl: int | None = None) -> int:
@@ -96,7 +107,19 @@ class MemoryStorage(storage_base.BaseStorage):
         args: list[str],
     ) -> Any:
         """Execute the Python implementation of an atomic algorithm."""
-        return self.execute_atomic(memory_script, keys, args)
+        with self._lock:
+            self._sweep()
+            args = list(args)
+            wall = checked_time(
+                self._clock() if self._clock is not None else time.time()
+            )
+            clock_key = keys[0] + ":clock-v2"
+            previous = self.get_unlocked(clock_key)
+            now = max(wall, checked_time(previous)) if previous is not None else wall
+            args[2] = str(now)
+            result = memory_script(keys, args, self)
+            self.set_unlocked(clock_key, str(now), int(args[-1]))
+            return delay_for_clock_regression(result, now - wall)
 
     def execute_atomic(self, script: Any, keys: list[str], args: list[str]) -> Any:
         """Execute an atomic operation under the lock.
@@ -125,6 +148,7 @@ class MemoryStorage(storage_base.BaseStorage):
             )
 
         with self._lock:
+            self._sweep()
             return script(keys, args, self)
 
     def get_unlocked(self, key: str) -> str | None:
@@ -152,6 +176,14 @@ class MemoryStorage(storage_base.BaseStorage):
             value: The value to store.
             ttl: Time-to-live in seconds. None means no expiration.
         """
+        if ttl is not None and (type(ttl) is not int or ttl <= 0):
+            raise ValueError("ttl must be a positive integer")
+        if key not in self._data and len(self._data) >= self._max_keys:
+            # Bound pressure cleanup too; never scan the complete live map or
+            # evict a live quota to admit a new subject.
+            self._sweep(128, force=True)
+            if len(self._data) >= self._max_keys:
+                raise MemoryError("rate limiter state capacity reached")
         self._data[key] = value
         if ttl is not None:
             self._expiry[key] = time.monotonic() + ttl
@@ -176,9 +208,10 @@ class MemoryStorage(storage_base.BaseStorage):
 
         current = int(self._data.get(key, "0"))
         new_value = current + amount
-        self._data[key] = str(new_value)
-
-        if ttl is not None:
-            self._expiry[key] = time.monotonic() + ttl
+        # Match Redis INCRBY: preserve an existing TTL unless one is supplied.
+        retained_ttl = self._expiry.get(key) if ttl is None else None
+        self.set_unlocked(key, str(new_value), ttl)
+        if retained_ttl is not None:
+            self._expiry[key] = retained_ttl
 
         return new_value

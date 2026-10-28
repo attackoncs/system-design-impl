@@ -32,7 +32,7 @@ config.add_rule(
 )  # 1000 req/hour per IP
 
 # Initialize the extension — this registers before/after request hooks
-rate_limiter = rate_limiter.middleware.flask.RateLimitExtension(
+rate_limit_extension = rate_limiter.middleware.flask.RateLimitExtension(
     app, config=config.get_config(), auto_headers=True
 )
 
@@ -70,7 +70,9 @@ def get_data():
 
 
 @app.route("/api/strict")
-@rate_limiter.middleware.flask.rate_limit(limit=5, window=60, algorithm="token_bucket", key_type="ip")
+@rate_limiter.middleware.flask.rate_limit(
+    limit=5, window=60, algorithm="token_bucket", key_type="ip"
+)
 def strict_endpoint():
     """Strict endpoint — only 5 requests per minute per IP.
 
@@ -86,7 +88,9 @@ def strict_endpoint():
 
 
 @app.route("/api/upload", methods=["POST"])
-@rate_limiter.middleware.flask.rate_limit(limit=3, window=60, algorithm="fixed_window", key_type="ip")
+@rate_limiter.middleware.flask.rate_limit(
+    limit=3, window=60, algorithm="fixed_window", key_type="ip"
+)
 def upload_endpoint():
     """Upload endpoint — very strict limit using fixed window algorithm.
 
@@ -106,7 +110,9 @@ def upload_endpoint():
 
 
 @app.route("/api/sliding")
-@rate_limiter.middleware.flask.rate_limit(limit=10, window=60, algorithm="sliding_window_log", key_type="ip")
+@rate_limiter.middleware.flask.rate_limit(
+    limit=10, window=60, algorithm="sliding_window_log", key_type="ip"
+)
 def sliding_window_endpoint():
     """Endpoint using sliding window log algorithm.
 
@@ -122,7 +128,9 @@ def sliding_window_endpoint():
 
 
 @app.route("/api/leaky")
-@rate_limiter.middleware.flask.rate_limit(limit=8, window=60, algorithm="leaking_bucket", key_type="ip")
+@rate_limiter.middleware.flask.rate_limit(
+    limit=8, window=60, algorithm="leaking_bucket", key_type="ip"
+)
 def leaky_bucket_endpoint():
     """Endpoint using leaking bucket algorithm.
 
@@ -160,11 +168,15 @@ custom_key_rule = rate_limiter.config.RateLimitRule(
     algorithm=rate_limiter.config.Algorithm.TOKEN_BUCKET,
     key_func=api_key_extractor,
 )
-custom_key_limiter = rate_limiter.core.RateLimiter(rate_limiter.config.RateLimiterConfig(rules=[custom_key_rule]))
+custom_key_limiter = rate_limiter.core.RateLimiter(
+    rate_limiter.config.RateLimiterConfig(rules=[custom_key_rule])
+)
 
 
 @app.route("/api/custom-key")
-@rate_limiter.middleware.flask.rate_limit(limit=20, window=60, algorithm="token_bucket", key_type="ip")
+@rate_limiter.middleware.flask.rate_limit(
+    limit=20, window=60, algorithm="token_bucket", key_type="ip"
+)
 def custom_key_endpoint():
     """Endpoint demonstrating custom key-based rate limiting.
 
@@ -193,9 +205,7 @@ def composite_key_endpoint():
     """
     return flask.jsonify(
         {
-            "message": (
-                "Rate limited by path (shared counter for this endpoint)."
-            ),
+            "message": ("Rate limited by path (shared counter for this endpoint)."),
             "path": flask.request.path,
             "client_ip": flask.request.remote_addr,
         }
@@ -236,10 +246,7 @@ if __name__ == "__main__":
     print("  POST /api/upload        - Upload limit (3 req/min, fixed window)")
     print("  GET  /api/sliding       - Sliding window log (10 req/min)")
     print("  GET  /api/leaky         - Leaking bucket (8 req/min)")
-    print(
-        "  GET  /api/custom-key    - Custom key function (20 req/min per API"
-        " key)"
-    )
+    print("  GET  /api/custom-key    - Custom key function (20 req/min per API key)")
     print(
         "  GET  /api/composite-key - Path-based key (15 req/min, sliding window"
         " counter)"

@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from typing import Any
+import math
 
 import redis
+from redis.backoff import NoBackoff
+from redis.retry import Retry
 
 from rate_limiter.storage import base as storage_base
+from rate_limiter.storage.clocks import with_server_clock
 
 
 class RedisStorage(storage_base.BaseStorage):
@@ -16,17 +20,30 @@ class RedisStorage(storage_base.BaseStorage):
     atomic execute_atomic calls.
     """
 
-    def __init__(self, redis_url: str = "redis://localhost:6379") -> None:
+    def __init__(
+        self,
+        redis_url: str = "redis://localhost:6379",
+        *,
+        socket_timeout: float = 2,
+        max_connections: int = 64,
+    ) -> None:
         """Initialize Redis storage.
 
         Args:
             redis_url: Redis connection URL. Defaults to localhost:6379.
         """
+        if not math.isfinite(socket_timeout) or not 0 < socket_timeout <= 60:
+            raise ValueError("socket_timeout must be in (0, 60]")
+        if type(max_connections) is not int or max_connections <= 0:
+            raise ValueError("max_connections must be a positive integer")
         self._client: redis.Redis = redis.Redis.from_url(
             redis_url,
             decode_responses=False,
-            socket_connect_timeout=2,
-            socket_timeout=2,
+            socket_connect_timeout=socket_timeout,
+            socket_timeout=socket_timeout,
+            max_connections=max_connections,
+            retry=Retry(NoBackoff(), 0),
+            retry_on_error=[],
         )
 
     def get(self, key: str) -> str | None:
@@ -92,3 +109,12 @@ class RedisStorage(storage_base.BaseStorage):
             The result of the Lua script execution.
         """
         return self._client.eval(script, len(keys), *keys, *args)
+
+    def execute_algorithm(self, lua_script, memory_script, keys, args):
+        return self.execute_atomic(
+            with_server_clock(lua_script), [*keys, keys[0] + ":clock-v2"], args
+        )
+
+    def close(self) -> None:
+        """Release this instance's connection pool."""
+        self._client.close()

@@ -10,6 +10,7 @@ import flask
 from rate_limiter import config as rate_limiter_config
 from rate_limiter import core as rate_limiter_core
 from rate_limiter.middleware.configuration import RateLimitConfig, build_rule
+from rate_limiter.responses import rate_limit_headers, rejection_body
 
 
 class RateLimitExtension:
@@ -112,40 +113,16 @@ class RateLimitExtension:
         Returns:
             Response dictionary for Flask.
         """
-        response = flask.jsonify(
-            {
-                "error": "Too Many Requests",
-                "message": (
-                    "Rate limit exceeded. Try again in"
-                    f" {result.retry_after or result.reset_after:.1f} seconds."
-                ),
-                "retry_after": result.retry_after or result.reset_after,
-            }
-        )
-        response.status_code = 429
-        response.headers["X-RateLimit-Limit"] = str(result.limit)
-        response.headers["X-RateLimit-Remaining"] = str(result.remaining)
-        response.headers["X-RateLimit-Reset"] = str(result.reset_after)
-        response.headers["Retry-After"] = str(result.retry_after or result.reset_after)
+        response = flask.jsonify(rejection_body(result))
+        response.status_code = self.limiter.config.default_response_code
+        if self.auto_headers and self.limiter.config.include_headers:
+            response.headers.update(rate_limit_headers(result))
         return response
 
-    def _add_rate_limit_headers(self, response) -> dict:
-        """Add rate limit headers to a response.
-
-        This method is called by Flask's after_request hook.
-
-        Args:
-            response: The response to add headers to.
-
-        Returns:
-            The modified response.
-        """
-        rate_limit_result = getattr(flask.g, "rate_limit_result", None)
-        if rate_limit_result is not None:
-            response.headers["X-RateLimit-Limit"] = str(rate_limit_result.limit)
-            response.headers["X-RateLimit-Remaining"] = str(rate_limit_result.remaining)
-            response.headers["X-RateLimit-Reset"] = str(rate_limit_result.reset_after)
-
+    def _add_rate_limit_headers(self, response):
+        result = getattr(flask.g, "rate_limit_result", None)
+        if result is not None and self.limiter.config.include_headers:
+            response.headers.update(rate_limit_headers(result))
         return response
 
 

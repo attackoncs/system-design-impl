@@ -28,8 +28,8 @@ def basic_in_memory_example():
 
     for i in range(7):
         result = limiter.check_request(user_id, rules=[rule])
-        status = "✅ ALLOWED" if result.allowed else "❌ DENIED"
-        print(f"Request {i+1}: {status} - {result.remaining} remaining")
+        status = "ALLOWED" if result.allowed else "DENIED"
+        print(f"Request {i + 1}: {status} - {result.remaining} remaining")
 
         # Wait a bit between requests
         time.sleep(0.5)
@@ -43,7 +43,10 @@ def multiple_algorithms_example():
     algorithms = [
         ("Token Bucket", rate_limiter.config.Algorithm.TOKEN_BUCKET),
         ("Fixed Window", rate_limiter.config.Algorithm.FIXED_WINDOW),
-        ("Sliding Window Counter", rate_limiter.config.Algorithm.SLIDING_WINDOW_COUNTER),
+        (
+            "Sliding Window Counter",
+            rate_limiter.config.Algorithm.SLIDING_WINDOW_COUNTER,
+        ),
         ("Sliding Window Log", rate_limiter.config.Algorithm.SLIDING_WINDOW_LOG),
     ]
 
@@ -55,8 +58,8 @@ def multiple_algorithms_example():
 
         for i in range(5):
             result = limiter.check_request("test_user", rules=[rule])
-            status = "✅" if result.allowed else "❌"
-            print(f"  Request {i+1}: {status} - {result.remaining} remaining")
+            status = "ALLOW" if result.allowed else "DENY"
+            print(f"  Request {i + 1}: {status} - {result.remaining} remaining")
             time.sleep(0.3)
 
 
@@ -65,22 +68,24 @@ def burst_example():
     print("\n=== Burst Behavior Example ===\n")
 
     # Token bucket allows bursts up to the limit
-    rule = rate_limiter.config.RateLimitRule(limit=10, window=60, algorithm=rate_limiter.config.Algorithm.TOKEN_BUCKET)
+    rule = rate_limiter.config.RateLimitRule(
+        limit=10, window=60, algorithm=rate_limiter.config.Algorithm.TOKEN_BUCKET
+    )
     config = rate_limiter.config.RateLimiterConfig(rules=[rule])
     limiter = rate_limiter.core.RateLimiter(config)
 
     print("Making 10 rapid requests (token bucket should allow burst):")
     for i in range(10):
         result = limiter.check_request("burst_user", rules=[rule])
-        status = "✅" if result.allowed else "❌"
-        print(f"  Request {i+1}: {status}")
+        status = "ALLOW" if result.allowed else "DENY"
+        print(f"  Request {i + 1}: {status}")
     print("Expected: All 10 requests should be ALLOWED (burst capacity)")
 
     print("\nMaking 2 more requests:")
     for i in range(2):
         result = limiter.check_request("burst_user", rules=[rule])
-        status = "✅" if result.allowed else "❌"
-        print(f"  Request {i+1}: {status}")
+        status = "ALLOW" if result.allowed else "DENY"
+        print(f"  Request {i + 1}: {status}")
     print("Expected: Both should be DENIED (bucket empty)")
 
 
@@ -88,15 +93,17 @@ def fixed_window_example():
     """Example showing fixed window behavior."""
     print("\n=== Fixed Window Behavior ===\n")
 
-    rule = rate_limiter.config.RateLimitRule(limit=5, window=3, algorithm=rate_limiter.config.Algorithm.FIXED_WINDOW)
+    rule = rate_limiter.config.RateLimitRule(
+        limit=5, window=3, algorithm=rate_limiter.config.Algorithm.FIXED_WINDOW
+    )
     config = rate_limiter.config.RateLimiterConfig(rules=[rule])
     limiter = rate_limiter.core.RateLimiter(config)
 
     print("Making 5 requests within the window:")
     for i in range(5):
         result = limiter.check_request("window_user", rules=[rule])
-        status = "✅" if result.allowed else "❌"
-        print(f"  Request {i+1}: {status}")
+        status = "ALLOW" if result.allowed else "DENY"
+        print(f"  Request {i + 1}: {status}")
 
     print("\nWaiting for window to reset...")
     time.sleep(3.5)
@@ -104,8 +111,8 @@ def fixed_window_example():
     print("\nMaking 2 more requests after window reset:")
     for i in range(2):
         result = limiter.check_request("window_user", rules=[rule])
-        status = "✅" if result.allowed else "❌"
-        print(f"  Request {i+1}: {status}")
+        status = "ALLOW" if result.allowed else "DENY"
+        print(f"  Request {i + 1}: {status}")
 
 
 def sliding_window_example():
@@ -113,7 +120,9 @@ def sliding_window_example():
     print("\n=== Sliding Window Behavior ===\n")
 
     rule = rate_limiter.config.RateLimitRule(
-        limit=5, window=5, algorithm=rate_limiter.config.Algorithm.SLIDING_WINDOW_COUNTER
+        limit=5,
+        window=5,
+        algorithm=rate_limiter.config.Algorithm.SLIDING_WINDOW_COUNTER,
     )
     config = rate_limiter.config.RateLimiterConfig(rules=[rule])
     limiter = rate_limiter.core.RateLimiter(config)
@@ -121,8 +130,8 @@ def sliding_window_example():
     print("Making 3 requests at the start:")
     for i in range(3):
         result = limiter.check_request("sliding_user", rules=[rule])
-        status = "✅" if result.allowed else "❌"
-        print(f"  Request {i+1}: {status}")
+        status = "ALLOW" if result.allowed else "DENY"
+        print(f"  Request {i + 1}: {status}")
 
     print("\nWaiting 3 seconds (window sliding):")
     time.sleep(3)
@@ -130,8 +139,8 @@ def sliding_window_example():
     print("\nMaking 3 more requests:")
     for i in range(3):
         result = limiter.check_request("sliding_user", rules=[rule])
-        status = "✅" if result.allowed else "❌"
-        print(f"  Request {i+1}: {status}")
+        status = "ALLOW" if result.allowed else "DENY"
+        print(f"  Request {i + 1}: {status}")
 
 
 def multiple_rules_example():
@@ -152,8 +161,8 @@ def multiple_rules_example():
     print("Making requests against both rules (strict=2, permissive=10):")
     for i in range(7):
         result = limiter.check_request("multi_user")
-        status = "✅ ALLOWED" if result.allowed else "❌ DENIED"
-        print(f"  Request {i+1}: {status} - {result.remaining} remaining")
+        status = "ALLOWED" if result.allowed else "DENIED"
+        print(f"  Request {i + 1}: {status} - {result.remaining} remaining")
         time.sleep(0.5)
 
 
@@ -163,14 +172,18 @@ def storage_backend_example():
 
     # In-memory storage
     print("Using in-memory storage:")
-    rule = rate_limiter.config.RateLimitRule(limit=3, window=5, algorithm=rate_limiter.config.Algorithm.TOKEN_BUCKET)
-    config = rate_limiter.config.RateLimiterConfig(storage_backend="memory", rules=[rule])
+    rule = rate_limiter.config.RateLimitRule(
+        limit=3, window=5, algorithm=rate_limiter.config.Algorithm.TOKEN_BUCKET
+    )
+    config = rate_limiter.config.RateLimiterConfig(
+        storage_backend="memory", rules=[rule]
+    )
     limiter = rate_limiter.core.RateLimiter(config)
 
     for i in range(4):
         result = limiter.check_request("storage_user", rules=[rule])
-        status = "✅" if result.allowed else "❌"
-        print(f"  Request {i+1}: {status}")
+        status = "ALLOW" if result.allowed else "DENY"
+        print(f"  Request {i + 1}: {status}")
         time.sleep(0.5)
 
 
@@ -188,8 +201,8 @@ def dynamic_rules_example():
     print("Initial strict rules (2 requests per 10 seconds):")
     for i in range(4):
         result = limiter.check_request("dynamic_user", rules=[initial_rule])
-        status = "✅" if result.allowed else "❌"
-        print(f"  Request {i+1}: {status}")
+        status = "ALLOW" if result.allowed else "DENY"
+        print(f"  Request {i + 1}: {status}")
         time.sleep(0.5)
 
     # Update to more permissive rules
@@ -201,8 +214,8 @@ def dynamic_rules_example():
 
     for i in range(4):
         result = limiter.check_request("dynamic_user", rules=[new_rule])
-        status = "✅" if result.allowed else "❌"
-        print(f"  Request {i+1}: {status}")
+        status = "ALLOW" if result.allowed else "DENY"
+        print(f"  Request {i + 1}: {status}")
         time.sleep(0.5)
 
 

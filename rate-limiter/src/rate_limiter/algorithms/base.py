@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import abc
 import dataclasses
+import math
 
 from rate_limiter import config
 from rate_limiter.storage import base
@@ -30,13 +31,34 @@ class RateLimitResult:
     @classmethod
     def from_storage(cls, values) -> "RateLimitResult":
         """Decode the five-field result shared by Lua and memory callbacks."""
-        allowed = bool(int(values[0]))
+        if not isinstance(values, (list, tuple)) or len(values) != 5:
+            raise ValueError("storage result must have five fields")
+        integers = []
+        for value in values[:3]:
+            if isinstance(value, bool):
+                raise ValueError("storage integers must not be bool")
+            if type(value) is int:
+                number = value
+            else:
+                number = int(value)
+                if float(value) != number:
+                    raise ValueError("storage result contains a fractional integer")
+            integers.append(number)
+        flag, remaining, limit = integers
+        reset, retry = float(values[3]), float(values[4])
+        if flag not in (0, 1) or not 0 <= remaining <= limit or limit <= 0:
+            raise ValueError("invalid storage counters")
+        if not all(math.isfinite(value) and value >= 0 for value in (reset, retry)):
+            raise ValueError("invalid storage delay")
+        if (not flag and (remaining != 0 or retry <= 0)) or (flag and retry != 0):
+            raise ValueError("inconsistent storage decision")
+        allowed = bool(flag)
         return cls(
             allowed=allowed,
-            remaining=int(values[1]),
-            limit=int(values[2]),
-            reset_after=float(values[3]),
-            retry_after=None if allowed else float(values[4]),
+            remaining=remaining,
+            limit=limit,
+            reset_after=reset,
+            retry_after=None if allowed else retry,
         )
 
 

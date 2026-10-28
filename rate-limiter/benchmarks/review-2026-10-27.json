@@ -1,0 +1,107 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "source": "E:\\share\\system-design-impl\\system-design-impl\\rate-limiter\\src",
+  "measurements": [
+    {
+      "algorithm": "token_bucket",
+      "clients": 1,
+      "checks": 10000,
+      "elapsed_seconds": 0.24305989999993471,
+      "checks_per_second": 41142.12175682902,
+      "p50_ms": 0.022499996703118086,
+      "p95_ms": 0.027199996111448854,
+      "p99_ms": 0.03960000321967527
+    },
+    {
+      "algorithm": "leaking_bucket",
+      "clients": 1,
+      "checks": 10000,
+      "elapsed_seconds": 0.23837450000428362,
+      "checks_per_second": 41950.79591072157,
+      "p50_ms": 0.022599997464567423,
+      "p95_ms": 0.027499998395796865,
+      "p99_ms": 0.043999993067700416
+    },
+    {
+      "algorithm": "fixed_window",
+      "clients": 1,
+      "checks": 10000,
+      "elapsed_seconds": 0.21143499999743653,
+      "checks_per_second": 47295.8592480963,
+      "p50_ms": 0.01979999797185883,
+      "p95_ms": 0.02340000355616212,
+      "p99_ms": 0.03719999949680641
+    },
+    {
+      "algorithm": "sliding_window_log",
+      "clients": 1,
+      "checks": 10000,
+      "elapsed_seconds": 0.5998441999981878,
+      "checks_per_second": 16670.995568566323,
+      "p50_ms": 0.05919999966863543,
+      "p95_ms": 0.08449999586446211,
+      "p99_ms": 0.12319999950705096
+    },
+    {
+      "algorithm": "sliding_window_counter",
+      "clients": 1,
+      "checks": 10000,
+      "elapsed_seconds": 0.22121920000063255,
+      "checks_per_second": 45204.032922872,
+      "p50_ms": 0.02010000025620684,
+      "p95_ms": 0.029300004825927317,
+      "p99_ms": 0.05119999696034938
+    },
+    {
+      "algorithm": "token_bucket",
+      "clients": 8,
+      "checks": 10000,
+      "elapsed_seconds": 0.7972531999985222,
+      "checks_per_second": 12543.0666192604,
+      "p50_ms": 0.5762000000686385,
+      "p95_ms": 0.760499999159947,
+      "p99_ms": 0.8932000055210665
+    },
+    {
+      "algorithm": "leaking_bucket",
+      "clients": 8,
+      "checks": 10000,
+      "elapsed_seconds": 0.528130599996075,
+      "checks_per_second": 18934.71046758949,
+      "p50_ms": 0.024100001610349864,
+      "p95_ms": 0.6955999997444451,
+      "p99_ms": 0.8001000023796223
+    },
+    {
+      "algorithm": "fixed_window",
+      "clients": 8,
+      "checks": 10000,
+      "elapsed_seconds": 0.6676065000065137,
+      "checks_per_second": 14978.883518813002,
+      "p50_ms": 0.5273000024317298,
+      "p95_ms": 0.7247000030474737,
+      "p99_ms": 0.8441000027232803
+    },
+    {
+      "algorithm": "sliding_window_log",
+      "clients": 8,
+      "checks": 10000,
+      "elapsed_seconds": 1.2481033000003663,
+      "checks_per_second": 8012.157327039408,
+      "p50_ms": 0.9596000018063933,
+      "p95_ms": 1.2993999989703298,
+      "p99_ms": 1.4660000015283003
+    },
+    {
+      "algorithm": "sliding_window_counter",
+      "clients": 8,
+      "checks": 10000,
+      "elapsed_seconds": 0.7099959999977727,
+      "checks_per_second": 14084.586392080195,
+      "p50_ms": 0.618199999735225,
+      "p95_ms": 0.8286000011139549,
+      "p99_ms": 0.96339999436168
+    }
+  ]
+}

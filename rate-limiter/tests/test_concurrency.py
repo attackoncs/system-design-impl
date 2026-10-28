@@ -73,5 +73,5 @@ def test_multiple_rules_return_longest_retry_delay():
     limiter = RateLimiter(RateLimiterConfig(rules=rules))
     fast = RateLimitResult(False, 0, 1, 10, 10)
     slow = RateLimitResult(False, 0, 1, 100, 100)
-    with patch.object(limiter, "check", side_effect=[fast, slow]):
+    with patch.object(limiter, "_evaluate", side_effect=[fast, slow]):
         assert limiter.check_request("user").retry_after == 100

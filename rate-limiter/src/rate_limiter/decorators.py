@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import functools
 import inspect
+import dataclasses
 from typing import Any, Callable, Optional
 
 from rate_limiter import config as rate_limiter_config
 from rate_limiter import core as rate_limiter_core
 from rate_limiter import keys as rate_limiter_keys
+from rate_limiter.responses import rate_limit_headers, rejection_body
 
 
 class RateLimitExceededException(Exception):
@@ -118,6 +120,10 @@ def rate_limit(
         )
 
     def decorator(func: Callable) -> Callable:
+        scoped_rule = dataclasses.replace(
+            rule, name=f"{func.__module__}.{func.__qualname__}"[:256]
+        )
+
         def resolve_key(args, kwargs):
             if key_func is not None:
                 return key_func(*args, **kwargs)
@@ -143,7 +149,7 @@ def rate_limit(
                 # Resolve request-bound keys on the event loop; only synchronous
                 # storage work moves into the executor (with context propagation).
                 key = resolve_key(args, kwargs)
-                result = await asyncio.to_thread(limiter.check, key, rule)
+                result = await asyncio.to_thread(limiter.check, key, scoped_rule)
                 if not result.allowed:
                     return denied(result)
                 return await func(*args, **kwargs)
@@ -152,7 +158,7 @@ def rate_limit(
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            result = limiter.check(resolve_key(args, kwargs), rule)
+            result = limiter.check(resolve_key(args, kwargs), scoped_rule)
             if not result.allowed:
                 return denied(result)
             return func(*args, **kwargs)
@@ -173,20 +179,8 @@ def _rate_limit_response(result: Any) -> dict:
     """
     return {
         "status_code": 429,
-        "content": {
-            "error": "Too Many Requests",
-            "message": (
-                "Rate limit exceeded. Try again in"
-                f" {result.retry_after or result.reset_after:.1f} seconds."
-            ),
-            "retry_after": result.retry_after or result.reset_after,
-        },
-        "headers": {
-            "X-RateLimit-Limit": str(result.limit),
-            "X-RateLimit-Remaining": str(result.remaining),
-            "X-RateLimit-Reset": str(result.reset_after),
-            "Retry-After": str(result.retry_after or result.reset_after),
-        },
+        "content": rejection_body(result),
+        "headers": rate_limit_headers(result),
     }
 
 

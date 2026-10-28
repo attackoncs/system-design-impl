@@ -1,0 +1,107 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "source": ".test-tmp\\chapter05-baseline\\src",
+  "measurements": [
+    {
+      "algorithm": "token_bucket",
+      "clients": 1,
+      "checks": 10000,
+      "elapsed_seconds": 0.10079029999906197,
+      "checks_per_second": 99215.89676876711,
+      "p50_ms": 0.009300005331169814,
+      "p95_ms": 0.010000003385357559,
+      "p99_ms": 0.013700002455152571
+    },
+    {
+      "algorithm": "leaking_bucket",
+      "clients": 1,
+      "checks": 10000,
+      "elapsed_seconds": 0.09860820000176318,
+      "checks_per_second": 101411.44448251964,
+      "p50_ms": 0.009499999578110874,
+      "p95_ms": 0.00979999458650127,
+      "p99_ms": 0.010899995686486363
+    },
+    {
+      "algorithm": "fixed_window",
+      "clients": 1,
+      "checks": 10000,
+      "elapsed_seconds": 0.07994569999573287,
+      "checks_per_second": 125084.90138348597,
+      "p50_ms": 0.007599999662488699,
+      "p95_ms": 0.007800001185387373,
+      "p99_ms": 0.009099996532313526
+    },
+    {
+      "algorithm": "sliding_window_log",
+      "clients": 1,
+      "checks": 10000,
+      "elapsed_seconds": 0.41602469999634195,
+      "checks_per_second": 24037.034339758982,
+      "p50_ms": 0.040850001823855564,
+      "p95_ms": 0.06569999823113903,
+      "p99_ms": 0.08189999789465219
+    },
+    {
+      "algorithm": "sliding_window_counter",
+      "clients": 1,
+      "checks": 10000,
+      "elapsed_seconds": 0.07919780000520404,
+      "checks_per_second": 126266.13364693092,
+      "p50_ms": 0.007499998901039362,
+      "p95_ms": 0.007700000423938036,
+      "p99_ms": 0.012099997547920793
+    },
+    {
+      "algorithm": "token_bucket",
+      "clients": 8,
+      "checks": 10000,
+      "elapsed_seconds": 0.21179509999637958,
+      "checks_per_second": 47215.44549506075,
+      "p50_ms": 0.009500006854068488,
+      "p95_ms": 0.011799995263572782,
+      "p99_ms": 0.01670000347075984
+    },
+    {
+      "algorithm": "leaking_bucket",
+      "clients": 8,
+      "checks": 10000,
+      "elapsed_seconds": 0.37755119999928866,
+      "checks_per_second": 26486.473887565026,
+      "p50_ms": 0.013399996532825753,
+      "p95_ms": 0.44409999827621505,
+      "p99_ms": 0.5424000046332367
+    },
+    {
+      "algorithm": "fixed_window",
+      "clients": 8,
+      "checks": 10000,
+      "elapsed_seconds": 0.41646149999724,
+      "checks_per_second": 24011.82342201205,
+      "p50_ms": 0.3200000064680353,
+      "p95_ms": 0.4515999971772544,
+      "p99_ms": 0.5512999996426515
+    },
+    {
+      "algorithm": "sliding_window_log",
+      "clients": 8,
+      "checks": 10000,
+      "elapsed_seconds": 0.8974692000047071,
+      "checks_per_second": 11142.443662632157,
+      "p50_ms": 0.7221000050776638,
+      "p95_ms": 1.0532000014791265,
+      "p99_ms": 1.2439999991329387
+    },
+    {
+      "algorithm": "sliding_window_counter",
+      "clients": 8,
+      "checks": 10000,
+      "elapsed_seconds": 0.1856843999994453,
+      "checks_per_second": 53854.8203297093,
+      "p50_ms": 0.007599999662488699,
+      "p95_ms": 0.008799994247965515,
+      "p99_ms": 0.01290000363951549
+    }
+  ]
+}

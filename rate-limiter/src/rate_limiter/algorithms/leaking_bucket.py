@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from typing import Any
 
@@ -46,7 +47,7 @@ end
 local ttl = math.ceil(capacity / drain_rate) + 1
 
 -- Attempt to add to queue
-if queue_count < capacity then
+if queue_count + 1 <= capacity then
     queue_count = queue_count + 1
     redis.call('SET', KEYS[1], tostring(queue_count))
     redis.call('EXPIRE', KEYS[1], ttl)
@@ -63,7 +64,7 @@ else
     redis.call('SET', KEYS[2], tostring(now))
     redis.call('EXPIRE', KEYS[2], ttl)
 
-    local retry_after = 1 / drain_rate
+    local retry_after = (queue_count - capacity + 1) / drain_rate
     local reset_after = queue_count / drain_rate
 
     return {0, 0, capacity, tostring(reset_after), tostring(retry_after)}
@@ -119,7 +120,7 @@ def _memory_leaking_bucket_script(
     ttl = int(capacity / drain_rate) + 1 if drain_rate > 0 else None
 
     # Attempt to add to queue
-    if queue_count < capacity:
+    if queue_count + 1 <= capacity:
         queue_count += 1
         # Update storage
         storage.set_unlocked(queue_count_key, str(queue_count), ttl)
@@ -135,7 +136,9 @@ def _memory_leaking_bucket_script(
         storage.set_unlocked(queue_count_key, str(queue_count), ttl)
         storage.set_unlocked(last_drain_key, str(now), ttl)
 
-        retry_after = 1.0 / drain_rate if drain_rate > 0 else 0.0
+        retry_after = (
+            (queue_count - capacity + 1) / drain_rate if drain_rate > 0 else 0.0
+        )
         reset_after = queue_count / drain_rate if drain_rate > 0 else 0.0
 
         return [0, 0, int(capacity), reset_after, retry_after]
@@ -144,13 +147,13 @@ def _memory_leaking_bucket_script(
 class LeakingBucketAlgorithm(algorithms_base.BaseAlgorithm):
     """Leaking Bucket rate limiting algorithm.
 
-    The leaking bucket algorithm maintains a queue that drains at a
-    fixed rate. Incoming requests are added to the queue. If the queue
-    is full, the request is denied.
+    The leaking bucket algorithm tracks virtual occupancy draining at a
+    fixed rate. A whole request must fit before admission. Execution pacing
+    is provided separately by LeakyBucketQueue.
 
-    - Queue capacity = rule.limit
+    - Queue capacity = rule.capacity or rule.limit
     - Drain rate = rule.limit / rule.window requests per second
-    - Provides a smooth, fixed output rate
+    - Admission-only virtual occupancy; no execution queue or pacing
     """
 
     def check(
@@ -171,7 +174,7 @@ class LeakingBucketAlgorithm(algorithms_base.BaseAlgorithm):
             RateLimitResult indicating if the request is allowed
             and associated metadata.
         """
-        capacity = rule.limit
+        capacity = rule.capacity or rule.limit
         drain_rate = rule.limit / rule.window if rule.window > 0 else 0.0
         now = time.time()
 
@@ -180,6 +183,12 @@ class LeakingBucketAlgorithm(algorithms_base.BaseAlgorithm):
 
         keys = [queue_count_key, last_drain_key]
         args = [str(capacity), str(drain_rate), str(now)]
+
+        args.append(
+            str(
+                2 * max(rule.window, math.ceil(capacity * rule.window / rule.limit)) + 1
+            )
+        )
 
         result = storage.execute_algorithm(
             LUA_SCRIPT, _memory_leaking_bucket_script, keys, args

@@ -12,6 +12,7 @@ import starlette.responses
 from rate_limiter import config as rate_limiter_config
 from rate_limiter import core as rate_limiter_core
 from rate_limiter.middleware.configuration import RateLimitConfig
+from rate_limiter.responses import rate_limit_headers, rejection_body
 
 
 class RateLimitMiddleware(starlette.middleware.base.BaseHTTPMiddleware):
@@ -68,7 +69,7 @@ class RateLimitMiddleware(starlette.middleware.base.BaseHTTPMiddleware):
         response = await call_next(request)
 
         # Add rate limit headers if enabled
-        if self.auto_headers:
+        if self.auto_headers and self.limiter.config.include_headers:
             self._add_rate_limit_headers(response, result)
 
         return response
@@ -82,34 +83,19 @@ class RateLimitMiddleware(starlette.middleware.base.BaseHTTPMiddleware):
         Returns:
             JSONResponse with 429 status and error details.
         """
+        headers = (
+            rate_limit_headers(result)
+            if self.auto_headers and self.limiter.config.include_headers
+            else {}
+        )
         return starlette.responses.JSONResponse(
-            status_code=429,
-            content={
-                "error": "Too Many Requests",
-                "message": (
-                    "Rate limit exceeded. Try again in"
-                    f" {result.retry_after or result.reset_after:.1f} seconds."
-                ),
-                "retry_after": result.retry_after or result.reset_after,
-            },
-            headers={
-                "X-RateLimit-Limit": str(result.limit),
-                "X-RateLimit-Remaining": str(result.remaining),
-                "X-RateLimit-Reset": str(result.reset_after),
-                "Retry-After": str(result.retry_after or result.reset_after),
-            },
+            status_code=self.limiter.config.default_response_code,
+            content=rejection_body(result),
+            headers=headers,
         )
 
     def _add_rate_limit_headers(self, response, result):
-        """Add rate limit headers to a response.
-
-        Args:
-            response: The response to add headers to.
-            result: RateLimitResult containing the rate limit information.
-        """
-        response.headers["X-RateLimit-Limit"] = str(result.limit)
-        response.headers["X-RateLimit-Remaining"] = str(result.remaining)
-        response.headers["X-RateLimit-Reset"] = str(result.reset_after)
+        response.headers.update(rate_limit_headers(result))
 
 
 # Convenience function to create a rate limited FastAPI app

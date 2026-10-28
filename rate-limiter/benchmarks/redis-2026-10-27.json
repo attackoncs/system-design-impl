@@ -1,0 +1,57 @@
+{
+  "redis_version": "8.0.5",
+  "algorithms": {
+    "token_bucket": {
+      "requests": 128,
+      "processes": 4,
+      "allowed": 25,
+      "storage_errors": 0
+    },
+    "leaking_bucket": {
+      "requests": 128,
+      "processes": 4,
+      "allowed": 25,
+      "storage_errors": 0
+    },
+    "fixed_window": {
+      "requests": 128,
+      "processes": 4,
+      "allowed": 25,
+      "storage_errors": 0
+    },
+    "sliding_window_log": {
+      "requests": 128,
+      "processes": 4,
+      "allowed": 25,
+      "storage_errors": 0
+    },
+    "sliding_window_counter": {
+      "requests": 128,
+      "processes": 4,
+      "allowed": 25,
+      "storage_errors": 0
+    }
+  },
+  "bucket_capacity": {
+    "token_bucket": {
+      "capacity": 5,
+      "steady_requests_per_10s": 2,
+      "allowed": 5,
+      "retry_seconds": 4.997400045395
+    },
+    "leaking_bucket": {
+      "capacity": 5,
+      "steady_requests_per_10s": 2,
+      "allowed": 5,
+      "retry_seconds": 4.9978001117708
+    }
+  },
+  "http": {
+    "servers": 2,
+    "requests": 32,
+    "allowed": 9,
+    "denied": 23
+  },
+  "keys_have_ttl": true,
+  "elapsed_seconds": 1.7575017999988631
+}

@@ -28,7 +28,10 @@ rate_limit_config.add_rule(
     limit=1000, window=3600, algorithm="token_bucket", key_type="user_id"
 )
 
-app.add_middleware(rate_limiter.middleware.fastapi.RateLimitMiddleware, config=rate_limit_config.get_config())
+app.add_middleware(
+    rate_limiter.middleware.fastapi.RateLimitMiddleware,
+    config=rate_limit_config.get_config(),
+)
 
 # Option 2: Using create_rate_limited_app (simpler)
 # app.add_middleware(create_rate_limited_app, limit=100, window=60)
@@ -38,7 +41,9 @@ app.add_middleware(rate_limiter.middleware.fastapi.RateLimitMiddleware, config=r
 custom_limiter = rate_limiter.core.RateLimiter(
     rate_limiter.config.RateLimiterConfig(
         rules=[
-            rate_limiter.config.RateLimitRule(limit=5, window=60, algorithm=rate_limiter.config.Algorithm.TOKEN_BUCKET)
+            rate_limiter.config.RateLimitRule(
+                limit=5, window=60, algorithm=rate_limiter.config.Algorithm.TOKEN_BUCKET
+            )
         ]
     )
 )
@@ -52,12 +57,12 @@ async def root():
 
 # Endpoint with custom rate limiting decorator
 @app.get("/strict")
-@rate_limiter.decorators.rate_limit(limit=3, window=60, algorithm="token_bucket", raise_exception=True)
+@rate_limiter.decorators.rate_limit(
+    limit=3, window=60, algorithm="token_bucket", raise_exception=True
+)
 async def strict_endpoint(request: fastapi.Request):
     return {
-        "message": (
-            "This endpoint has stricter rate limiting (3 requests per minute)"
-        ),
+        "message": ("This endpoint has stricter rate limiting (3 requests per minute)"),
         "client_ip": request.client.host if request.client else None,
     }
 
@@ -69,9 +74,7 @@ async def strict_endpoint(request: fastapi.Request):
     window=60,
     algorithm="fixed_window",
     raise_exception=False,
-    key_func=lambda request: (
-        request.client.host if request.client else "anonymous"
-    ),
+    key_func=lambda request: request.client.host if request.client else "anonymous",
 )
 async def custom_endpoint(request: fastapi.Request):
     return {"message": "This endpoint has custom rate limiting"}
@@ -118,7 +121,9 @@ async def algorithm_demo(algo_name: str, request: fastapi.Request):
         )
 
     # Create a temporary limiter with the selected algorithm
-    rule = rate_limiter.config.RateLimitRule(limit=5, window=30, algorithm=algorithms[algo_name])
+    rule = rate_limiter.config.RateLimitRule(
+        limit=5, window=30, algorithm=algorithms[algo_name]
+    )
     config = rate_limiter.config.RateLimiterConfig(rules=[rule])
     limiter = rate_limiter.core.RateLimiter(config)
 

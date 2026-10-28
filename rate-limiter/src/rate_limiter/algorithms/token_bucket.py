@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from typing import Any
 
@@ -151,7 +152,7 @@ class TokenBucketAlgorithm(algorithms_base.BaseAlgorithm):
     that refills at a steady rate. Each request consumes one token.
     If the bucket is empty, the request is denied.
 
-    - Bucket capacity = rule.limit
+    - Bucket capacity = rule.capacity or rule.limit
     - Refill rate = rule.limit / rule.window tokens per second
     - Allows bursts up to the bucket capacity
     """
@@ -174,7 +175,7 @@ class TokenBucketAlgorithm(algorithms_base.BaseAlgorithm):
             RateLimitResult indicating if the request is allowed
             and associated metadata.
         """
-        capacity = rule.limit
+        capacity = rule.capacity or rule.limit
         refill_rate = rule.limit / rule.window if rule.window > 0 else 0.0
         now = time.time()
 
@@ -183,6 +184,12 @@ class TokenBucketAlgorithm(algorithms_base.BaseAlgorithm):
 
         keys = [tokens_key, last_refill_key]
         args = [str(capacity), str(refill_rate), str(now)]
+
+        args.append(
+            str(
+                2 * max(rule.window, math.ceil(capacity * rule.window / rule.limit)) + 1
+            )
+        )
 
         result = storage.execute_algorithm(
             LUA_SCRIPT, _memory_token_bucket_script, keys, args

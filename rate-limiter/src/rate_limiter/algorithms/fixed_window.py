@@ -198,6 +198,8 @@ class FixedWindowAlgorithm(algorithms_base.BaseAlgorithm):
         keys = [window_start_key, counter_key]
         args = [str(window), str(limit), str(now)]
 
+        args.append(str(2 * rule.window + 1))
+
         result = storage.execute_algorithm(
             LUA_SCRIPT, _memory_fixed_window_script, keys, args
         )

@@ -1,0 +1,13 @@
+{
+  "rules": [
+    {
+      "name": "api-user",
+      "path_pattern": "/api/*",
+      "key_type": "user_id",
+      "algorithm": "token_bucket",
+      "limit": 2,
+      "window": 60,
+      "capacity": 3
+    }
+  ]
+}

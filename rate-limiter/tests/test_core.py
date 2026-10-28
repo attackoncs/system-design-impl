@@ -17,11 +17,15 @@ import rate_limiter.storage.memory
 @pytest.fixture
 def basic_rule() -> rate_limiter.config.RateLimitRule:
     """A simple token bucket rule: 5 requests per 60 seconds."""
-    return rate_limiter.config.RateLimitRule(limit=5, window=60, algorithm=rate_limiter.config.Algorithm.TOKEN_BUCKET)
+    return rate_limiter.config.RateLimitRule(
+        limit=5, window=60, algorithm=rate_limiter.config.Algorithm.TOKEN_BUCKET
+    )
 
 
 @pytest.fixture
-def memory_config(basic_rule: rate_limiter.config.RateLimitRule) -> rate_limiter.config.RateLimiterConfig:
+def memory_config(
+    basic_rule: rate_limiter.config.RateLimitRule,
+) -> rate_limiter.config.RateLimiterConfig:
     """Config using memory backend with a single rule."""
     return rate_limiter.config.RateLimiterConfig(
         rules=[basic_rule],
@@ -31,7 +35,9 @@ def memory_config(basic_rule: rate_limiter.config.RateLimitRule) -> rate_limiter
 
 
 @pytest.fixture
-def limiter(memory_config: rate_limiter.config.RateLimiterConfig) -> rate_limiter.core.RateLimiter:
+def limiter(
+    memory_config: rate_limiter.config.RateLimiterConfig,
+) -> rate_limiter.core.RateLimiter:
     """RateLimiter instance with memory backend."""
     return rate_limiter.core.RateLimiter(memory_config)
 
@@ -45,7 +51,9 @@ class TestSingleRuleCheck:
     """Test check() with a single rule — allowed and denied scenarios."""
 
     def test_check_allowed_when_under_limit(
-        self, limiter: rate_limiter.core.RateLimiter, basic_rule: rate_limiter.config.RateLimitRule
+        self,
+        limiter: rate_limiter.core.RateLimiter,
+        basic_rule: rate_limiter.config.RateLimitRule,
     ) -> None:
         """First request should be allowed with remaining tokens."""
         result = limiter.check("user:1", basic_rule)
@@ -54,7 +62,9 @@ class TestSingleRuleCheck:
         assert result.limit == basic_rule.limit
 
     def test_check_denied_when_limit_exhausted(
-        self, limiter: rate_limiter.core.RateLimiter, basic_rule: rate_limiter.config.RateLimitRule
+        self,
+        limiter: rate_limiter.core.RateLimiter,
+        basic_rule: rate_limiter.config.RateLimitRule,
     ) -> None:
         """After exhausting the limit, requests should be denied."""
         # Exhaust all tokens
@@ -136,10 +146,14 @@ class TestMultipleRulesMostRestrictive:
 class TestDynamicRuleUpdate:
     """Test update_rules() dynamically changes active rules."""
 
-    def test_update_rules_replaces_existing(self, limiter: rate_limiter.core.RateLimiter) -> None:
+    def test_update_rules_replaces_existing(
+        self, limiter: rate_limiter.core.RateLimiter
+    ) -> None:
         """update_rules() should replace the config's rules list."""
         new_rule = rate_limiter.config.RateLimitRule(
-            limit=1000, window=3600, algorithm=rate_limiter.config.Algorithm.FIXED_WINDOW
+            limit=1000,
+            window=3600,
+            algorithm=rate_limiter.config.Algorithm.FIXED_WINDOW,
         )
         limiter.update_rules([new_rule])
 
@@ -189,7 +203,9 @@ class TestStorageBackendSelection:
         assert isinstance(limiter.storage, rate_limiter.storage.memory.MemoryStorage)
 
     @unittest.mock.patch("rate_limiter.storage.redis.RedisStorage")
-    def test_redis_backend_selected(self, mock_redis_cls: unittest.mock.MagicMock) -> None:
+    def test_redis_backend_selected(
+        self, mock_redis_cls: unittest.mock.MagicMock
+    ) -> None:
         """Config with storage_backend='redis' creates RedisStorage."""
         mock_redis_cls.return_value = unittest.mock.MagicMock()
         config = rate_limiter.config.RateLimiterConfig(
@@ -201,9 +217,8 @@ class TestStorageBackendSelection:
 
     def test_invalid_backend_raises_value_error(self) -> None:
         """Config with unknown storage_backend raises ValueError."""
-        config = rate_limiter.config.RateLimiterConfig(storage_backend="unknown")
         with pytest.raises(ValueError, match="Unsupported storage backend"):
-            rate_limiter.core.RateLimiter(config)
+            rate_limiter.config.RateLimiterConfig(storage_backend="unknown")
 
 
 # ---------------------------------------------------------------------------

@@ -34,7 +34,7 @@ def build_rule(
         limit=limit,
         window=window,
         algorithm=selected,
-        key_func=functions[key_type],
+        key_func=None,
         key_type=key_type,
         path_pattern=path_pattern,
     )
@@ -54,7 +54,7 @@ class RateLimitConfig:
         key_type: str = "ip",
         path_pattern: Optional[str] = None,
     ) -> None:
-        """Append a rule; path_pattern remains metadata, not a route filter."""
+        """Append a rule; path_pattern is a case-sensitive glob over the URL path."""
         self.rules.append(build_rule(limit, window, algorithm, key_type, path_pattern))
 
     def get_config(self) -> config.RateLimiterConfig:

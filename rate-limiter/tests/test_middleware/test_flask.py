@@ -28,14 +28,20 @@ def _create_app(
     app = flask.Flask(__name__)
     app.config["TESTING"] = True
 
-    config = rate_limiter.config.RateLimiterConfig(rules=rules, storage_backend="memory")
+    config = rate_limiter.config.RateLimiterConfig(
+        rules=rules, storage_backend="memory"
+    )
     limiter = rate_limiter.core.RateLimiter(config)
 
     if init_app_pattern:
-        ext = rate_limiter.middleware.flask.RateLimitExtension(limiter=limiter, auto_headers=auto_headers)
+        ext = rate_limiter.middleware.flask.RateLimitExtension(
+            limiter=limiter, auto_headers=auto_headers
+        )
         ext.init_app(app)
     else:
-        rate_limiter.middleware.flask.RateLimitExtension(app=app, limiter=limiter, auto_headers=auto_headers)
+        rate_limiter.middleware.flask.RateLimitExtension(
+            app=app, limiter=limiter, auto_headers=auto_headers
+        )
 
     @app.route("/hello")
     def hello():
@@ -246,7 +252,12 @@ class TestIndependentRateLimits:
         counters.
         """
         rule = rate_limiter.config.RateLimitRule(
-            limit=1, window=60, algorithm=rate_limiter.config.Algorithm.TOKEN_BUCKET
+            limit=1,
+            window=60,
+            algorithm=rate_limiter.config.Algorithm.TOKEN_BUCKET,
+            key_func=lambda req: __import__(
+                "rate_limiter.keys", fromlist=["ip_key"]
+            ).ip_key(req, trust_forwarded=True),
         )
         app = _create_app([rule])
         client = app.test_client()
@@ -324,7 +335,10 @@ class TestInitAppPattern:
         app = _create_app([rule], init_app_pattern=True)
 
         assert "rate_limiter" in app.extensions
-        assert isinstance(app.extensions["rate_limiter"], rate_limiter.middleware.flask.RateLimitExtension)
+        assert isinstance(
+            app.extensions["rate_limiter"],
+            rate_limiter.middleware.flask.RateLimitExtension,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -354,8 +368,8 @@ class TestAutoHeadersDisabled:
         assert "X-RateLimit-Remaining" not in response.headers
         assert "X-RateLimit-Reset" not in response.headers
 
-    def test_429_still_has_headers_when_auto_headers_false(self) -> None:
-        """Denied responses should still include rate limit headers even with
+    def test_429_omits_headers_when_auto_headers_false(self) -> None:
+        """Denied responses omit rate limit headers with
         auto_headers=False.
         """
         rule = rate_limiter.config.RateLimitRule(
@@ -368,8 +382,8 @@ class TestAutoHeadersDisabled:
         response = client.get("/hello")
 
         assert response.status_code == 429
-        assert "X-RateLimit-Limit" in response.headers
-        assert "Retry-After" in response.headers
+        assert "X-RateLimit-Limit" not in response.headers
+        assert "Retry-After" not in response.headers
 
 
 def test_route_decorator_retains_counter_between_requests():
@@ -378,12 +392,14 @@ def test_route_decorator_retains_counter_between_requests():
     from unittest.mock import patch
 
     app = flask.Flask(__name__)
-    @app.route('/limited')
-    @rate_limit(limit=1, window=60, algorithm='fixed_window')
+
+    @app.route("/limited")
+    @rate_limit(limit=1, window=60, algorithm="fixed_window")
     def endpoint():
-        return 'ok'
-    with patch('time.time', return_value=120):
+        return "ok"
+
+    with patch("time.time", return_value=120):
         with app.test_client() as client:
-            assert client.get('/limited').status_code == 200
-            assert client.get('/limited').status_code == 429
-            assert client.get('/limited').status_code == 429
+            assert client.get("/limited").status_code == 200
+            assert client.get("/limited").status_code == 429
+            assert client.get("/limited").status_code == 429

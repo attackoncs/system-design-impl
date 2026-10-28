@@ -1,0 +1,25 @@
+{
+  "allowed": [
+    true,
+    true,
+    true,
+    false,
+    false
+  ],
+  "metrics": {
+    "checks": 5,
+    "allowed": 3,
+    "denied": 2,
+    "storage_errors": 0
+  },
+  "rules": {
+    "reloads": 1,
+    "errors": 0,
+    "last_error": null
+  },
+  "fifo": [
+    0,
+    1,
+    2
+  ]
+}

@@ -198,6 +198,8 @@ class SlidingWindowLogAlgorithm(algorithms_base.BaseAlgorithm):
         keys = [log_key]
         args = [str(rule.limit), str(rule.window), str(now), request_id]
 
+        args.append(str(2 * rule.window + 1))
+
         result = storage.execute_algorithm(
             LUA_SCRIPT, _memory_sliding_window_log_script, keys, args
         )

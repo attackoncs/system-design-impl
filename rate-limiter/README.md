@@ -1,373 +1,173 @@
-# Rate Limiter
+# Rate Limiter — Chapter 5
 
-A production-quality Python rate limiting library supporting multiple algorithms, configurable rules, and both local (in-memory) and distributed (Redis) backends. Provides decorator and middleware integration for Flask and FastAPI with proper HTTP 429 responses and rate limit headers.
+A runnable study of five rate limiting algorithms, atomic memory/Redis storage,
+request policy selection and Flask/FastAPI integration. [中文](README_CN.md).
 
-> 中文文档请参阅 [README_CN.md](./README_CN.md)
+The chapter review found missing policy selection and file reloads, clock
+regression bugs, unstable cross-process identity hashes and inconsistent HTTP
+responses. These are now covered by 249 tests and a separate real Redis probe.
+See [coverage and migration](docs/chapter05-review.md), [design](docs/design.md)
+and [measurements](benchmarks/REPORT.md).
 
-## Features
+## Run
 
-- **5 rate limiting algorithms**: Token Bucket, Leaking Bucket, Fixed Window, Sliding Window Log, Sliding Window Counter
-- **2 storage backends**: In-memory (single process) and Redis (distributed)
-- **Framework integration**: FastAPI middleware, Flask extension, and a universal decorator
-- **Flexible key resolution**: IP-based, user ID, composite keys, and custom functions
-- **Multiple rules per endpoint**: Most restrictive result wins
-- **Dynamic rule updates**: Change rules at runtime without restart
-- **Fault tolerance**: Configurable fail-open or fail-closed behavior
-- **HTTP 429 responses**: Proper rate limit headers (`X-RateLimit-Remaining`, `Retry-After`, etc.)
+Python 3.9+ source syntax; execution verified on Python 3.13.9. Runtime dependency:
+redis-py (verified 6.4.0); frameworks and test tools are optional dev dependencies.
 
-## Architecture
-
-```
-┌──────────────────────┐   ┌───────────────────┐   ┌───────────────────────┐
-│   Integration Layer  │   │    Core Layer      │   │   Algorithm Layer     │
-│                      │   │                    │   │                       │
-│ • @rate_limit        │──▶│ • RateLimiter      │──▶│ • TokenBucket         │
-│ • FastAPI Middleware │   │ • Rule Engine      │   │ • LeakingBucket       │
-│ • Flask Extension    │   │ • Key Resolver     │   │ • FixedWindow         │
-│                      │   │                    │   │ • SlidingWindowLog    │
-└──────────────────────┘   └───────────────────┘   │ • SlidingWindowCounter│
-                                                    └───────────┬───────────┘
-                                                                │
-                                                    ┌───────────▼───────────┐
-                                                    │   Storage Layer       │
-                                                    │                       │
-                                                    │ • MemoryStorage       │
-                                                    │ • RedisStorage        │
-                                                    └───────────────────────┘
-```
-
-### Layer Responsibilities
-
-| Layer | Components | Role |
-|-------|-----------|------|
-| Integration | Decorator, FastAPI Middleware, Flask Extension | User-facing API, framework hooks |
-| Core | RateLimiter, Config, Key Resolver | Orchestration, rule evaluation, key resolution |
-| Algorithm | 5 algorithm implementations | Rate limit check logic, state management |
-| Storage | Memory, Redis | Persistent state, atomic operations |
-
-## Installation
-
-```bash
-pip install -e .
-```
-
-With development dependencies:
-
-```bash
+```sh
 pip install -e ".[dev]"
+python -m pytest tests -q
+python examples/basic_usage.py
+python examples/policy_demo.py
+python tools/benchmark.py --output benchmarks/local.json
 ```
 
-### Requirements
+The review environment disables unrelated pytest plugin autoload, uses
+`-p no:cacheprovider`, and selects a fresh `--basetemp` inside `.test-tmp` because
+its existing default cache/temp directories are inaccessible. With installed
+Starlette 1.8.0 and httpx, its TestClient emits a compatibility warning about
+optional httpx2; the review uses `-W error` with only
+`-W ignore::starlette.exceptions.StarletteDeprecationWarning`. No project tests
+are skipped. These are environment workarounds, not application requirements.
 
-- Python >= 3.9
-- Redis (only if using the Redis storage backend)
-
-## Quick Start
+## Configure and check
 
 ```python
-from rate_limiter import RateLimiter, RateLimiterConfig, RateLimitRule, Algorithm
+from rate_limiter import Algorithm, RateLimiter, RateLimiterConfig, RateLimitRule
 
-# Define rules
-rules = [
-    RateLimitRule(limit=100, window=60, algorithm=Algorithm.TOKEN_BUCKET),
-]
+limiter = RateLimiter(RateLimiterConfig(
+    rules=[RateLimitRule(10, 60, Algorithm.TOKEN_BUCKET,
+                         capacity=20, key_type="user_id",
+                         path_pattern="/api/*", name="api-user")],
+    fail_open=False,
+))
+result = limiter.check_request(request)  # framework request with authenticated user
+print(result.allowed, result.remaining)
+print(limiter.metrics())
 
-# Create the rate limiter
-config = RateLimiterConfig(rules=rules)
-limiter = RateLimiter(config)
-
-# Check a request
-result = limiter.check_request("user-123")
-
-if result.allowed:
-    print(f"Request allowed. {result.remaining} remaining.")
-else:
-    print(f"Rate limited. Retry after {result.retry_after} seconds.")
+# Explicit subjects have no URL, so use an unfiltered rule for direct checks.
+result = limiter.check("account-123", RateLimitRule(10, 60))
 ```
 
-### Using the Decorator
+Rules apply case-sensitive `fnmatch` globs to the URL path, excluding its query.
+`key_type` supports `ip`, `user_id`, `path`, `method` and `custom` (requires
+`key_func`). A custom function takes precedence. Rule names, paths, selectors,
+algorithm, window, limit and optional capacity isolate counters. Identical rules
+within a request are evaluated once. Give different custom closures distinct
+stable names; a function's qualified name cannot identify captured values.
 
-```python
-from rate_limiter import rate_limit
-
-@rate_limit(limit=10, window=60, algorithm="token_bucket")
-def my_endpoint():
-    return "Hello, world!"
-```
-
-## Configuration Reference
-
-### RateLimiterConfig
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `rules` | `list[RateLimitRule]` | `[]` | Rate limiting rules to apply |
-| `storage_backend` | `str` | `"memory"` | `"memory"` or `"redis"` |
-| `redis_url` | `str` | `"redis://localhost:6379"` | Redis connection URL |
-| `key_prefix` | `str` | `"rl:"` | Storage key prefix |
-| `include_headers` | `bool` | `True` | Include rate limit headers in responses |
-| `fail_open` | `bool` | `True` | Allow requests when storage is unavailable |
-
-### RateLimitRule
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `limit` | `int` | *(required)* | Max requests in the window |
-| `window` | `int` | *(required)* | Time window in seconds |
-| `algorithm` | `Algorithm` | `TOKEN_BUCKET` | Algorithm to use |
-| `key_func` | `Callable` | `None` | Custom key resolver |
-| `key_type` | `str` | `"ip"` | `"ip"`, `"user_id"`, or `"custom"` |
-| `path_pattern` | `str` | `None` | Endpoint path pattern |
-| `name` | `str` | `None` | Human-readable rule name |
+All matching rules are charged sequentially; any denial wins, using the longest
+retry delay. There is no transaction spanning multiple rules. `config` returns
+a copy. `update_rules()` validates/copies before atomically publishing a whole
+rule set; a request keeps its original snapshot while storage I/O proceeds
+outside the configuration lock.
 
 ## Algorithms
 
-### Token Bucket
+| Algorithm | State and behavior |
+|---|---|
+| Token bucket | Tokens/refill time; steady rate `limit/window`, independent optional `capacity` |
+| Leaking bucket | Virtual occupancy/drain time; only admits a whole request when it fits |
+| Fixed window | Counter and window start; boundary bursts remain possible |
+| Sliding window log | UUID per **accepted** request; exact rolling accepted quota, bounded by limit |
+| Sliding window counter | Weighted current/previous counters; approximation assumes even distribution |
 
-Maintains a bucket of tokens that refills at a steady rate. Each request consumes one token. Allows bursts up to bucket capacity.
+For buckets, `capacity` defaults to `limit` and response `limit` means capacity.
+Other algorithms reject `capacity`. Limits/windows/capacity are positive bounded
+integers; bucket drain duration is bounded too. The leaking algorithm is an
+admission decision and immediately returns; it does not pace HTTP execution.
 
-- **State**: `tokens` (current count) + `last_refill` (timestamp)
-- **Pros**: Handles burst traffic gracefully
-- **Cons**: Two values to track
-- **Best for**: APIs that tolerate short bursts
-
-### Leaking Bucket
-
-Maintains a queue that drains at a fixed rate. Rejects when the queue is full.
-
-- **State**: `queue_count` + `last_drain` (timestamp)
-- **Pros**: Guarantees steady output rate
-- **Cons**: Does not accommodate bursts
-- **Best for**: Systems requiring stable, predictable throughput
-
-### Fixed Window Counter
-
-Divides time into fixed windows, counts requests per window. Resets at boundaries.
-
-- **State**: `window_start` + `counter`
-- **Pros**: Simple, memory-efficient
-- **Cons**: Can allow 2x limit at window boundaries
-- **Best for**: Simple use cases where boundary spikes are acceptable
-
-### Sliding Window Log
-
-Tracks exact timestamp of each request. Removes expired entries, counts the rest.
-
-- **State**: Sorted set of timestamps
-- **Pros**: Most accurate — no boundary issues
-- **Cons**: Higher memory (stores every timestamp)
-- **Best for**: Strict rate limiting where precision matters
-
-### Sliding Window Counter
-
-Weighted sum of current and previous window counts. Approximates a true sliding window.
-
-- **State**: Two counters (current + previous window), keyed by window start time
-- **Pros**: Good accuracy with low memory
-- **Cons**: Approximation (assumes even distribution in previous window)
-- **Best for**: Balancing accuracy and resource efficiency
-
-## Integration Guides
-
-### FastAPI Middleware
+For actual FIFO pacing use the separate owned worker:
 
 ```python
-from fastapi import FastAPI
-from rate_limiter import RateLimiter, RateLimiterConfig, RateLimitRule, Algorithm
-from rate_limiter.middleware.fastapi import RateLimitMiddleware
+from rate_limiter.queue import LeakyBucketQueue
 
-app = FastAPI()
-
-rules = [
-    RateLimitRule(limit=100, window=60, algorithm=Algorithm.TOKEN_BUCKET),
-    RateLimitRule(limit=1000, window=3600, algorithm=Algorithm.SLIDING_WINDOW_COUNTER),
-]
-config = RateLimiterConfig(rules=rules)
-limiter = RateLimiter(config)
-
-app.add_middleware(RateLimitMiddleware, limiter=limiter)
-
-@app.get("/api/data")
-async def get_data():
-    return {"message": "Hello"}
+with LeakyBucketQueue(capacity=10, rate=5) as queue:
+    future = queue.submit(lambda: "background result")
+    print(future.result(timeout=2))
 ```
 
-Rate-limited responses:
+`submit` raises `queue.Full` without blocking when the waiting queue is full.
+One worker starts callbacks no faster than `rate`; a slow callback lowers output.
+Close cancels waiting work and joins the current callback, which must have a
+bounded run time. This local queue has no durable or distributed delivery.
 
-```
-HTTP/1.1 429 Too Many Requests
-X-RateLimit-Limit: 100
-X-RateLimit-Remaining: 0
-X-RateLimit-Reset: 45.2
-Retry-After: 45.2
-```
+## File publication and metrics
 
-### Flask Extension
+Use [examples/rules.json](examples/rules.json), containing a `rules` array.
+Only known fields are allowed, duplicate JSON fields are rejected, and the file
+is limited to 64 KiB / 100 rules. Publish complete files with `os.replace`.
 
 ```python
-from flask import Flask
-from rate_limiter import RateLimiter, RateLimiterConfig, RateLimitRule, Algorithm
-from rate_limiter.middleware.flask import RateLimitExtension
+from rate_limiter.rule_files import RuleReloader
 
-app = Flask(__name__)
-
-rules = [RateLimitRule(limit=100, window=60, algorithm=Algorithm.TOKEN_BUCKET)]
-config = RateLimiterConfig(rules=rules)
-limiter = RateLimiter(config)
-
-rate_ext = RateLimitExtension(app, limiter=limiter)
-
-@app.route("/api/data")
-def get_data():
-    return {"message": "Hello"}
+limiter.reload_rules("rules.json")  # explicit reload; raises on invalid file
+with RuleReloader(limiter, "rules.json", interval=1) as reloader:
+    serve_application()  # owner stops serving before leaving this scope
 ```
 
-### Decorator
+The optional non-daemon poller retains the last good rules on invalid input.
+`reloader.status()` exposes reload/error counts and the last error class.
+`limiter.metrics()` returns checks/allowed/denied/storage_errors per **rule
+evaluation**, without subject labels; these process-local counters need an
+external collector for dashboards and alerts.
 
-```python
-from rate_limiter import rate_limit
-from rate_limiter.decorators import RateLimitExceededException
+## Distributed and HTTP adapters
 
-@rate_limit(limit=5, window=60, algorithm="sliding_window_counter")
-def process_order():
-    return "Order processed"
+`RateLimiterConfig(storage_backend="redis", redis_url=...)` shares counters.
+Redis uses one EVAL per rule: server TIME and check/update run atomically.
+The clock watermark prevents backwards movement while retained. Memory samples
+its clock under the storage lock; expiry uses monotonic time. Redis client
+clock skew cannot refill quotas. Server time jumps beyond retained state/TTL,
+Redis restarts, data loss and administrator edits are outside that guarantee.
 
-try:
-    result = process_order()
-except RateLimitExceededException as e:
-    print(f"Rate limited: retry after {e.retry_after}s")
+`RedisStorage(url, socket_timeout=2, max_connections=64)` supports explicit
+timeouts and a bounded connection pool. Automatic command retry is disabled;
+a lost response leaves an uncertain quota charge, handled by the configured
+fail-open/fail-closed policy. Close owned storage after requests/workers drain.
+Only a standalone Redis primary is supported; hash tags do not constitute
+Redis Cluster support because sliding counter keys are derived inside Lua.
+
+MemoryStorage defaults to 100,000 keys. Idle expiry sweeps visit at most64 keys
+per 50 ms during operations; pressure sweeps visit at most128. Live quota state
+is never evicted to admit another identity. Capacity errors follow fail policy;
+cleanup can temporarily reject capacity even when other expired keys remain.
+Callbacks provide mutual exclusion, not transaction rollback after errors.
+
+Flask: `RateLimitExtension(app, limiter=limiter)`. FastAPI:
+`app.add_middleware(RateLimitMiddleware, limiter=limiter)`. See runnable
+[Flask](examples/flask_example.py) and [FastAPI](examples/fastapi_example.py) examples.
+Async adapters move synchronous storage work to worker threads; cancelling the
+request does not forcibly interrupt an already running storage call.
+
+Denials default to429; `default_response_code` supports another 4xx/5xx status.
+Both adapters honor `include_headers` and `auto_headers` on allowed and denied
+responses. Headers are X-RateLimit-Limit/Remaining/Reset (relative seconds),
+plus integer Retry-After and X-RateLimit-Retry-After on denial. The general
+decorator returns a response **dictionary** when `raise_exception=False`;
+use a framework adapter when an actual HTTP response is required.
+
+`ip_key` uses the connection peer. Opt in to `trust_forwarded=True` only behind
+a trusted proxy that strips client forwarding headers. Credential-derived keys
+use stable SHA256, not Python's randomized hash; this helper does not validate
+JWTs or authenticate API keys. Use an authenticated principal/custom resolver
+when the quota is per user rather than per credential.
+
+## Verify real sharing
+
+```sh
+python tools/redis_probe.py --url redis://127.0.0.1:6379/0 --output benchmarks/redis-local.json
 ```
 
-## Key Resolution
+The probe uses a unique namespace, four synchronized Python processes, deliberately
+skewed client timestamps and two real local HTTP instances. It deletes only its
+own keys and does not flush or stop the supplied Redis. The recorded run used
+Redis8.0.5 and an independently owned server that was stopped after verification.
 
-### Built-in Key Functions
+**Migration:** core state keys now use a `v2` namespace with hashed rule/subject
+identity, resetting earlier quotas. Coordinate deployment instead of mixing old
+and new instances. Proxy defaults, query-free paths and disabled denial headers
+also change behavior. See [the review](docs/chapter05-review.md).
 
-| Function | Description |
-|----------|-------------|
-| `ip_key` | Client IP (handles `X-Forwarded-For`) |
-| `user_id_key` | User identity (JWT, API key, user object) |
-| `composite_key` | Combines multiple key functions |
-| `path_key` | Request path |
-| `method_key` | HTTP method |
-
-### Custom Key Functions
-
-```python
-def tenant_key(request):
-    return f"tenant:{request.headers.get('X-Tenant-ID', 'default')}"
-
-rule = RateLimitRule(limit=100, window=60, key_func=tenant_key)
-```
-
-## Storage Backends
-
-### Memory (Default)
-
-Thread-safe in-process storage. No external dependencies.
-
-```python
-config = RateLimiterConfig(storage_backend="memory")
-```
-
-- Atomic operations via `threading.RLock`
-- TTL-based expiry
-- State lost on restart
-
-### Redis (Distributed)
-
-Centralized storage for multi-instance deployments.
-
-```python
-config = RateLimiterConfig(storage_backend="redis", redis_url="redis://localhost:6379")
-```
-
-- Atomic operations via Lua scripts (no race conditions)
-- Shared state across processes/servers
-- Connection timeout: 2 seconds
-
-### Fail-Open vs Fail-Closed
-
-```python
-# Fail-open (default): allow requests when storage is down
-config = RateLimiterConfig(fail_open=True)
-
-# Fail-closed: deny requests when storage is down
-config = RateLimiterConfig(fail_open=False)
-```
-
-## Extensibility
-
-### Adding a New Algorithm
-
-```python
-from rate_limiter.algorithms.base import BaseAlgorithm, RateLimitResult
-
-class CustomAlgorithm(BaseAlgorithm):
-    def check(self, key, rule, storage):
-        # Your logic here
-        return RateLimitResult(allowed=True, remaining=99, limit=100, reset_after=60.0, retry_after=None)
-```
-
-### Adding a New Storage Backend
-
-```python
-from rate_limiter.storage.base import BaseStorage
-
-class CustomStorage(BaseStorage):
-    def get(self, key): ...
-    def set(self, key, value, ttl=None): ...
-    def increment(self, key, amount=1, ttl=None): ...
-    def execute_atomic(self, script, keys, args): ...
-```
-
-## Performance
-
-| Algorithm | Time Complexity | Space per Key |
-|-----------|----------------|---------------|
-| Token Bucket | O(1) | O(1) — 2 values |
-| Leaking Bucket | O(1) | O(1) — 2 values |
-| Fixed Window | O(1) | O(1) — 2 values |
-| Sliding Window Log | O(n) | O(n) — all timestamps |
-| Sliding Window Counter | O(1) | O(1) — 2 counters |
-
-Redis adds one network round-trip per check (single Lua script evaluation).
-
-## Running Tests
-
-```bash
-pip install -e ".[dev]"
-pytest                          # Full suite (205 passed in this review)
-pytest tests/test_algorithms/   # Algorithm tests
-pytest tests/test_storage/      # Storage tests
-pytest tests/test_middleware/    # Middleware tests
-pytest tests/test_core.py       # Core orchestrator tests
-pytest tests/test_decorators.py # Decorator tests
-```
-
-## License
-
-MIT
-
-## Engineering and concurrency guarantees
-
-Algorithms dispatch through `BaseStorage.execute_algorithm`, with Lua as the
-remote-backend default and Python callbacks for memory storage. Custom callable
-backends should override this method. `RateLimiter(config, storage=backend)`
-allows backend sharing without changing private attributes. In-memory state is
-process-local; atomic callbacks provide mutual exclusion, not rollback. TTL uses
-a monotonic clock. FastAPI runs synchronous checks in Starlette's worker pool;
-Flask route decorators retain one limiter per route. Both adapters share rule
-configuration in `middleware/configuration.py`.
-
-See [the repository review](../ENGINEERING_REVIEW.md) for regression results and
-remaining resource/performance limits.
-
-### Chapter 05 deep review
-
-Rules validate positive integer `limit`/`window` (excluding bool), an `Algorithm` enum and an optional callable key resolver at construction. Do not mutate rules in flight. Sliding-log requests use UUID members so equal timestamps never collapse into one Redis sorted-set entry. All five algorithms share `RateLimitResult.from_storage` decoding.
-
-The generic decorator preserves coroutine functions and offloads synchronous checks using `asyncio.to_thread`; key resolution stays on the caller/event-loop thread. Synchronous decorated functions remain synchronous. With `raise_exception=False`, the generic decorator returns a plain response-description dict, not a framework HTTP response: use middleware or explicitly convert it for an actual HTTP 429.
-
-Executor worker limits are not request admission control. Cancellation cannot roll back a started storage operation; multiple rules are charged separately, not transactionally. Memory TTL expiration is mainly lazy and untouched expired keys may remain allocated. These changes do not establish higher production throughput.
-
-Validation: 205 passed, one existing Starlette/httpx warning. New regressions include 100 equal-timestamp concurrent checks admitting exactly 7 requests on memory/fakeredis Lua, responsive async wrappers, denied-handler isolation and rule validation. Real Redis cluster performance was not measured. See [per-project progress](../DEEP_REVIEW_PROGRESS.md).
+Global multi-region quotas, edge routing, Redis HA/Cluster, durable execution
+queues and adaptive/ML policy tuning remain deployment/design extensions.

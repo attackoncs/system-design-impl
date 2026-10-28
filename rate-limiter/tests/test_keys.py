@@ -17,7 +17,7 @@ class TestKeyResolution(unittest.TestCase):
         request.client = unittest.mock.Mock()
         request.client.host = "127.0.0.1"
 
-        result = rate_limiter.keys.ip_key(request)
+        result = rate_limiter.keys.ip_key(request, trust_forwarded=True)
         self.assertEqual(result, "192.168.1.100")
 
     def test_ip_key_fastapi_no_proxy(self):
@@ -37,7 +37,7 @@ class TestKeyResolution(unittest.TestCase):
         request.headers = {"X-Forwarded-For": "192.168.1.100"}
         request.remote_addr = "10.0.0.1"
 
-        result = rate_limiter.keys.ip_key(request)
+        result = rate_limiter.keys.ip_key(request, trust_forwarded=True)
         self.assertEqual(result, "192.168.1.100")
 
     def test_ip_key_flask_no_proxy(self):
@@ -52,11 +52,9 @@ class TestKeyResolution(unittest.TestCase):
     def test_ip_key_multiple_proxies(self):
         """Test IP extraction with multiple proxies in X-Forwarded-For."""
         request = unittest.mock.Mock()
-        request.headers = {
-            "X-Forwarded-For": "192.168.1.100, 10.0.0.1, 172.16.0.1"
-        }
+        request.headers = {"X-Forwarded-For": "192.168.1.100, 10.0.0.1, 172.16.0.1"}
 
-        result = rate_limiter.keys.ip_key(request)
+        result = rate_limiter.keys.ip_key(request, trust_forwarded=True)
         self.assertEqual(result, "192.168.1.100")
 
     def test_ip_key_fallback(self):
@@ -130,7 +128,7 @@ class TestKeyResolution(unittest.TestCase):
         request.path = None  # Ensure path attribute is not present
 
         result = rate_limiter.keys.path_key(request)
-        self.assertEqual(result, "/api/v1/users?param=value")
+        self.assertEqual(result, "/api/v1/users")
 
     def test_method_key_fastapi(self):
         """Test method extraction from FastAPI request."""
@@ -261,7 +259,9 @@ class TestKeyResolution(unittest.TestCase):
         self.assertEqual(result, "203.0.113.10:12345:POST")
 
         # Test with ip=False to get only user and method
-        key_func_no_ip = rate_limiter.keys.rate_limit_key(ip=False, user=True, method=True)
+        key_func_no_ip = rate_limiter.keys.rate_limit_key(
+            ip=False, user=True, method=True
+        )
         result_no_ip = key_func_no_ip(request)
         self.assertEqual(result_no_ip, "12345:POST")
 
@@ -292,7 +292,9 @@ class TestKeyResolution(unittest.TestCase):
         request.path = "/api/users"
         request.method = "POST"
 
-        key_func = rate_limiter.keys.rate_limit_key(ip=True, user=True, path=True, method=True)
+        key_func = rate_limiter.keys.rate_limit_key(
+            ip=True, user=True, path=True, method=True
+        )
         result = key_func(request)
 
         expected = "203.0.113.10:12345:/api/users:POST"
@@ -327,6 +329,7 @@ class TestKeyResolution(unittest.TestCase):
                 "X-Tenant-ID": "acme-corp",
             }
         )
+        api_request.client.host = "203.0.113.10"
         api_request.path = "/api/v1/data"
         api_request.method = "POST"
 
@@ -334,7 +337,9 @@ class TestKeyResolution(unittest.TestCase):
         # Note: ip=True is the default, so we need ip=False to test user-only
         ip_only = rate_limiter.keys.rate_limit_key(ip=True)(api_request)
         user_only = rate_limiter.keys.rate_limit_key(ip=False, user=True)(api_request)
-        endpoint_specific = rate_limiter.keys.rate_limit_key(ip=True, path=True)(api_request)
+        endpoint_specific = rate_limiter.keys.rate_limit_key(ip=True, path=True)(
+            api_request
+        )
 
         self.assertEqual(ip_only, "203.0.113.10")
         self.assertTrue(user_only.startswith("jwt:"))
@@ -350,9 +355,9 @@ class TestKeyResolution(unittest.TestCase):
         web_request.method = "GET"
 
         # ip=True is default, so we need ip=False to get only user and path
-        user_session_key = rate_limiter.keys.rate_limit_key(ip=False, user=True, path=True)(
-            web_request
-        )
+        user_session_key = rate_limiter.keys.rate_limit_key(
+            ip=False, user=True, path=True
+        )(web_request)
         self.assertEqual(user_session_key, "98765:/dashboard")
 
 
