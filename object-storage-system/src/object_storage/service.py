@@ -1,16 +1,14 @@
-import base64
-from concurrent.futures import ThreadPoolExecutor
+from .listing import list_objects
+from .catalog import Catalog as Catalog
+from .chunk_io import ChunkIO
+from .metadata_records import manifest_copy, publication
+from .service_runtime import Runtime
+from functools import wraps
 import hashlib
-import hmac
 import json
-import re
 import threading
-import time
-import uuid
 
 from .common import (
-    CHUNK,
-    Database,
     Error,
     checksum,
     dumps,
@@ -23,124 +21,66 @@ from .common import (
 )
 
 
-class Catalog(Database):
-    def __init__(self, path, clock=time.time):
-        super().__init__(path)
-        self.clock, self.lock = clock, threading.RLock()
-        self.initialize("""
-        CREATE TABLE IF NOT EXISTS buckets(name TEXT PRIMARY KEY,id TEXT UNIQUE,user TEXT);
-        CREATE TABLE IF NOT EXISTS uploads(id TEXT PRIMARY KEY,bucket TEXT,user TEXT,key TEXT,request TEXT,
-            sha TEXT,size INTEGER,state TEXT,expires REAL,result TEXT,manifest TEXT,UNIQUE(bucket,key,request));
-        CREATE TABLE IF NOT EXISTS parts(upload TEXT,number INTEGER,sha TEXT,size INTEGER,manifest TEXT,PRIMARY KEY(upload,number));
-        CREATE TABLE IF NOT EXISTS snapshots(id TEXT PRIMARY KEY,user TEXT,bucket TEXT,prefix TEXT,
-            versions INTEGER,page_size INTEGER,expires REAL,rows TEXT);
-        """)
-
-    def create(self, name, user):
-        if not isinstance(name, str) or not re.fullmatch(
-            r"[a-z0-9][a-z0-9-]{1,61}[a-z0-9]", name
-        ):
-            raise ValueError("bucket requires 3..63 lowercase letters/digits/hyphens")
-        with self.transaction(True) as db:
-            old = db.execute("SELECT * FROM buckets WHERE name=?", (name,)).fetchone()
-            if old:
-                if old["user"] != user:
-                    raise Error(409, "bucket name unavailable")
-                return dict(old)
-            value = {"name": name, "id": uuid.uuid4().hex, "user": user}
-            db.execute("INSERT INTO buckets VALUES(?,?,?)", tuple(value.values()))
-            return value
-
-    def bucket(self, name, user):
-        with self.transaction() as db:
-            row = db.execute(
-                "SELECT * FROM buckets WHERE name=? AND user=?", (name, user)
-            ).fetchone()
-            if not row:
-                raise Error(404, "bucket missing")
-            return dict(row)
-
-    def start(self, bucket, user, body):
-        if not isinstance(body, dict) or set(body) != {
-            "key",
-            "request_key",
-            "sha256",
-            "size",
-        }:
-            raise ValueError("upload requires key,request_key,sha256,size")
-        key = object_key(body["key"])
-        identifier(body["request_key"])
-        checksum(body["sha256"])
-        integer(body["size"], "size", 0, 64 * 1024 * 1024)
-        with self.transaction(True) as db:
-            old = db.execute(
-                "SELECT * FROM uploads WHERE bucket=? AND key=? AND request=?",
-                (bucket, key, body["request_key"]),
-            ).fetchone()
-            if old:
-                if (old["sha"], old["size"]) != (body["sha256"], body["size"]):
-                    raise Error(409, "upload idempotency content conflict")
-                return dict(old)
-            upload = uuid.uuid4().hex
-            db.execute(
-                "INSERT INTO uploads VALUES(?,?,?,?,?,?,?,'active',?,NULL,NULL)",
-                (
-                    upload,
-                    bucket,
-                    user,
-                    key,
-                    body["request_key"],
-                    body["sha256"],
-                    body["size"],
-                    self.clock() + 3600,
-                ),
-            )
-        return self.upload(upload, user)
-
-    def upload(self, upload, user):
+def serialized_upload(method):
+    @wraps(method)
+    def call(self, upload, *args, **kwargs):
         identifier(upload)
-        with self.transaction() as db:
-            row = db.execute(
-                "SELECT * FROM uploads WHERE id=? AND user=?", (upload, user)
-            ).fetchone()
-            if not row:
-                raise Error(404, "upload missing")
-            value = dict(row)
-            value["parts"] = [
-                {**dict(r), "manifest": json.loads(r["manifest"])}
-                for r in db.execute(
-                    "SELECT * FROM parts WHERE upload=? ORDER BY number", (upload,)
-                )
-            ]
-            return value
+        lock = self._upload_locks[
+            int(sha(upload.encode())[:8], 16) % len(self._upload_locks)
+        ]
+        deadline, cancel = self.runtime.context()
+        while not lock.acquire(
+            timeout=min(0.05, self.runtime.remaining(deadline, cancel))
+        ):
+            pass
+        try:
+            return method(self, upload, *args, **kwargs)
+        finally:
+            lock.release()
 
-    def add_part(self, upload, user, number, data, manifest):
-        integer(number, "part number", 1, 64)
-        state = self.upload(upload, user)
-        if state["state"] != "active" or state["expires"] <= self.clock():
-            raise Error(409, "upload is not active")
-        with self.transaction(True) as db:
-            old = db.execute(
-                "SELECT * FROM parts WHERE upload=? AND number=?", (upload, number)
-            ).fetchone()
-            if old:
-                if (old["sha"], old["size"]) != (sha(data), len(data)):
-                    raise Error(409, "part number content is immutable")
-                return {"number": number, "sha256": old["sha"], "duplicate": True}
-            db.execute(
-                "INSERT INTO parts VALUES(?,?,?,?,?)",
-                (upload, number, sha(data), len(data), dumps(manifest)),
-            )
-        return {"number": number, "sha256": sha(data), "duplicate": False}
+    return call
 
 
 class Service:
     def __init__(self, config, catalog):
-        self.config, self.catalog = config, catalog
+        self.config, self.catalog = json.loads(dumps(config)), catalog
+        self.runtime = Runtime()
+        self._upload_locks = [threading.RLock() for _ in range(64)]
+        self.chunks = ChunkIO(self.config, self.runtime, self._rpc)
+
+    def operation(self, *, deadline, cancel=None):
+        return self.runtime.operation(deadline=deadline, cancel=cancel)
+
+    def guard(self, method, path):
+        parts = path.strip("/").split("/")
+        exclusive = (
+            path == "/admin/maintenance"
+            or (
+                method == "GET"
+                and len(parts) == 4
+                and parts[:2] == ["v1", "buckets"]
+                and parts[3] == "objects"
+            )
+            or (
+                method == "DELETE"
+                and len(parts) == 3
+                and parts[:2] == ["v1", "buckets"]
+            )
+        )
+        return self.runtime.guard(exclusive)
+
+    def close(self):
+        self.runtime.close()
+
+    def _rpc(self, *args, **kwargs):
+        deadline, cancel = self.runtime.context()
+        kwargs.setdefault("deadline", deadline)
+        kwargs.setdefault("cancel", cancel)
+        return request(*args, **kwargs)
 
     def meta(self, bucket, key, path, body=None, method=None):
         index = shard_for(bucket, key, len(self.config["metadata_urls"]))
-        return request(
+        return self._rpc(
             self.config["metadata_urls"][index] + path,
             self.config["internal_token"],
             body,
@@ -150,7 +90,13 @@ class Service:
     def publish(
         self, bucket, key, key_id, manifest, size, checksum_value, marker=False
     ):
-        return self.meta(
+        manifest = publication(
+            bucket, key, key_id, manifest, size, checksum_value, marker
+        )
+        self.catalog.prepare_publication(
+            bucket, key, key_id, manifest, size, checksum_value, marker
+        )
+        result = self.meta(
             bucket,
             key,
             "/publish",
@@ -164,46 +110,33 @@ class Service:
                 "marker": marker,
             },
         )
+        if (
+            not isinstance(result, dict)
+            or set(result) != {"version", "duplicate"}
+            or type(result["duplicate"]) is not bool
+        ):
+            raise Error(502, "invalid metadata publication receipt")
+        try:
+            identifier(result["version"])
+        except ValueError:
+            raise Error(502, "invalid metadata publication receipt") from None
+        self.catalog.finish_publication(bucket, key, key_id)
+        return result
 
     def write_chunk(self, data):
-        key = sha(data)
-
-        def put(url):
-            try:
-                result = request(
-                    url + "/chunks/" + key, self.config["internal_token"], data, "PUT"
-                )
-                return result.get("hash") == key and result.get("size") == len(data)
-            except Exception:
-                return False
-
-        with ThreadPoolExecutor(max_workers=3) as pool:
-            acknowledgements = sum(pool.map(put, self.config["data_urls"]))
-        if acknowledgements < self.config.get("write_quorum", 2):
-            raise Error(503, "insufficient durable data replicas; object not published")
-        return {"hash": key, "size": len(data)}
+        return self.chunks.write(data)
 
     def store_bytes(self, data):
-        return [
-            self.write_chunk(data[offset : offset + CHUNK])
-            for offset in range(0, len(data), CHUNK)
-        ]
+        return self.chunks.store(data)
 
     def read_chunk(self, key):
-        for url in self.config["data_urls"]:
-            try:
-                data = request(
-                    url + "/chunks/" + key, self.config["internal_token"], raw=True
-                )
-                if sha(data) == key:
-                    return data
-            except Exception:
-                pass
-        raise Error(503, "no verified replica available")
+        return self.chunks.read(key)
 
     def put(self, bucket, key, key_id, data, expected):
         object_key(key)
         identifier(key_id)
+        if not isinstance(data, bytes) or len(data) > 4 * 1024 * 1024:
+            raise Error(413, "single upload requires at most 4 MiB immutable bytes")
         if sha(data) != checksum(expected):
             raise Error(400, "whole-object checksum mismatch")
         manifest = self.store_bytes(data)
@@ -213,6 +146,27 @@ class Service:
         row = self.meta(
             bucket, key, "/get", {"bucket": bucket, "key": key, "version": version}
         )
+        try:
+            identifier(row["id"])
+            if (
+                row["bucket"] != bucket
+                or row["key"] != key
+                or (version is not None and row["id"] != version)
+            ):
+                raise ValueError("object identity mismatch")
+            row["manifest"] = publication(
+                bucket,
+                key,
+                "read",
+                row["manifest"],
+                row["size"],
+                row["sha"],
+                bool(row["marker"]),
+            )
+            if type(row["marker"]) is not int or row["marker"] not in (0, 1):
+                raise ValueError("invalid marker")
+        except (ValueError, KeyError, TypeError):
+            raise Error(502, "invalid metadata object descriptor") from None
         if row["marker"]:
             raise Error(404, "latest version is a delete marker")
         data = b"".join(self.read_chunk(c["hash"]) for c in row["manifest"])
@@ -220,6 +174,7 @@ class Service:
             raise Error(409, "whole-object integrity mismatch")
         return row, data
 
+    @serialized_upload
     def part(self, upload, user, number, data, expected):
         if len(data) > 1024 * 1024 or not data:
             raise Error(413, "part requires 1..1048576 bytes")
@@ -231,6 +186,7 @@ class Service:
         integer(number, "part number", 1, 64)
         return self.catalog.add_part(upload, user, number, data, self.store_bytes(data))
 
+    @serialized_upload
     def complete(self, upload, user):
         state = self.catalog.upload(upload, user)
         if state["state"] == "complete":
@@ -258,6 +214,15 @@ class Service:
             # Freeze intent before cross-service publication. Expiry cleanup must
             # not abort this state; maintenance can safely resume it after a crash.
             with self.catalog.transaction(True) as db:
+                fresh = self.catalog._upload(db, upload, user)
+                if (
+                    fresh["state"] != "active"
+                    or fresh["expires"] <= self.catalog.clock()
+                    or dumps(fresh["parts"]) != dumps(state["parts"])
+                ):
+                    raise Error(
+                        409, "upload changed while validating completion; retry"
+                    )
                 db.execute(
                     "UPDATE uploads SET state='completing',manifest=? WHERE id=?",
                     (dumps(manifest), upload),
@@ -280,101 +245,52 @@ class Service:
             )
         return result
 
-    def listing(self, bucket, user, prefix="", versions=False, limit=100, token=None):
-        integer(limit, "limit", 1, 1000)
-        if not isinstance(prefix, str) or len(prefix.encode()) > 512:
-            raise ValueError("invalid prefix")
-        secret = self.config["continuation_secret"].encode()
-        if token:
-            try:
-                encoded, signature = token.split(".")
-                if not hmac.compare_digest(
-                    signature,
-                    hmac.new(secret, encoded.encode(), hashlib.sha256).hexdigest(),
-                ):
-                    raise ValueError("signature")
-                payload = json.loads(
-                    base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
-                )
-                snapshot, index = payload["id"], payload["index"]
-                integer(index, "cursor")
-            except Exception:
-                raise Error(400, "invalid continuation token") from None
-            with self.catalog.transaction() as db:
-                row = db.execute(
-                    "SELECT * FROM snapshots WHERE id=?", (snapshot,)
-                ).fetchone()
-            if (
-                not row
-                or (
-                    row["user"],
-                    row["bucket"],
-                    row["prefix"],
-                    bool(row["versions"]),
-                    row["page_size"],
-                )
-                != (user, bucket, prefix, versions, limit)
-                or row["expires"] <= self.catalog.clock()
-            ):
-                raise Error(409, "continuation expired or query/owner changed")
-            rows = json.loads(row["rows"])
-        else:
-            rows = []
-            for url in self.config["metadata_urls"]:
-                rows.extend(
-                    request(
-                        url + "/list",
-                        self.config["internal_token"],
-                        {"bucket": bucket, "versions": versions},
-                    )["rows"]
-                )
-            rows = [r for r in rows if r["key"].startswith(prefix)]
-            if len(rows) > 10000:
-                raise Error(422, "global listing budget exceeded")
-            rows.sort(key=lambda r: (r["key"], -r["seq"]))
-            snapshot, index = uuid.uuid4().hex, 0
-            with self.catalog.transaction(True) as db:
-                db.execute(
-                    "DELETE FROM snapshots WHERE expires<=?", (self.catalog.clock(),)
-                )
-                db.execute(
-                    "INSERT INTO snapshots VALUES(?,?,?,?,?,?,?,?)",
-                    (
-                        snapshot,
-                        user,
-                        bucket,
-                        prefix,
-                        versions,
-                        limit,
-                        self.catalog.clock() + 300,
-                        dumps(rows),
-                    ),
-                )
-        page = rows[index : index + limit]
-        next_token = None
-        if index + limit < len(rows):
-            encoded = (
-                base64.urlsafe_b64encode(
-                    dumps({"id": snapshot, "index": index + limit}).encode()
-                )
-                .decode()
-                .rstrip("=")
-            )
-            next_token = (
-                encoded
-                + "."
-                + hmac.new(secret, encoded.encode(), hashlib.sha256).hexdigest()
-            )
-        return {
-            "objects": page,
-            "continuation": next_token,
-            "snapshot": snapshot,
-            "snapshot_ttl_seconds": 300,
-        }
+    @serialized_upload
+    def abort(self, upload, user):
+        with self.catalog.transaction(True) as db:
+            state = self.catalog._upload(db, upload, user)
+            if state["state"] in ("complete", "completing"):
+                raise Error(409, "completion intent cannot be aborted")
+            db.execute("UPDATE uploads SET state='aborted' WHERE id=?", (upload,))
+        return {"aborted": upload}
+
+    def listing(
+        self,
+        bucket,
+        user,
+        prefix="",
+        versions=False,
+        limit=100,
+        token=None,
+        delimiter="",
+    ):
+        return list_objects(
+            self.config,
+            self.catalog,
+            bucket,
+            user,
+            prefix,
+            versions,
+            limit,
+            token,
+            delimiter,
+            request_fn=self._rpc,
+        )
 
     def maintenance(self, grace=60):
         integer(grace, "grace", 0, 86400)
         resumed = 0
+        pending = self.catalog.pending_publications()
+        for intent in pending:
+            self.publish(
+                intent["bucket"],
+                intent["key"],
+                intent["request"],
+                intent["manifest"],
+                intent["size"],
+                intent["sha"],
+                intent["marker"],
+            )
         with self.catalog.transaction() as db:
             completing = [
                 dict(r)
@@ -391,17 +307,48 @@ class Service:
                 (self.catalog.clock(),),
             ).rowcount
         live = set()
+        generations = {}
+        for url in self.config["data_urls"]:
+            try:
+                generation = self._rpc(url + "/status", self.config["internal_token"])[
+                    "gc_generation"
+                ]
+                if (
+                    not isinstance(generation, str)
+                    or len(generation) != 32
+                    or any(c not in "0123456789abcdef" for c in generation)
+                ):
+                    raise ValueError("invalid node collection generation")
+                generations[url] = generation
+            except (Error, OSError, KeyError, TypeError, ValueError):
+                # Unreachable nodes cannot receive a safe mark-and-sweep request.
+                pass
         for url in self.config["metadata_urls"]:
-            live.update(
-                request(
-                    url + "/references", self.config["internal_token"], {"grace": grace}
-                )["hashes"]
+            result = self._rpc(
+                url + "/references", self.config["internal_token"], {"grace": grace}
             )
+            if (
+                not isinstance(result, dict)
+                or set(result) != {"hashes"}
+                or not isinstance(result["hashes"], list)
+                or len(result["hashes"]) > 50000
+            ):
+                raise Error(502, "invalid metadata references; collection stopped")
+            try:
+                live.update(checksum(key) for key in result["hashes"])
+            except ValueError:
+                raise Error(
+                    502, "invalid metadata references; collection stopped"
+                ) from None
+            if len(live) > 50000:
+                raise Error(422, "global maintenance reference budget exceeded")
         with self.catalog.transaction() as db:
             for row in db.execute(
                 "SELECT p.manifest FROM parts p JOIN uploads u ON u.id=p.upload WHERE u.state IN('active','completing')"
             ):
-                live.update(c["hash"] for c in json.loads(row[0]))
+                live.update(c["hash"] for c in manifest_copy(json.loads(row[0])))
+                if len(live) > 50000:
+                    raise Error(422, "global maintenance reference budget exceeded")
         if len(live) > 50000:
             raise Error(422, "global maintenance reference budget exceeded")
         repaired, unrecoverable, copy_failures = 0, [], []
@@ -413,7 +360,7 @@ class Service:
                 continue
             for url in self.config["data_urls"]:
                 try:
-                    good = request(
+                    good = self._rpc(
                         url + "/chunks/" + key, self.config["internal_token"], raw=True
                     )
                     if sha(good) == key:
@@ -421,29 +368,44 @@ class Service:
                 except Exception:
                     pass
                 try:
-                    request(
+                    receipt = self._rpc(
                         url + "/chunks/" + key,
                         self.config["internal_token"],
                         data,
                         "PUT",
                     )
+                    if (
+                        not isinstance(receipt, dict)
+                        or receipt.get("hash") != key
+                        or type(receipt.get("size")) is not int
+                        or receipt["size"] != len(data)
+                    ):
+                        raise Error(502, "invalid repair receipt")
                     repaired += 1
                 except Exception:
                     copy_failures.append({"hash": key, "url": url})
         nodes = []
         for url in self.config["data_urls"]:
+            if url not in generations:
+                nodes.append({"url": url, "collection_deferred": True})
+                continue
             try:
-                result = request(
+                result = self._rpc(
                     url + "/collect",
                     self.config["internal_token"],
-                    {"live": sorted(live), "grace": grace},
+                    {
+                        "live": sorted(live),
+                        "grace": grace,
+                        "generation": generations[url],
+                    },
                 )
                 nodes.append({"url": url, **result})
             except Exception:
-                nodes.append({"url": url, "unavailable": True})
+                nodes.append({"url": url, "collection_deferred": True})
         return {
             "expired_uploads": expired,
             "resumed_completions": resumed,
+            "resumed_publications": len(pending),
             "live_chunks": len(live),
             "repaired_copies": repaired,
             "unrecoverable": unrecoverable,

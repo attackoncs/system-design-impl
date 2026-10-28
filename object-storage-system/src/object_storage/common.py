@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 import re
 import sqlite3
-from urllib.request import Request, urlopen
 
 CHUNK = 256 * 1024
 
@@ -94,26 +93,28 @@ class Database:
             db.close()
 
 
-def request(url, token, body=None, method=None, raw=False, headers=None):
-    data = (
-        body
-        if isinstance(body, bytes)
-        else (None if body is None else dumps(body).encode())
-    )
-    req = Request(
+def request(
+    url,
+    token,
+    body=None,
+    method=None,
+    raw=False,
+    headers=None,
+    *,
+    timeout=5,
+    deadline=None,
+    cancel=None,
+):
+    from .transport import request as direct_request
+
+    return direct_request(
         url,
-        data=data,
-        method=method,
-        headers={
-            "Authorization": "Bearer " + token,
-            "Content-Type": "application/octet-stream"
-            if isinstance(body, bytes)
-            else "application/json",
-            **(headers or {}),
-        },
+        method or ("POST" if body is not None else "GET"),
+        body,
+        token,
+        headers,
+        timeout,
+        deadline=deadline,
+        cancel=cancel,
+        raw=raw,
     )
-    with urlopen(req, timeout=5) as response:
-        result = response.read(70 * 1024 * 1024 + 1)
-        if len(result) > 70 * 1024 * 1024:
-            raise Error(413, "response budget exceeded")
-        return result if raw else json.loads(result)

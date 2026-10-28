@@ -6,7 +6,7 @@ Six independent HTTP processes run in the lab: one catalog/API coordinator, two 
 
 Placement is `first_64_bits(SHA256(canonical_JSON([bucket_uuid,key]))) % shard_count`. Every version of a key stays on one metadata shard. Persisted topology rejects changing shard ID/count on an existing database. There is no online migration, automatic promotion or metadata replication.
 
-The one coordinator serializes operations and maintenance with a process lock. This protects publication, bucket deletion, part staging and GC from racing, and limits throughput. A second active coordinator or direct writers bypassing it are unsupported. Multiple local processes are not independent physical disks/hosts/availability zones.
+The one coordinator uses shared ownership for ordinary operations and exclusive ownership for maintenance, bucket deletion and listing capture. Upload stripes and persistent publication intents protect staging and unknown results. A second active coordinator or direct writers bypassing it are unsupported. Multiple local processes are not independent physical disks/hosts/availability zones.
 
 ## Versions and publication
 
@@ -48,7 +48,7 @@ Reads resolve the manifest and try nodes until a verified copy of each chunk is 
 
 Administrative maintenance resumes completions, expires active sessions, then gathers all metadata references: live versions and recently removed versions within grace. Active/completing uploads add references. Missing any metadata source stops before sweep. A 50,000-unique-chunk budget bounds admin requests/memory and fails explicitly.
 
-Scrubbing checks each live hash on every node, repairs missing/corrupt copies from a good source and reports repaired copies, failed writes and unrecoverable hashes. It then asks nodes to collect unreferenced chunks older than grace (default 60 seconds, tests explicitly use zero). Coordinator serialization prevents in-flight upload publication from racing this mark-and-sweep. Node locks protect IO/compaction/collection. Shared chunks remain while any version/upload references them. The implementation is a bounded full scan, not a distributed production collector.
+Scrubbing checks each live hash on every node, repairs missing/corrupt copies from a good source and reports repaired copies, failed writes and unrecoverable hashes. It then asks nodes to collect unreferenced chunks older than grace (default 60 seconds, tests explicitly use zero). Coordinator exclusion, durable publication intents and node collection generations protect mark-and-sweep, including delayed remote handlers. Node locks protect IO/compaction/collection. Shared chunks remain while any version/upload references them. The implementation is a bounded full scan, not a distributed production collector.
 
 Replication normally costs about 3x byte storage. Erasure coding could reduce space but needs encoding, multiple available fragments and reconstruction bandwidth. No erasure codec or independent failure-domain test is implemented. Losing every verified copy is unrecoverable.
 
@@ -57,3 +57,70 @@ Replication normally costs about 3x byte storage. Erasure coding could reduce sp
 Static users own private buckets. Internal/admin tokens and the continuation signing secret are distinct. Users cannot directly access chunk/metadata endpoints. Servers bind loopback only. No S3 Signature V4, IAM policy, TLS, encryption, public buckets, range reads or presigned URL compatibility is claimed.
 
 Catalog and metadata are single-owner SQLite failure domains, and repair is explicitly scheduled. Tests retain disks or simulate a missing node directory while preserving its original bytes. No automatic election, autonomous multi-host repair, online resharding, production lifecycle/archival or SLA exists. The book's 100 PB, six-nine durability and four-nine availability targets remain unverified.
+
+## Chapter 25 engineering review (2026-10-26)
+
+Added `GET /v1/buckets` for the authenticated owner's buckets and
+`GET /v1/buckets/{bucket}/objects?delimiter=/` for same-level objects and
+`common_prefixes`. The default `delimiter=` remains recursive. Prefixes and
+objects share the page limit. Continue with identical owner/bucket/prefix,
+versions/limit/delimiter; signed tokens expire after five minutes. New writes do
+not change an existing snapshot. The catalog automatically migrates the old
+snapshot table and supports old recursive continuation tokens.
+
+Bounds: 1000 buckets per owner; 10,000 raw rows across metadata shards before
+prefix filtering; 128 active snapshots globally/32 per owner, 8 MiB per snapshot.
+A single-page listing does not persist a snapshot. Exceeding a budget is an
+explicit error, not a partial listing.
+
+Catalog, listing, record contracts, chunk I/O, coordinator runtime, routes and
+transport are separate modules. The single coordinator admits eight operations
+and owns twelve replication workers; HTTP admission is bounded to 32 requests.
+Ordinary object reads/publications may overlap. GC, bucket deletion and listing
+capture take exclusive ownership; multipart operations use 64 upload lock
+stripes. Publication/quorum, immutable parts, durable completing state and
+version idempotency remain enforced. Data nodes share read ownership and give
+writers priority. Uncertain append/index/CURRENT failures fence the node with
+`needs_recovery` until a verified recovery succeeds.
+
+A local timeout does not prove that a remote handler stopped. Therefore every
+metadata publication first records a durable catalog intent. An unknown result
+remains pending; maintenance replays all pending publications before gathering
+references. Over 128 pending intents, corrupt intents or failed recovery stop
+collection. Intent completion occurs only after a verified metadata receipt.
+Old catalogs without the new intent history cannot retroactively recover
+unknown operations from before this upgrade; upgrade with old requests drained.
+
+Maintenance captures each node's `gc_generation` before scanning references.
+Every accepted PUT, including a duplicate chunk, changes that generation;
+recovery, compaction and collection also invalidate it. Internal HTTP `/collect`
+requires `{live,grace,generation}` and validates generation after acquiring the
+node writer lock. A delayed stale request returns409 before deleting data.
+Repair writes can invalidate the current sweep: `collection_deferred` means
+repeat maintenance with a fresh complete snapshot. No generation refresh is
+silently used to accept an old reference set. Node restarts use fresh random
+generations, avoiding dependence on synchronized cross-machine wall clocks.
+The local direct `DataNode.collect()` API retains its trusted unfenced form for
+compatibility; external callers must use the fenced coordinator protocol.
+
+Direct HTTP bypasses proxies and redirects, validates framing/JSON/checksums and
+uses shared deadlines/cancellation. Ordinary API requests use a 15-second total
+budget; maintenance uses60 seconds; each RPC defaults to at most5 seconds.
+Shutdown drains accepted work and closes the shared pool. Arbitrary SQL/CPU/DNS
+or custom blocking RPC implementations cannot be forcibly terminated.
+
+Final validation: **137 tests passed,40.784 seconds**, no skips, `-W error`.
+Both six-process demos passed. Four-client measurement:40 verified objects,
+38.23 PUT/s and76.98 GET/s; PUT p50/p95=99.655/124.262ms,
+GET p50/p95=48.046/69.440ms. This small localhost burst is not a controlled
+speedup comparison or a production SLA. See [chapter review](chapter25-review.md)
+and [measurements](../benchmarks/results.md).
+
+Remaining chapter-scale work: placement heartbeats/consensus, independent AZs,
+metadata/catalog HA, multi-pack rotation/per-core append streams, streaming GB
+objects, erasure coding, automatic repair scheduling, online resharding, cloud
+IAM/TLS/encryption and lifecycle/backup/100PB durability validation. No real AWS
+service was used, and no commit or push was made.
+
+Bucket deletion also rejects pending publication intents with409, preventing
+recovery from publishing an inaccessible version into an already removed bucket.

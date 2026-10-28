@@ -1,3 +1,28 @@
+# Engineering review — 2026-10-26
+
+137 tests passed40.784s, no skips, `-W error`. Both actual six-process demos passed.
+Four-client40-object localhost measurement on Python3.13.9/Windows11:
+
+| Metric | Result |
+| --- | --- |
+| PUT total / throughput |1.046s /38.23ops/s |
+| PUT p50 / p95 |99.655 /124.262ms |
+| GET total / throughput |0.520s /76.98ops/s |
+| GET p50 / p95 |48.046 /69.440ms |
+| Verified objects |40 |
+| Packed chunks / pack files / bytes per node |40 /1 /166310 |
+| Large files / unrecoverable chunks |0 /0 |
+
+[Raw performance](review-2026-10-26.json),[feature protocol evidence](features-2026-10-26.json),
+[review record](../docs/chapter25-review.md). The benchmark now uses four clients;
+it cannot be compared as a controlled speedup to the historical sequential run.
+The catalog adds durable intents to protect unknown publication outcomes.
+Small localhost bursts and retained-disk faults do not establish an SLA.
+
+---
+
+## Historical 2026-10-20 report (sequential implementation)
+
 # Validation and local measurements
 
 Date: 2026-10-20. Python 3.13.9, Windows 11 build 26100. Raw benchmark output: [results.json](results.json).
