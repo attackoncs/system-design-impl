@@ -1,0 +1,17 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "series": 100,
+  "raw_samples": 6000,
+  "ingest_seconds": 0.806,
+  "query_requests": 40,
+  "clients": 4,
+  "query_points": 3000,
+  "cold_query_ms": 228.463,
+  "warm_p50_ms": 65.693,
+  "warm_p95_ms": 90.315,
+  "warm_query_qps": 56.76,
+  "sqlite_bytes": 3276800,
+  "errors": 0,
+  "scope": "direct fixture ingestion; independent localhost HTTP query process; repeated fixed range warms revision cache; not queue ingestion throughput or production TSDB scale"
+}

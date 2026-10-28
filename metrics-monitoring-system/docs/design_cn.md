@@ -1,17 +1,73 @@
-# 设计：指标监控与告警（Metrics Monitoring and Alerting）
+# 设计：指标监控与告警
 
-## 流水线与进程边界
-一个 HTTP 采集器接收推送批次，并周期性地发现/抓取 JSON 导出器。它在回复之前提交一个有界的 SQLite 发件箱（outbox）。稳定的分块 ID 和内容哈希可在重启后保留。调度器（dispatcher）通过第 20 章的 HTTP 协议以仲裁确认（quorum confirmation）发送 ≤12KiB 的队列记录。队列传输在本包外部：实验中使用了三个实际的 broker 和一个协调器；不模拟 Kafka/Redis 部署。存储工作进程（storage worker）使用带租约保护（fenced group lease）的组消费，在时序数据库（Time-Series DB, TSDB）中一次性应用批次，然后向队列确认。丢失的确认（lost acknowledgement）或新的生产者纪元（producer epoch）可能导致传输重复；持久化的批次回执（durable batch receipt）使得重复摄取具有幂等性。无效批次会被送入一个持久化的本地拒绝账本（hash/原因，而非无穷重试的毒消息）。
+核心审查日期2026-10-26，来源原书8997–9663行。
+最终测试/性能见[验证报告](../benchmarks/results.md)，覆盖与缺口见[章节记录](chapter21-review.md)。
 
-## 序列与聚合
-SQLite WAL（Write-Ahead Logging）存储序列、倒排精确标签索引（inverted exact-label index）、不可变的原始样本、分钟/小时统计摘要以及摄取回执。写入事务强制实施序列预算并更新修订版本（revision）。并发冲突样本会使整个批次回滚。迟到的原始样本触发降采样（rollup）重新计算；完整的桶会在裁剪前从保留的较低分辨率数据重建。摘要保留 count/sum/min/max、首尾值及其时间戳，以及内部计数器增量（counter increase）。合并计数器摘要会加上边界增量，使用重置后的新值。量规（Gauge）均值使用 sum/count；计数器速率使用 increase/(last-first)，不做外推（extrapolation），且要求至少两个采样时间点。这并非完整的 PromQL。
+## 采集与传输
 
-原始数据截断点为 `floor((now−7d)/60)*60`；分钟级截断点为 `floor((now−30d)/3600)*3600`；小时级截断点为 `floor((now−365d)/3600)*3600`。保留策略可超出标称年龄一个较低层级的桶，以避免接缝丢失（seam loss）。查询选择不重叠的年龄层级，按请求步长合并，并披露粗略部分桶过度抓取（coarse partial-bucket overfetch）。粗略查询步长必须与保留粒度对齐。近期原始数据填充实时尾部（live tails）。缓存键包含存储修订版本以及完整的选择器/范围/选项。不宣称具备生产级 TSDB 编码/压缩能力。
+推送或发现的JSON exporter先进入持久SQLite outbox，接受响应不代表已入TSDB。
+默认16MiB积压通过事务字节计数控制，满载429；按metric或metric+规范标签分区，
+每块最多100样本/12KiB。分块持久保存目标，配置变化不迁移旧积压。
+owner/lease隔离claim，同分区FIFO，不同队首由有界Dispatcher并行发送。
+未知发送结果保留原生产者序号/内容；重启新epoch可能重复传输，TSDB批回执承担幂等应用边界。
+
+消费者轮流处理组分配，先应用再提交。无效样本/基数冲突进入持久拒绝账本；临时存储
+故障不推进游标。队列offset过期明确失败，需要运维恢复。第20章真实HTTP broker和
+分离磁盘提供传输，不模拟Kafka，并保留单协调器限制。
+
+可重载JSON目标含labels/interval/timeout/retries。错误更新保留上次有效列表并报告；
+静态一致性哈希按共享成员列表分配instance，所有collector必须使用同一成员配置。
+这不是共识发现或自动故障接管。抓取重试共用目标时间预算，有界worker隔离慢目标。
+
+## 存储、查询与保留
+
+SQLite WAL保存序列、精确标签倒排索引、不可变原始样本、分钟/小时摘要和批回执。
+输入在等待写锁前冻结，拿到写锁后采样时钟并检查范围；基数预算随库持久保存，冲突
+回滚整批。不宣称生产TSDB压缩/编码或物理分片。
+
+dirty表只跟踪被修改的分钟/小时桶。一致读快照提取源数据，聚合/编码在写锁外计算，
+短事务以revision校验发布。最多3次尝试，每层20000桶、总200000源原子；超限/持续
+冲突返回503，保留未裁剪源数据。旧库一次迁移seed可用低层桶，不改变原批指纹。
+
+原始截断点floor((now−7d)/60)*60；分钟/小时截断点分别
+floor((now−30d)/3600)*3600及floor((now−365d)/3600)*3600。重建完整低层桶再裁剪。
+查询合并不重叠层级、披露粗桶边界包含整桶，step须对齐保留粒度。
+gauge按sum/count；counter增量组合内部值及重置后的边界增量，rate按实际首末时间差，
+单点无rate，不外推或隐式跨查询桶回看。
+
+marker/revision和数据来自同一快照。查询最多200源序列/200000输入原子（每序列原始
+点最多20000）/20000输出点。缓存键包含版本和所有选项，64固定条带合并冷加载，返回
+对象隔离调用方修改。group_by不传逐序列；[]或标签列表聚合gauge avg/min/max，avg按
+样本count加权。counter/last跨序列明确拒绝；不实现完整PromQL。
+
+本地小时gzip归档要求完整冷小时，最多100000桶/10000序列，压缩与解压各64MiB。
+读取检查SHA-256、结构、身份和桶/统计字段；独占创建、fsync，失败仅删除同身份新文件。
+归档单独GC，不是云分层或在线保留pin。
 
 ## 告警与投递
-规则是不可变的命名配置（允许相同重放）。每个匹配的序列拥有持久化状态和单调转换序列。假值评估会重置 pending 或解析 firing；缺失/过期数据会重置 pending 并使已处于 firing 的告警保持活跃且为无数据状态（no-data status），避免臆造的恢复。通知分组使用规则 ID 和配置的标签键。状态转换和待通知事件一起提交。静默（silence）延迟通知，但评估继续。尚未成批的事件如果被后续事件取代可以取消。一旦分组完成，一次投递拥有冻结的负载和稳定的幂等键；重试不会意外地在不同键下重新分组。每个组的 FIFO 防止解析事件追上较早的重试。租约（lease）隔离竞争的投递工作进程，退避有上限，耗尽的投递保留为死信（dead letter）可见。
 
-Webhook 传输使用真实 HTTP，支持可选的目标凭据。提供者接口边界覆盖邮件/电话/PagerDuty；缺失的适配器会显式失败，绝不假装投递成功。接收端幂等性处理已测试的丢失 ACK 场景。端到端外部投递为至少一次（at-least-once），若无接收端配合则无法做到恰好一次（exactly-once）。API/worker 角色可共享同一个本地 TSDB 文件；这不是远程 SQL 集群。采集器根节点和调度器是单所有者参考组件。
+规则ID不可变；--rules-file/--rules在worker启动前原子加载JSON数组或{"rules":[...]}，
+上限1MiB/1000规则。静态labels可附severity，不改变指标selector。配置/评估/schema/
+投递/provider分离；评估先做读快照计算，再以每条规则的evaluation-version CAS发布
+状态和事件，不要求全局Store revision保持不变。
 
-## 运维与扩展
-读取/推送/管理凭据是分离的。仪表盘请求读取令牌并保持在内存中；不嵌入密钥或持久化浏览器令牌存储。发现与通知目标是受信的运维配置，而非任意不可信的 URL。CPU 指进程 CPU 秒数，内存指 Python 分配追踪值（traced Python allocation），不是宿主机利用率/RSS。服务失败发出 `collector_up=0`。参考实现需要共识元数据、可扩展的 TSDB/流分区、真实提供者凭据、TLS/ACL、配额/回执 GC、磁盘压缩、查询规划和持续负载验证才能进入生产。队列的单协调器仍是已知的 SPOF（单点故障）。
+条件恢复重置pending或生成resolved；no_data重置pending并保留已firing，避免虚构恢复。
+分组使用rule及指定标签；未分组的过时事件可取消，冻结批次保持原负载/幂等键重试。
+同组FIFO防止恢复越过旧重试，lease隔离竞争结果，claim即累计尝试次数；有限退避、最多
+5次，耗尽保留dead记录。静默期间继续评估，可能延迟整批并在解除后按序投递。
+
+真实验证自有HTTP webhook。邮件/电话/PagerDuty须配置Provider，否则显式失败。
+外部去重需要接收方配合，不宣称任意副作用恰好一次。告警使用本地持久outbox，
+没有另建Kafka告警事件总线，只有指标流经第20章队列。
+
+## 运行与生产边界
+
+HTTP默认32处理名额/128 backlog/10秒绝对socket预算，正文1MiB/响应4MiB。
+正文前鉴权，拒绝重复JSON、非有限值及歧义framing；直接HTTP不走环境代理或转发重定向，
+HTTPS使用证书校验。先绑定再启动worker，非daemon处理线程和后台排空自有工作并暴露
+失败重试。Socket期限不能终止DNS/SQLite/CPU任务。
+
+API/storage/alerts共享单机SQLite，不是复制SQL HA。CPU是进程累计秒数，内存是Python
+tracemalloc分配，不是整机利用率/RSS。生产TSDB压缩/分布、共识发现、流处理/优先级、
+元数据HA、TLS/ACL、真实商业provider、云保留、备份、回执/告警GC及持续规模/掉电验证
+仍为扩展，不由本机样本测量证明。

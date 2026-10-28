@@ -1,234 +1,16 @@
-from contextlib import closing
+"""Compatibility facade and durable queue-to-storage consumer operations."""
+
 import json
+import logging
 import time
 from urllib.error import HTTPError
-import uuid
 
-from .common import Database, Error, digest, dumps, http_json, identifier, sample
+from .collector import Collector as Collector
+from .collector import Dispatcher as Dispatcher
+from .common import Error, digest
+from .queue_adapter import QueueAdapter as QueueAdapter
 
-
-class Collector(Database):
-    def __init__(self, path, max_bytes=16 * 1024 * 1024, clock=time.time):
-        super().__init__(path)
-        self.max_bytes, self.clock = max_bytes, clock
-        with closing(self.connect()) as db:
-            db.executescript("""
-            PRAGMA journal_mode=WAL;
-            CREATE TABLE IF NOT EXISTS receipts(id TEXT PRIMARY KEY,hash TEXT,response TEXT,created REAL);
-            CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY,payload TEXT,status TEXT,attempts INTEGER,due REAL);
-            CREATE TABLE IF NOT EXISTS scrapes(target TEXT PRIMARY KEY,updated REAL,error TEXT);
-            """)
-            db.commit()
-
-    def enqueue(self, samples, request_id):
-        identifier(request_id)
-        if not isinstance(samples, list) or not 1 <= len(samples) <= 1000:
-            raise ValueError("push requires 1..1000 samples")
-        normalized = [sample(body) for body in samples]
-        fingerprint = digest(normalized)
-        chunks = []
-        current = []
-        for body in normalized:
-            if len(dumps({"batch_id": "0" * 64, "samples": [body]}).encode()) > 12000:
-                raise ValueError("sample too large for queue transport")
-            if (
-                len(current) >= 100
-                or len(
-                    dumps({"batch_id": "0" * 64, "samples": current + [body]}).encode()
-                )
-                > 12000
-            ):
-                chunks.append(current)
-                current = []
-            current.append(body)
-        if current:
-            chunks.append(current)
-        payloads = [
-            (
-                digest([request_id, i]),
-                dumps({"batch_id": digest([request_id, i]), "samples": chunk}),
-            )
-            for i, chunk in enumerate(chunks)
-        ]
-        with self.transaction(True) as db:
-            replay = db.execute(
-                "SELECT * FROM receipts WHERE id=?", (request_id,)
-            ).fetchone()
-            if replay:
-                if replay["hash"] != fingerprint:
-                    raise Error(409, "push ID payload conflict")
-                return json.loads(replay["response"])
-            used = db.execute(
-                "SELECT coalesce(sum(length(CAST(payload AS BLOB))),0) FROM outbox WHERE status='pending'"
-            ).fetchone()[0]
-            if (
-                used + sum(len(payload.encode()) for _, payload in payloads)
-                > self.max_bytes
-            ):
-                raise Error(429, "durable collector backlog capacity exceeded")
-            db.executemany(
-                "INSERT INTO outbox VALUES(?,?,'pending',0,?)",
-                [(id, payload, self.clock()) for id, payload in payloads],
-            )
-            result = {
-                "request_id": request_id,
-                "queued_chunks": len(payloads),
-                "samples": len(normalized),
-                "stored_in_tsdb": False,
-            }
-            db.execute(
-                "INSERT INTO receipts VALUES(?,?,?,?)",
-                (request_id, fingerprint, dumps(result), self.clock()),
-            )
-            db.execute(
-                "DELETE FROM receipts WHERE created<?", (self.clock() - 14 * 86400,)
-            )
-            db.execute(
-                "DELETE FROM outbox WHERE status='sent' AND due<?",
-                (self.clock() - 14 * 86400,),
-            )
-            return result
-
-    def flush_once(self, queue):
-        with self.transaction() as db:
-            item = db.execute(
-                "SELECT * FROM outbox WHERE status='pending' ORDER BY rowid LIMIT 1"
-            ).fetchone()
-        if not item or item["due"] > self.clock():
-            return False
-        try:
-            queue.publish(item["payload"])
-        except Exception:
-            with self.transaction(True) as db:
-                db.execute(
-                    "UPDATE outbox SET attempts=attempts+1,due=? WHERE id=?",
-                    (self.clock() + min(60, 2 ** min(item["attempts"], 6)), item["id"]),
-                )
-            return False
-        with self.transaction(True) as db:
-            db.execute(
-                "UPDATE outbox SET status='sent',payload=NULL,due=? WHERE id=?",
-                (self.clock(), item["id"]),
-            )
-        return True
-
-    def scrape(self, target):
-        url = target["url"]
-        instance = identifier(target["instance"])
-        try:
-            result = http_json(url, token=target.get("token"))
-            samples = result["samples"]
-            if not isinstance(samples, list) or not 1 <= len(samples) <= 1000:
-                raise ValueError("exporter sample list required")
-            # Exporter-provided labels may not impersonate the discovered instance.
-            samples = [
-                sample(
-                    {**body, "labels": {**body.get("labels", {}), "instance": instance}}
-                )
-                for body in samples
-            ]
-            error = ""
-            up = 1
-        except Exception as exc:
-            samples = []
-            error = type(exc).__name__
-            up = 0
-        samples.append(
-            {
-                "metric": "collector_up",
-                "labels": {"instance": instance},
-                "type": "gauge",
-                "timestamp": self.clock(),
-                "value": up,
-            }
-        )
-        result = self.enqueue(samples, uuid.uuid4().hex)
-        with self.transaction(True) as db:
-            db.execute(
-                "INSERT INTO scrapes VALUES(?,?,?) ON CONFLICT(target) DO UPDATE SET updated=excluded.updated,error=excluded.error",
-                (instance, self.clock(), error),
-            )
-        return result
-
-    def health(self):
-        with self.transaction() as db:
-            return {
-                "pending_chunks": db.execute(
-                    "SELECT count(*) FROM outbox WHERE status='pending'"
-                ).fetchone()[0],
-                "pending_bytes": db.execute(
-                    "SELECT coalesce(sum(length(CAST(payload AS BLOB))),0) FROM outbox WHERE status='pending'"
-                ).fetchone()[0],
-                "scrapes": [dict(row) for row in db.execute("SELECT * FROM scrapes")],
-            }
-
-
-class QueueAdapter:
-    def __init__(self, url, token, topic="metrics"):
-        self.url, self.token, self.topic = url.rstrip("/"), token, topic
-        self.producer = None
-        self.sequence = 0
-        self.member = None
-        self.member_id = "storage_" + uuid.uuid4().hex
-
-    def call(self, path, **body):
-        return http_json(self.url + path, "POST", body, self.token, timeout=15)
-
-    def ensure(self):
-        try:
-            self.call("/topic", topic=self.topic)
-        except HTTPError as exc:
-            if exc.code != 409:
-                raise
-
-    def publish(self, payload):
-        if self.producer is None:
-            self.ensure()
-            self.producer = self.call(
-                "/producer", producer="metrics_" + uuid.uuid4().hex
-            )
-        result = self.call(
-            "/produce",
-            topic=self.topic,
-            partition=0,
-            **self.producer,
-            sequence=self.sequence,
-            messages=[{"value": payload}],
-            acks="all",
-        )
-        if not result["committed"]:
-            raise RuntimeError("queue did not confirm commit")
-        self.sequence += 1
-        return result
-
-    def fetch(self):
-        if self.member is None:
-            self.ensure()
-            self.member = self.call(
-                "/join",
-                topic=self.topic,
-                group="metrics-storage",
-                member=self.member_id,
-            )
-        else:
-            self.member = self.call(
-                "/heartbeat",
-                topic=self.topic,
-                group="metrics-storage",
-                member=self.member_id,
-                session=self.member["session"],
-            )
-        source = {
-            "topic": self.topic,
-            "group": "metrics-storage",
-            "member": self.member_id,
-            "session": self.member["session"],
-            "generation": self.member["generation"],
-            "partition": 0,
-        }
-        if 0 not in self.member["assignments"]:
-            return source, {"records": []}
-        return source, self.call("/group-fetch", **source, limit=10)
+LOGGER = logging.getLogger(__name__)
 
 
 def consume_once(store, queue):
@@ -240,10 +22,21 @@ def consume_once(store, queue):
         batch_id = digest(payload)
         try:
             body = json.loads(payload)
+            if not isinstance(body, dict) or set(body) - {
+                "batch_id",
+                "samples",
+                "partition",
+            }:
+                raise ValueError("invalid metrics queue envelope")
             batch_id = body["batch_id"]
             store.ingest(batch_id, body["samples"])
-        except (ValueError, TypeError, KeyError, Error) as exc:
-            store.reject(digest(str(batch_id)), payload, str(exc))
+        except (ValueError, TypeError, KeyError) as exc:
+            store.reject(digest(str(batch_id)), payload, type(exc).__name__)
+        except Error as exc:
+            # Temporary storage failures must leave the queue cursor unchanged.
+            if not 400 <= exc.status < 500:
+                raise
+            store.reject(digest(str(batch_id)), payload, "sample rejected")
     queue.call("/commit", **source, next_offset=batch["next_offset"])
     return True
 
@@ -260,12 +53,16 @@ def storage_loop(store, queue, stop):
         except Exception as exc:
             worked = False
             error = type(exc).__name__
+            LOGGER.warning("metric storage work failed; will retry")
             if isinstance(exc, HTTPError) and exc.code == 409:
                 queue.member = None
-        with store.transaction(True) as db:
-            db.execute(
-                "INSERT INTO workers VALUES('storage',?,?) ON CONFLICT(id) DO UPDATE SET updated=excluded.updated,error=excluded.error",
-                (store.clock(), error),
-            )
+        try:
+            with store.transaction(True) as db:
+                db.execute(
+                    "INSERT INTO workers VALUES('storage',?,?) ON CONFLICT(id) DO UPDATE SET updated=excluded.updated,error=excluded.error",
+                    (store.clock(), error),
+                )
+        except Exception:
+            LOGGER.warning("metric storage health update failed; will retry")
         if not worked:
             stop.wait(0.2)

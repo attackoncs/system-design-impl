@@ -1,4 +1,3 @@
-from collections import OrderedDict
 from contextlib import closing, contextmanager
 import hashlib
 import json
@@ -6,8 +5,8 @@ import math
 from pathlib import Path
 import re
 import sqlite3
-import threading
-from urllib.request import Request, urlopen
+
+from .cache import Cache as Cache
 
 
 class Error(Exception):
@@ -45,7 +44,11 @@ def labels(value):
 
 
 def number(value):
-    if type(value) not in (int, float) or not math.isfinite(value) or abs(value) > 1e15:
+    if (
+        type(value) not in (int, float)
+        or not -1e15 <= value <= 1e15
+        or not math.isfinite(value)
+    ):
         raise ValueError("finite bounded numeric value required")
     return float(value)
 
@@ -102,43 +105,29 @@ class Database:
                 raise
 
 
-class Cache:
-    def __init__(self, capacity=128):
-        if type(capacity) is not int or capacity < 0:
-            raise ValueError("capacity must be a non-negative integer")
-        self.items, self.capacity, self.lock = OrderedDict(), capacity, threading.Lock()
-        self.hits = self.misses = 0
+def http_json(
+    url,
+    method="GET",
+    body=None,
+    token=None,
+    headers=None,
+    timeout=5,
+    *,
+    deadline=None,
+    cancel=None,
+    max_bytes=4 * 1024 * 1024,
+):
+    """Compatibility entry point for the direct, bounded HTTP transport."""
+    from .transport import request
 
-    def get(self, key, loader):
-        """Load outside the metadata lock; concurrent misses may duplicate work."""
-        with self.lock:
-            if key in self.items:
-                self.hits += 1
-                self.items.move_to_end(key)
-                return self.items[key]
-            self.misses += 1
-        loaded = loader()
-        with self.lock:
-            if key in self.items:
-                self.items.move_to_end(key)
-                return self.items[key]
-            self.items[key] = loaded
-            while len(self.items) > self.capacity:
-                self.items.popitem(last=False)
-            return loaded
-
-
-def http_json(url, method="GET", body=None, token=None, headers=None, timeout=5):
-    headers = dict(headers or {})
-    if token:
-        headers["Authorization"] = "Bearer " + token
-    if body is not None:
-        headers["Content-Type"] = "application/json"
-    data = dumps(body).encode() if body is not None else None
-    with urlopen(
-        Request(url, data=data, method=method, headers=headers), timeout=timeout
-    ) as response:
-        payload = response.read(4 * 1024 * 1024 + 1)
-        if len(payload) > 4 * 1024 * 1024:
-            raise ValueError("HTTP response exceeds 4 MiB reference limit")
-        return json.loads(payload)
+    return request(
+        url,
+        method,
+        body,
+        token,
+        headers,
+        timeout,
+        deadline=deadline,
+        cancel=cancel,
+        max_bytes=max_bytes,
+    )
