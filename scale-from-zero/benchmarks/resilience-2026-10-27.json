@@ -1,0 +1,20 @@
+{
+  "stage": "balanced",
+  "configured_processes": 9,
+  "stale_fill_accepted": false,
+  "current_version": 2,
+  "reduced_node": "web0",
+  "expanded_nodes": [
+    "web0",
+    "web1",
+    "web2"
+  ],
+  "edge_source": "edge",
+  "edge_entries_after_invalidate": 0,
+  "fallback_source": "origin_fallback",
+  "consumer": {
+    "attempts": 2,
+    "unique_events": 2
+  },
+  "elapsed_seconds_including_lab": 6.367073500001425
+}

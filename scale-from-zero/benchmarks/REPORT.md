@@ -1,3 +1,36 @@
+# 第2章复审实测（2026-10-27）
+
+完整pytest66项/51.08秒，-W error、无跳过；隔离HEAD基线19项/33.87秒。旧unittest只跑11项，README已纠正。验证命令：
+
+```powershell
+$env:PYTHONPATH = 'src'
+$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
+python -W error -m pytest tests -q
+python examples/network_demo.py
+python examples/resilience_demo.py
+python tools/benchmark.py --requests 30 --clients 4 --output benchmarks/review-2026-10-27.json
+```
+
+新增用例覆盖冻结竞态、过期ACK/负载源校验、长用户任务ID/单clock、源绑定/原子复制、字节预算/代际版本下限、错身份回执/未来版本、在线路由快照、严格协议/生命周期和客户端回源。原网络故障与会话重启继续通过。
+
+每阶段30读/4客户端、暖缓存、Windows11/Python3.13.9。计时不含启动/写种子/追平/预热；最终采样未同时运行测试或图构建。HEAD通过git show复制隔离运行，未改变检出或索引。
+
+| 阶段 | 基线QPS | 本轮QPS | 基线P95ms | 本轮P95ms | 本轮新增主库资料读 |
+|---|---:|---:|---:|---:|---:|
+| single | 147.03 | 145.58 | 55.204 | 61.489 | 30 |
+| balanced | 70.33 | 69.46 | 89.021 | 67.816 | 0 |
+| sharded | 74.90 | 67.30 | 77.660 | 75.340 | 0 |
+
+不是全面提速：吞吐略降，single P95上升，distributed P95下降；小样本无法作受控归因或稳定尾延迟证明。新增协议/取消/校验有成本，分层的意义包括减少资料主库读；会话鉴权仍访问主库。百万用户/线性扩容没有证明。
+
+[HEAD原始样本](baseline-2026-10-27.json)、[本轮样本](review-2026-10-27.json)、[原阶段演示](stages-2026-10-27.json)、[9进程新演示](resilience-2026-10-27.json)保留，Oct21的latest.json不覆盖。新演示含生命周期6.367074秒，拒绝旧填充/版本2/三Web同会话/失效0项/回源/唯一2事件均通过。
+
+[章节对照与图盲区](../docs/chapter02-review.md)说明首个旧源绑定/旧inbox迁移、缓存最终一致、SQL不可强杀以及主库HA/GeoDNS/多地域/生产监控等剩余项。
+
+---
+
+# 初始实现历史（原数据保留）
+
 # 第2章测试与实测报告
 
 2026-10-21，Windows11（10.0.26100）、Python3.13.9、单机回环HTTP和SQLite WAL/FULL同步。全部为合成用户资料，未连接云服务或真实CDN。

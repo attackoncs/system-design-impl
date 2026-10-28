@@ -3,11 +3,21 @@ import threading
 
 from .common import Error, identifier, integer, request
 from .store import partition
+from .contracts import (
+    freeze,
+    record,
+    update as validate_update,
+    session as validate_session,
+)
+from .runtime import RequestContext
+from .assets import ASSETS as ASSETS
 
 
 class App:
     def __init__(self, config, node, store=None):
-        self.config, self.node, self.store = config, node, store
+        self.config, self.node, self.store = freeze(config), node, store
+        self.context = RequestContext()
+        self.operation = self.context.operation
         self._cache_errors = 0
         self._metrics_lock = threading.Lock()
 
@@ -35,6 +45,7 @@ class App:
             self.config["internal_token"],
             {"user": user, **body},
             timeout=1,
+            **self.context.options(),
         )
 
     def login(self, body):
@@ -43,6 +54,7 @@ class App:
         user = identifier(body["user"])
         if (
             not isinstance(body["password"], str)
+            or not body["password"].isascii()
             or not hmac.compare_digest(
                 self.config["users"].get(user, ""), body["password"]
             )
@@ -56,7 +68,15 @@ class App:
             raise Error(401, "session bearer required")
         token = header[7:]
         user = identifier(token.split(".", 1)[0])
-        self.primary(user, "session_check", {"token": token})
+        if user not in self.config["users"]:
+            raise Error(401, "session user missing")
+        try:
+            validate_session(user, token)
+        except ValueError:
+            raise Error(401, "session invalid or expired") from None
+        reply = self.primary(user, "session_check", {"token": token})
+        if reply != {"user": user}:
+            raise Error(502, "session check returned another identity")
         return user
 
     def cache(self, action, body):
@@ -65,59 +85,83 @@ class App:
             self.config["internal_token"],
             body,
             timeout=0.4,
+            **self.context.options(),
         )
 
     def update(self, user, body):
-        value = self.primary(user, "update", {"profile": body})
+        body = validate_update(body)
+        value = self.validate_record(
+            self.primary(user, "update", {"profile": body}), user
+        )
+        if value["version"] != body["expected_version"] + 1 or value["profile"] != {
+            key: body[key] for key in ("display_name", "city")
+        }:
+            raise Error(502, "update response differs from the submitted operation")
         if self.store is None:
             try:
-                self.cache("delete", {"key": user})
+                self.cache("delete", {"key": user, "min_version": value["version"]})
             except (Error, OSError, TimeoutError):
                 self._record_cache_error()
         return {**value, "web_node": self.node}
 
+    @staticmethod
+    def validate_record(value, user):
+        try:
+            return record(value, user)
+        except (ValueError, TypeError, KeyError):
+            raise Error(502, "invalid profile response identity/version") from None
+
     def get(self, user, strong=False, min_version=0):
         integer(min_version)
-        value = None
-        source = "primary"
+        source, value, generation, floor = "primary", None, None, min_version
         if self.store is not None or strong:
-            value = self.primary(user, "get", {})
+            value = self.validate_record(self.primary(user, "get", {}), user)
         else:
             try:
-                value = self.cache("get", {"key": user, "min_version": min_version})[
-                    "value"
-                ]
-            except (Error, OSError, TimeoutError):
+                probe = self.cache("get", {"key": user, "min_version": min_version})
+                floor = integer(probe["min_version"], min_version)
+                generation = probe["generation"]
+                if not isinstance(generation, str) or len(generation) > 80:
+                    raise ValueError("cache generation required")
+                if probe["value"] is not None:
+                    value = self.validate_record(probe["value"], user)
+                    if value["version"] < floor:
+                        raise ValueError("cache below requested version")
+            except (Error, OSError, ValueError, TypeError, KeyError):
                 self._record_cache_error()
-            if value:
+                value, generation = None, None
+            if value is not None:
                 source = "cache"
             else:
                 index = partition(user, len(self.config["primaries"]))
                 try:
-                    value = request(
-                        self.config["replicas"][index] + "/internal/get",
-                        self.config["internal_token"],
-                        {"user": user},
-                        timeout=0.5,
+                    value = self.validate_record(
+                        request(
+                            self.config["replicas"][index] + "/internal/get",
+                            self.config["internal_token"],
+                            {"user": user},
+                            timeout=0.5,
+                            **self.context.options(),
+                        ),
+                        user,
                     )
-                    if value["version"] < min_version:
+                    if value["version"] < floor:
                         value = None
                     else:
                         source = "replica"
-                except (Error, OSError, TimeoutError):
+                except (Error, OSError):
                     value = None
                 if value is None:
-                    value = self.primary(user, "get", {})
-                try:
-                    self.cache("put", {"key": user, "value": value})
-                except (Error, OSError, TimeoutError):
-                    self._record_cache_error()
-        if value["version"] < min_version:
+                    value = self.validate_record(self.primary(user, "get", {}), user)
+                # A failed probe has no safe generation ticket; bypass filling.
+                if generation is not None:
+                    try:
+                        self.cache(
+                            "put",
+                            {"key": user, "value": value, "generation": generation},
+                        )
+                    except (Error, OSError):
+                        self._record_cache_error()
+        if value["version"] < floor:
             raise Error(409, "requested version does not exist yet")
         return {**value, "source": source, "web_node": self.node}
-
-
-ASSETS = {
-    "app-v1.txt": "Synthetic static asset, version one.",
-    "app-v2.txt": "Synthetic static asset, version two.",
-}

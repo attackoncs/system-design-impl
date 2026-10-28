@@ -2,6 +2,9 @@
 
 import logging
 import threading
+import time
+
+from .contracts import fields
 
 from .common import request
 
@@ -15,7 +18,7 @@ class PeriodicWorker:
         self._step = step
         self._stop = threading.Event()
         self._interval = interval
-        self._thread = threading.Thread(target=self._run, name=name, daemon=True)
+        self._thread = threading.Thread(target=self._run, name=name, daemon=False)
 
     def _run(self):
         while not self._stop.is_set():
@@ -30,33 +33,70 @@ class PeriodicWorker:
     def start(self):
         self._thread.start()
 
-    def close(self):
+    @property
+    def cancel(self):
+        return self._stop
+
+    def stop(self):
         self._stop.set()
+
+    def close(self):
+        self.stop()
         if self._thread.ident is not None:
             self._thread.join()
 
 
-def replicate_once(store, primary, token, transport=request):
+def replicate_once(
+    store, primary, token, transport=request, *, deadline=None, cancel=None
+):
     after = store.status()["seq"]
-    changes = transport(
-        primary + "/internal/changes?after=" + str(after), token, timeout=0.5
-    )["changes"]
-    for change in changes:
-        store.replicate(change)
+    feed = transport(
+        primary + "/internal/changes?after=" + str(after),
+        token,
+        timeout=0.5,
+        deadline=deadline,
+        cancel=cancel,
+    )
+    store.apply_feed(feed)
 
 
 def consume_local_once(store, consumer):
-    job = store.claim()
+    job = store.claim(lease_seconds=5)
     if job and consumer.consume(job):
         store.ack(job)
 
 
-def consume_remote_once(primaries, token, consumer, transport=request):
+def consume_remote_once(
+    primaries, token, consumer, transport=request, *, deadline=None, cancel=None
+):
     for url in primaries:
+        if cancel is not None and cancel.is_set():
+            return
+        budget = (
+            min(deadline, time.monotonic() + 2)
+            if deadline is not None
+            else time.monotonic() + 2
+        )
         try:
-            job = transport(url + "/internal/claim", token, {}, timeout=0.5)["job"]
+            reply = transport(
+                url + "/internal/claim",
+                token,
+                {},
+                timeout=0.5,
+                deadline=budget,
+                cancel=cancel,
+            )
+            fields(reply, {"job"})
+            job = reply["job"]
             if job and consumer.consume(job):
-                transport(url + "/internal/ack", token, {"job": job}, timeout=0.5)
+                transport(
+                    url + "/internal/ack",
+                    token,
+                    {"job": job},
+                    timeout=0.5,
+                    deadline=budget,
+                    cancel=cancel,
+                )
         except Exception:
             # Isolate each shard: an unavailable owner must not starve others.
             logger.exception("Task delivery failed for shard %s", url)

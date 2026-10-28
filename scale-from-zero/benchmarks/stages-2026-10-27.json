@@ -1,0 +1,153 @@
+{
+  "elapsed_seconds_including_labs": 12.669617499999731,
+  "stages": [
+    {
+      "stage": "single",
+      "processes": 1,
+      "reads": [
+        {
+          "profile": {
+            "city": "Test City 0",
+            "display_name": "Synthetic User"
+          },
+          "source": "primary",
+          "user": "alice_0",
+          "version": 1,
+          "web_node": "single"
+        },
+        {
+          "profile": {
+            "city": "Test City 0",
+            "display_name": "Synthetic User"
+          },
+          "source": "primary",
+          "user": "alice_0",
+          "version": 1,
+          "web_node": "single"
+        },
+        {
+          "profile": {
+            "city": "Test City 0",
+            "display_name": "Synthetic User"
+          },
+          "source": "primary",
+          "user": "alice_0",
+          "version": 1,
+          "web_node": "single"
+        }
+      ]
+    },
+    {
+      "stage": "balanced",
+      "processes": 8,
+      "reads": [
+        {
+          "profile": {
+            "city": "Test City 0",
+            "display_name": "Synthetic User"
+          },
+          "source": "replica",
+          "user": "alice_0",
+          "version": 1,
+          "web_node": "web0"
+        },
+        {
+          "profile": {
+            "city": "Test City 0",
+            "display_name": "Synthetic User"
+          },
+          "source": "cache",
+          "user": "alice_0",
+          "version": 1,
+          "web_node": "web1"
+        },
+        {
+          "profile": {
+            "city": "Test City 0",
+            "display_name": "Synthetic User"
+          },
+          "source": "cache",
+          "user": "alice_0",
+          "version": 1,
+          "web_node": "web0"
+        }
+      ],
+      "primaries": [
+        {
+          "pending_jobs": 0,
+          "profile_reads": 0,
+          "seq": 2,
+          "users": 2
+        }
+      ],
+      "consumer": {
+        "attempts": 2,
+        "unique_events": 2
+      },
+      "edge": {
+        "asset": "app-v1.txt",
+        "content": "Synthetic static asset, version one.",
+        "edge_model": "local cache; not a real CDN"
+      }
+    },
+    {
+      "stage": "sharded",
+      "processes": 10,
+      "reads": [
+        {
+          "profile": {
+            "city": "Test City 0",
+            "display_name": "Synthetic User"
+          },
+          "source": "replica",
+          "user": "alice_0",
+          "version": 1,
+          "web_node": "web0"
+        },
+        {
+          "profile": {
+            "city": "Test City 0",
+            "display_name": "Synthetic User"
+          },
+          "source": "cache",
+          "user": "alice_0",
+          "version": 1,
+          "web_node": "web1"
+        },
+        {
+          "profile": {
+            "city": "Test City 0",
+            "display_name": "Synthetic User"
+          },
+          "source": "cache",
+          "user": "alice_0",
+          "version": 1,
+          "web_node": "web0"
+        }
+      ],
+      "primaries": [
+        {
+          "pending_jobs": 0,
+          "profile_reads": 0,
+          "seq": 1,
+          "users": 1
+        },
+        {
+          "pending_jobs": 0,
+          "profile_reads": 0,
+          "seq": 1,
+          "users": 1
+        }
+      ],
+      "consumer": {
+        "attempts": 2,
+        "unique_events": 2
+      },
+      "edge": {
+        "asset": "app-v1.txt",
+        "content": "Synthetic static asset, version one.",
+        "edge_model": "local cache; not a real CDN"
+      }
+    }
+  ]
+}

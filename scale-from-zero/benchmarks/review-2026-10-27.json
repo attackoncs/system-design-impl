@@ -1,0 +1,65 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "samples": [
+    {
+      "stage": "single",
+      "processes": 1,
+      "requests": 30,
+      "clients": 4,
+      "elapsed_seconds": 0.20607220000238158,
+      "reads_per_second": 145.58004427406166,
+      "p50_ms": 26.38189999925089,
+      "p95_ms": 61.48930000199471,
+      "additional_primary_profile_reads": 30,
+      "cache": null
+    },
+    {
+      "stage": "balanced",
+      "processes": 8,
+      "requests": 30,
+      "clients": 4,
+      "elapsed_seconds": 0.43190340000001015,
+      "reads_per_second": 69.45997646695834,
+      "p50_ms": 57.267999996838626,
+      "p95_ms": 67.81580000097165,
+      "additional_primary_profile_reads": 0,
+      "cache": {
+        "bytes": 95,
+        "capacity": 32,
+        "entries": 1,
+        "evictions": 0,
+        "hits": 30,
+        "max_bytes": 524288,
+        "misses": 1,
+        "rejected_fills": 0,
+        "ttl_seconds": 2,
+        "version_floors": 2
+      }
+    },
+    {
+      "stage": "sharded",
+      "processes": 10,
+      "requests": 30,
+      "clients": 4,
+      "elapsed_seconds": 0.4457746000007319,
+      "reads_per_second": 67.29858542848952,
+      "p50_ms": 59.82719999883557,
+      "p95_ms": 75.33960000000661,
+      "additional_primary_profile_reads": 0,
+      "cache": {
+        "bytes": 95,
+        "capacity": 32,
+        "entries": 1,
+        "evictions": 0,
+        "hits": 30,
+        "max_bytes": 524288,
+        "misses": 1,
+        "rejected_fills": 0,
+        "ttl_seconds": 2,
+        "version_floors": 2
+      }
+    }
+  ],
+  "scope": "Small warmed-cache loopback samples with sessions, excludes startup/seed/warmup; added tiers incur network overhead. Not a million-user capacity proof or production speedup."
+}

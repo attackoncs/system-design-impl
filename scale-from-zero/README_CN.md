@@ -19,13 +19,13 @@ $env:PYTHONPATH = 'src'
 New-Item -ItemType Directory -Force .runtime/tmp | Out-Null
 $env:TEMP = (Resolve-Path .runtime/tmp).Path
 $env:TMP = $env:TEMP
-python -m unittest discover -s tests -v
+python -m pytest tests -q
 python examples/network_demo.py
 python examples/network_demo.py --stage sharded
 python tools/benchmark.py --requests 30 --clients 4
 ```
 
-11项测试含4项独立进程HTTP测试。演示依次启动1/8/10进程，两个合成用户登录/写入资料，验证同会话跨Web节点、读副本/缓存及任务处理。退出只清理自己启动的进程和临时数据库。三种阶段各自使用新数据，**不是在线数据迁移步骤**。
+66项测试含5项独立进程HTTP测试。演示依次启动1/8/10进程，两个合成用户登录/写入资料，验证同会话跨Web节点、读副本/缓存及任务处理。退出只清理自己启动的进程和临时数据库。三种阶段各自使用新数据，**不是在线数据迁移步骤**。
 
 持久运行先执行 `python tools/init_config.py --stage sharded`。查看 `.runtime/private-config.json` 的 `services`，为每个节点开独立终端，设置 `PYTHONPATH=src`，例如：
 
@@ -66,11 +66,11 @@ balanced省去primary1/replica1；single仅运行single节点。更换阶段应�
 
 默认读为最终一致：先32项LRU/2秒TTL缓存，再异步资料副本；副本不可用、记录缺失或低于min_version时读主库。缓存失败可绕过。写入先持久提交，再尽力失效缓存。
 
-并发回填可能与失效竞态，副本长期滞后也可能让旧值再次进入缓存；**TTL限制单次缓存项寿命，不限制整体副本滞后**。需要新鲜度时选strong或min_version。会话校验仍依赖主库，因此资料副本不等于主库高可用。
+回填使用缓存实例/代际令牌，成功观察的写入版本形成下限，拒绝失效前的迟到回填及低版本覆盖。失效RPC失败、缓存重启或1000项版本下限元数据被逐出后，副本滞后仍可能使旧值重新进入缓存；**TTL限制单次缓存项寿命，不限制整体副本滞后**。需要新鲜度时选strong或min_version。会话校验仍依赖主库，因此资料副本不等于主库高可用。
 
 资料、版本、幂等结果、复制变更与outbox任务在同一SQLite事务提交。读副本检查连续序号、校验和并去重，状态与游标原子更新；不复制会话、幂等索引或任务，不做自动主库提升。
 
-worker使用持久任务、一秒租约与认领令牌；独立收件表按稳定事件ID去重。消费后丢确认会重试，但事件只记录一次。单个分片故障不会饿死其他分片任务。这里只记录模拟通知/审计事件，不发邮件或外部消息；采用至少一次投递、持续重试，没有生产消息队列/死信或网络恰好一次保证。
+worker使用持久任务、五秒租约（Store.claim直接调用的兼容默认值仍为一秒）与认领令牌；独立收件表按稳定事件ID去重。消费后丢确认会重试，但事件只记录一次。单个分片故障不会饿死其他分片任务。这里只记录模拟通知/审计事件，不发邮件或外部消息；采用至少一次投递、持续重试，没有生产消息队列/死信或网络恰好一次保证。
 
 ## 静态资源与观察指标
 
@@ -80,10 +80,26 @@ worker使用持久任务、一秒租约与认领令牌；独立收件表按稳�
 
 ## 验证与限制
 
-详见[设计](docs/design.md)、[验证及实测](benchmarks/REPORT.md)和[原始样本](benchmarks/latest.json)。小流量下新增网络层可能更慢，实验观察其开销及主库资料读取减少，不预设分层一定提速。
+详见[设计](docs/design.md)、[验证及实测](benchmarks/REPORT.md)和[本轮样本](benchmarks/review-2026-10-27.json)与[历史样本](benchmarks/latest.json)。小流量下新增网络层可能更慢，实验观察其开销及主库资料读取减少，不预设分层一定提速。
 
 固定SHA256用户分片，没有在线迁移。主库、会话库、负载均衡及各单实例服务仍有单点；主库停机影响该分片的鉴权、写入和强读。未验证跨机耐久性、自动主库切换、真实CDN/GeoDNS、多地域、百万用户负载、生产TLS/身份或自动伸缩。每主库限制1000条资料变更和1000个有效会话，保留完整历史。后续章节组件可用于深入学习，但未冒充已经集成为本实验的生产基础设施。
 
 ## Engineering review (2026-10-23)
 
 Routing/replay policy lives in `balancer.py`; owned background operations and shutdown live in `workers.py`. Cache synchronization is internal, so direct reuse is thread-safe. Network I/O and cache copying do not hold routing/cache metadata locks. See [per-project review](../DEEP_REVIEW_PROGRESS.md) for findings, regression evidence and remaining limits.
+
+## 2026-10-27 深入复审
+
+完整测试为66项（含5项真实网络实验），需要可选依赖 `pip install -e ".[test]"`。旧unittest命令只会执行TestCase子集，漏掉pytest工程回归。本轮验证设置 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` 隔离环境无关插件，未跳过项目用例。
+
+新增 `python examples/resilience_demo.py`：9进程/3个Web，演示缓存旧回填被拒绝、同会话在线缩/扩节点池、边缘失效及客户端回源。默认1/8/10进程示例保持通过。`tools/init_config.py --web-nodes 3` 可预配置1–8个Web。
+
+负载均衡管理接口 `GET/POST /admin/backends`，POST为 `{"nodes":["web0","web1"]}`，只允许配置中已有Web。变更只影响后续请求，已开始请求保留原候选快照；重启回到配置池，不提供服务发现或自动伸缩。edge的 `POST /admin/invalidate` 接受 `{"asset":"app-v1.txt"}`；客户端 `assets.fetch_asset(config, asset)` 在边缘故障时显式回源，不会把404当成节点故障重试。
+
+缓存同时限制32项/512KiB，回填令牌在失效或进程重启后失效；版本下限最多1000项。默认仍为最终一致，令牌并未使数据库/缓存跨服务事务化。复制绑定持久源库ID，核对请求游标及其前缀哈希、完整批次和逐用户版本，整批提交；旧副本首次升级需核对旧前缀，不支持空盘替换主库或混合版本滚动升级。
+
+claim返回实际租约/次数/源库ID，ACK同时核对未过期租约、令牌、原负载和源身份，消费幂等键按源库隔离。旧无源inbox记录首次匹配时绑定身份，无法追溯升级前来源，应先备份审查。读副本仍只复制资料，不复制会话/幂等/任务，不可直接提升。
+
+HTTP每服务32连接/15秒总I/O预算，请求64KiB/响应8MiB；内部RPC有单次上限并共享请求/周期截止时间，严格路径/查询/JSON/凭据/长度，不走代理或重定向。非daemon后台线程按stop/close/join排空；SQL/CPU或自定义阻塞适配器不能被socket超时强杀。契约、资料、会话、租约、复制、消费、路由和协议已分层，兼容原Store/Consumer/partition导入。
+
+[章节覆盖、回归及剩余架构](docs/chapter02-review.md)明确列出：真实主库HA、GeoDNS/多地域、真实CDN、自动扩容/迁移与生产监控仍未实现。小样本并未全面提速，性能退步也保留在报告。

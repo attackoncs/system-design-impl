@@ -43,13 +43,13 @@ The change stream contains contiguous shard-local sequence, user, new version/pr
 
 Shared cache is a separate volatile process with32-entry LRU and2-second monotonic TTL. Cache values are copied on get/put to avoid object mutation leakage. Cache-aside reads try cache, then matching read replica, then primary on errors/missing profile. Writes commit before best-effort invalidation; cache failure never rolls back a successful write. Cache restart loses derived data only.
 
-Eventual reads can be stale. Cache fill/invalidate races exist, and a lagging replica can refill stale values after TTL. Therefore the TTL is not a staleness SLA. `min_version` filters cache/replica versions and falls back to primary; `consistency=strong` bypasses both. A required version newer than the primary returns409. No cross-shard atomic read is offered. Session authentication always contacts the primary even for a cache hit, so cache hit reductions describe **profile** queries, not all primary traffic.
+Eventual reads can be stale. Generation tickets reject fills started before an observed invalidation; retained version floors reject values older than observed writes. Failed invalidation, restart or floor eviction can still permit stale replica refills. Therefore the TTL is not a staleness SLA. `min_version` filters cache/replica versions and falls back to primary; `consistency=strong` bypasses both. A required version newer than the primary returns409. No cross-shard atomic read is offered. Session authentication always contacts the primary even for a cache hit, so cache hit reductions describe **profile** queries, not all primary traffic.
 
 Failure of the read replica routes profile reads to the primary; failure of the primary does not trigger promotion. Other shards continue with their own primaries, and worker polling isolates per-shard transport failures. There is no cross-host replication, distributed transaction or independent failure-domain guarantee.
 
 ## Durable asynchronous work
 
-Profile change and outbox insertion commit together. A worker claims tasks using a one-second lease plus fresh token, persists a deduplicated effect in its own inbox, then acknowledges the source. Reclaiming after a lost ACK uses the same event ID; repeating delivery increments attempt count but not effect count. Old claim tokens cannot acknowledge a newer claim. In the single-process stage, a local thread uses the same protocol without HTTP.
+Profile change and outbox insertion commit together. A worker claims tasks using a five-second lease plus fresh token, persists a deduplicated effect in its own inbox, then acknowledges the source. Reclaiming after a lost ACK uses the same event ID; repeating delivery increments attempt count but not effect count. Old claim tokens cannot acknowledge a newer claim. In the single-process stage, a local thread uses the same protocol without HTTP.
 
 `lose_ack` fault control deliberately suppresses acknowledgement after recording the effect. Restart recovers the existing inbox and source lease. Effects are synthetic notification/audit records, not real outbound messages. The queue retries indefinitely; it has no dead-letter policy, fairness guarantee, broker replication or ordering guarantee across versions/shards. This is a durable outbox exercise, not the later distributed-message-queue implementation.
 
@@ -61,10 +61,22 @@ Per-process diagnostic counters expose balancer fallback, web identity, primary 
 
 ## Validation and production extensions
 
-Nineteen tests cover concurrent idempotency/CAS, session persistence/expiry, replication gap/checksum/replay, LRU/TTL/version reads, lease fencing, topology-change refusal, actual1/8/10-process requests, web/cache/replica failures, primary restart/shard isolation, consumer ACK loss and edge-origin access. See `../benchmarks/REPORT.md` for final commands and measurements.
+Sixty-six tests cover concurrent idempotency/CAS, session persistence/expiry, replication gap/checksum/replay, LRU/TTL/version reads, lease fencing, topology-change refusal, actual1/8/10-process requests, web/cache/replica failures, primary restart/shard isolation, consumer ACK loss and edge-origin access. See `../benchmarks/REPORT.md` for final commands and measurements.
 
 The experiment is bounded and one-host. Primaries, session dependencies, balancer, consumer and cache/edge each retain individual failure modes. Production extensions require real database HA and recovery fencing, replicated sessions, load-balancer redundancy, real CDN/GeoDNS, regional synchronization, migration protocols, security, independent monitoring and relevant long-running capacity/failure tests. The local sample cannot establish any of those properties by process count alone.
 
 ## Engineering organization (2026-10-23)
 
 Routing policy lives in balancer.py; background single-step operations and owned-thread shutdown live in workers.py. Cache owns its lock, copies snapshots outside the metadata lock, and no longer requires HTTP callers to synchronize it. Profile POST retries require its idempotency key; login is never replayed merely because its body contains request_id. Eight additional regressions cover these contracts.
+
+## Protocol after the 2026-10-27 review
+
+Current behavior is defined here and in the README. Contracts freeze values; profiles/sessions/jobs/replication/consumer/schema isolate persistence; runtime/routes/transport/server_runtime isolate I/O/lifetimes. Old imports remain; no cross-chapter runtime dependencies.
+
+Cache probes return instance-generation tickets and observed-version floors. Invalidation advances generation even with no value; fills verify the ticket. Values are bounded32/512 KiB, floors1000. Best-effort invalidation failures, restart or floor eviction can still allow old replica data: TTL does not bound replica lag. A read begun concurrently may return an older snapshot, but cannot refill from a pre-invalidation ticket; subsequent reads honor retained floors. Strong/min-version semantics remain.
+
+Persistent database/source identities survive restart. Feeds carry after/previous_hash/count/head/source_id and validate the complete bounded suffix/per-user versions before atomic batch/binding commit. History is immutable. This is not database HA; legacy initial binding/inbox source cannot be authenticated retrospectively. Stop/back up and upgrade services together.
+
+Workers use5-second leases, with one finite clock sample after writer ownership. ACK checks actual expiry/token/payload/source; consumer IDs include source identity. Each service HTTP32/15 seconds,64 KiB/8 MiB; bounded RPCs inherit deadlines. SQL/CPU cannot be force-stopped; ownership drains. Non-daemon workers start after binding, stop/close/join even on close failure.
+
+Web pools can add/remove1–8 configured nodes online without holding the routing lock over I/O; restart restores config, and DB shards remain static. Edge invalidation and explicit client-origin fallback are local models. GeoDNS/regions/database promotion/migration/production capacity are unimplemented. See [chapter review](chapter02-review.md).

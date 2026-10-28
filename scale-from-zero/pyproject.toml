@@ -9,6 +9,9 @@ requires-python = ">=3.10"
 dependencies = []
 description = "Staged real-HTTP scaling lab: stateless web, cache, replicas, sharding and jobs"
 
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+
 [project.scripts]
 scale-from-zero = "scale_from_zero.cli:main"
 

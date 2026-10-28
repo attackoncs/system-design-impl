@@ -19,7 +19,7 @@ $env:PYTHONPATH = 'src'
 New-Item -ItemType Directory -Force .runtime/tmp | Out-Null
 $env:TEMP = (Resolve-Path .runtime/tmp).Path
 $env:TMP = $env:TEMP
-python -m unittest discover -s tests -v
+python -m pytest tests -q
 python examples/network_demo.py
 python examples/network_demo.py --stage sharded
 python tools/benchmark.py --requests 30 --clients 4
@@ -70,11 +70,11 @@ The load balancer retries a failed upstream for GETs and profile POSTs carrying 
 
 ## Consistency and background work
 
-Default reads are eventual: cache-aside tries a bounded32-entry LRU cache with2-second TTL, then the corresponding asynchronous read replica, then primary on replica failure/missing/too-old version. Cache failure is bypassed. Writes commit before best-effort cache invalidation. A concurrent stale fill can race invalidation, and replica lag can cause old values to be cached again: **TTL bounds one entry's lifetime, not total replica staleness**. Use strong/min-version reads when freshness matters. Authentication itself still depends on the primary session store.
+Default reads are eventual: cache-aside tries a bounded32-entry LRU cache with2-second TTL, then the corresponding asynchronous read replica, then primary on replica failure/missing/too-old version. Cache failure is bypassed. Writes commit before best-effort cache invalidation. Generation tickets reject pre-invalidation fills, and observed write-version floors reject older values. Failed invalidation, cache restart or eviction of bounded floor metadata can still permit replica staleness: **TTL bounds one entry's lifetime, not total replica staleness**. Use strong/min-version reads when freshness matters. Authentication itself still depends on the primary session store.
 
 Each profile write atomically persists the profile/version, idempotency result, replication change and outbox job in one SQLite transaction. Replicas enforce sequence/checksum/deduplication and apply a change/cursor together. Sessions, idempotency indices and jobs are not replicated; no automatic primary promotion is attempted.
 
-The worker consumes per-primary durable jobs with one-second leases and claim-token fencing. Its independent inbox deduplicates stable event IDs. A lost ACK causes repeated attempts but one recorded event effect; an unavailable shard does not starve another. Events stand in for background notification/audit work, and no email or external message is sent. Delivery is at least once, with unbounded retry in this small lab, no production broker/DLQ or exactly-once network guarantee.
+The worker consumes per-primary durable jobs with five-second leases (direct Store.claim retains a one-second default) and claim-token fencing. Its independent inbox deduplicates stable event IDs. A lost ACK causes repeated attempts but one recorded event effect; an unavailable shard does not starve another. Events stand in for background notification/audit work, and no email or external message is sent. Delivery is at least once, with unbounded retry in this small lab, no production broker/DLQ or exactly-once network guarantee.
 
 ## Assets and diagnostics
 
@@ -84,10 +84,24 @@ Use the admin token for `GET /admin/status` on a specific service. Available met
 
 ## Limits and evidence
 
-See [design](docs/design.md), [verification/measurements](benchmarks/REPORT.md) and [raw sample](benchmarks/latest.json). Adding tiers creates network cost at small scale; the benchmark measures that tradeoff and primary profile-read reduction without assuming a speedup.
+See [design](docs/design.md), [verification/measurements](benchmarks/REPORT.md) and [current sample](benchmarks/review-2026-10-27.json) and [historical sample](benchmarks/latest.json). Adding tiers creates network cost at small scale; the benchmark measures that tradeoff and primary profile-read reduction without assuming a speedup.
 
 Shard routing is fixed SHA256(user) modulo count. There is no online resharding. Primaries, balancer, session stores, worker and cache/edge instances remain individual services; primary failure stops authentication/writes/strong reads for that shard. Replicas support profile-read fallback only. No cross-host durability, automatic database failover, real CDN, GeoDNS, geographic deployment, million-user load, production identity/TLS or autoscaling has been verified. Each primary retains at most1000 profile changes and1000 live sessions; complete history is kept for replay. Related later chapters provide deeper standalone components, not automatically integrated infrastructure here.
 
 ## Engineering review (2026-10-23)
 
 Routing/replay policy lives in `balancer.py`; owned background operations and shutdown live in `workers.py`. Cache synchronization is internal, so direct reuse is thread-safe. Network I/O and cache copying do not hold routing/cache metadata locks. See [per-project review](../DEEP_REVIEW_PROGRESS.md) for findings, regression evidence and remaining limits.
+
+## 2026-10-27 deep review
+
+The complete suite has66 tests, including five actual network experiments. Install optional tests with `pip install -e ".[test]"`; unittest discovery alone misses pytest regressions. Validation disables unrelated plugin autoload, without skipping project cases.
+
+`examples/resilience_demo.py` runs nine processes/three Web nodes. `tools/init_config.py --web-nodes 3` preconfigures1–8 Web nodes. Admin `GET/POST /admin/backends` accepts `{ "nodes": ["web0","web1"] }` using configured names only. In-flight requests retain their candidate snapshot; future requests use the new pool. Restart restores the configured pool; this is not service discovery/autoscaling. Edge `POST /admin/invalidate` accepts `{ "asset": "app-v1.txt" }`. Client `assets.fetch_asset(config, asset)` explicitly falls back to origin on edge failure, without replaying404.
+
+Cache capacity is32 entries/512 KiB. Fill tickets expire on invalidation/restart, and up to1000 observed-version floors prevent stale repopulation. Eventual consistency remains after failed invalidation, floor eviction or restart. Replication binds the durable source database identity, checks cursor/prefix, complete batch and per-user versions, then commits the batch atomically. Legacy replicas first verify retained prefixes; empty-disk primary replacement and mixed-version rolling upgrades are unsupported.
+
+Claim replies include actual lease/attempt/source identity. ACK validates live expiry, token, original payload and source; consumer IDs are source-scoped. Legacy unscoped inbox rows bind on first matching delivery and cannot prove earlier source identity: back up/audit before upgrade. Profile replicas still exclude sessions, deduplication and jobs and cannot be promoted directly.
+
+HTTP is32 connections/service and15-second I/O budget,64 KiB input/8 MiB output. Bounded RPCs share request/poll deadlines, reject ambiguous paths/queries/JSON/credentials/framing and bypass proxies/redirects. Non-daemon workers stop/close/join; socket cancellation cannot force-stop SQL/CPU/custom adapters. Contracts, profiles, sessions, jobs, replication, consumer and protocol concerns have focused modules with compatible Store/Consumer/partition exports.
+
+See [chapter mapping and open architecture](docs/chapter02-review.md). Real database HA, GeoDNS/regions/CDN, autoscaling/migration and production observability remain open. Measurements include regressions; no overall speedup is claimed.

@@ -5,7 +5,6 @@ from pathlib import Path
 import re
 import sqlite3
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
 
 
 class Error(Exception):
@@ -36,21 +35,23 @@ def integer(value, minimum=0, maximum=10**12):
     return value
 
 
-def request(url, token, body=None, timeout=10):
-    req = Request(
-        url,
-        data=None if body is None else encode(body).encode(),
-        headers={
-            "Authorization": "Bearer " + token,
-            "Content-Type": "application/json",
-        },
-    )
+def shard_for(account, count):
+    return int(hashlib.sha256(identifier(account).encode()).hexdigest(), 16) % count
+
+
+def request(url, token, body=None, timeout=10, *, deadline=None, cancel=None):
+    from .transport import request as rpc
+
     try:
-        with urlopen(req, timeout=timeout) as response:
-            raw = response.read(8 * 1024 * 1024 + 1)
-            if len(raw) > 8 * 1024 * 1024:
-                raise Error(413, "response exceeds reference budget")
-            return json.loads(raw)
+        return rpc(
+            url,
+            "GET" if body is None else "POST",
+            body,
+            token or None,
+            timeout=timeout,
+            deadline=deadline,
+            cancel=cancel,
+        )
     except HTTPError as exc:
         try:
             raw = exc.read(65536)
@@ -79,6 +80,16 @@ class Database:
             yield db
         finally:
             db.close()
+
+    @contextmanager
+    def read_transaction(self):
+        """Pin related reads to one SQLite snapshot, including WAL readers."""
+        with self.connection() as db:
+            db.execute("BEGIN")
+            try:
+                yield db
+            finally:
+                db.rollback()
 
     @contextmanager
     def transaction(self):
