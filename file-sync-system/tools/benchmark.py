@@ -1,4 +1,5 @@
 """Repeatable process/network synchronization report, not a capacity claim."""
+
 import argparse
 import json
 from pathlib import Path

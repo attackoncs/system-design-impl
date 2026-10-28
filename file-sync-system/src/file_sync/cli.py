@@ -1,13 +1,15 @@
 import argparse
 import os
+import sys
 from pathlib import Path
 
 from .client import DeviceClient
 from .http import server
 from .service import Drive
+from .watcher import SyncWatcher
 
 
-def main():
+def _parser():
     parser = argparse.ArgumentParser(
         description="Encrypted file synchronization reference"
     )
@@ -19,31 +21,57 @@ def main():
     api = commands.add_parser("api")
     api.add_argument("--port", type=int, default=8081)
     api.add_argument("--host", default="127.0.0.1")
-    for name in ("push", "pull", "delete"):
+    for name in ("push", "pull", "delete", "sync"):
         command = commands.add_parser(name)
         command.add_argument("--url", default="http://127.0.0.1:8081")
         command.add_argument("--folder", required=True)
         command.add_argument("--device", required=True)
-        if name != "pull":
-            command.add_argument("--space", required=True)
+        command.add_argument("--space", required=name != "pull")
+        if name in ("push", "delete"):
             command.add_argument("path")
+        if name == "sync":
+            command.add_argument("--interval", type=float, default=1)
+            command.add_argument("--poll-wait", type=float, default=1)
+            command.add_argument("--max-files", type=int, default=10000)
     commands.add_parser("cleanup")
     for name in ("archive", "restore-block"):
         commands.add_parser(name).add_argument("key")
-    args = parser.parse_args()
-    if args.command in ("push", "pull", "delete"):
-        client = DeviceClient(
-            args.url, os.environ["FILE_SYNC_TOKEN"], args.folder, args.device
-        )
-        try:
-            if args.command == "pull":
-                batch = client.pull()
-                print(f"Applied {len(batch['events'])} events")
-            else:
-                getattr(client, args.command)(args.space, args.path)
-                print("File synchronized")
-        finally:
-            client.close()
+    return parser
+
+
+def _device(args):
+    client = DeviceClient(
+        args.url, os.environ["FILE_SYNC_TOKEN"], args.folder, args.device
+    )
+    try:
+        if args.space:
+            client.bind_space(args.space)
+        if args.command == "pull":
+            batch = client.pull()
+            print(f"Applied {len(batch['events'])} events")
+        elif args.command == "sync":
+            SyncWatcher(
+                client,
+                args.space,
+                interval=args.interval,
+                poll_wait=args.poll_wait,
+                max_files=args.max_files,
+            ).run(
+                on_error=lambda error: print(
+                    f"Sync will retry: {error}", file=sys.stderr, flush=True
+                )
+            )
+        else:
+            getattr(client, args.command)(args.space, args.path)
+            print("File synchronized")
+    finally:
+        client.close()
+
+
+def main(argv=None):
+    args = _parser().parse_args(argv)
+    if args.command in ("push", "pull", "delete", "sync"):
+        _device(args)
         return
     root = Path(args.root).resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -70,4 +98,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass

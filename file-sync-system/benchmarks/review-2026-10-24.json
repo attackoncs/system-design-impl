@@ -1,0 +1,17 @@
+{
+  "file_bytes": 12288,
+  "block_bytes": 4096,
+  "initial_upload_then_second_process_pull_ms": 890.183,
+  "delta_pull_ms": 106.635,
+  "delta_download_bytes": 4096,
+  "unchanged_bytes_reused": 8192,
+  "server_restart_cursor_verified": true,
+  "retained_revision_bytes": 24576,
+  "unique_plaintext_block_bytes": 16384,
+  "encrypted_object_bytes": 16552,
+  "environment": {
+    "python": "3.13.9",
+    "platform": "Windows-11-10.0.26100-SP0"
+  },
+  "scope": "one local API process; independent filesystem client processes; loopback HTTP"
+}

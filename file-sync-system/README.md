@@ -52,10 +52,11 @@ reads credentials from the environment.
 | POST /begin | Declare space/path/size/checksum/blocks/base/request |
 | GET /upload?upload=ID | Resume state and missing digests |
 | PUT /block?upload=ID&digest=SHA256 | Raw bounded plaintext block |
+| PUT /file?space=ID&path=PATH&request=ID[&base=REVISION] | Simple binary upload up to one configured block |
 | POST /commit or /cancel | Session publication or reservation release |
 | GET /metadata?file=ID&revision=ID | Current or historical manifest |
 | GET /block?file=ID&revision=ID&index=N | Authorized plaintext block |
-| GET /files?space=ID or /revisions?file=ID | Files and revision history |
+| GET /files?space=ID or /revisions?file=ID[&limit=N] | Files and revision history; optional limit 1..1000 |
 | POST /delete | Conditional tombstone: file/base |
 | POST /restore | Historical content: file/revision/base/request |
 | POST /share | Workspace space/recipient/role (read/write/revoke) |
@@ -90,8 +91,9 @@ uploads and sweeps grace-aged unreferenced blocks/orphans. The administrative
 `archive KEY` and `restore-block KEY` CLI demonstrate a local cold tier; archived
 blocks return 423 until restored. There is no cloud Glacier integration.
 
-The device is an explicit push/pull client, with no native OS watcher. Multiple
-workspaces with overlapping paths should use separate device folders. Events remain
+The device supports explicit push/pull and automatic bounded scanning; it has no
+native OS watcher. Multiple workspaces with overlapping paths use separately bound
+device folders. Events remain
 unbounded in this reference; production needs retention/resnapshot protocols and
 bounded cache policy. The service uses local files/SQLite, not metadata HA or
 replicated S3 storage. It does not establish the book's traffic or durability scale.
@@ -99,3 +101,38 @@ Remote deployment needs HTTPS; the demo binds to loopback by default.
 
 See [design](docs/design.md) and [verified measurements](benchmarks/results.md).
 Reproduce network evidence with `python tools/benchmark.py --output .runtime/sync.json`.
+
+## Automatic synchronization and audit
+
+```powershell
+python -m file_sync.cli sync --folder .runtime/laptop --device laptop --space WORKSPACE_ID --interval 1 --poll-wait 1
+```
+
+`SyncWatcher` scans at most 10,000 directory entries per cycle by default, uploads
+new/dirty files, publishes conditional local deletes and pulls durable notifications.
+Stop/Ctrl-C drains the active operation, then exits. Transient failures use capped
+backoff. The loop is serial within a device; each folder has an OS ownership lock,
+and is durably bound to one workspace. Explicit `pull --space ID` also binds a folder.
+Unbound library pull retains the legacy all-workspaces behavior. Preserved local
+conflict copies stay local until explicitly pushed/renamed. The plaintext device
+cache defaults to 64 MiB; it is a disk byte budget, not a process RSS limit.
+
+New sessions emit `pending`, publication emits `upsert`, and cancel/expiry emits
+`cancelled`; retries do not duplicate session-start events. Pending files stay hidden.
+Clients checkpoint/ack only a fully applied page, recheck late local edits and use
+the accepted immutable revision when reconciling lost responses. Cached server
+manifests are immutable and bounded; current ACL/head is still read from SQLite.
+
+Compression/encryption, full-file verification and downloads run outside the global
+metadata lock. Final transactions recheck session/state/ACL and object existence.
+Cold storage operations and GC use shared per-key process guards; expiry commits
+before irreversible deletion. SQLite still serializes metadata writes and GC can
+delay writers; the reference is not multi-host HA. Long polls reserve only part of
+HTTP capacity, do not repeatedly write while idle and are cancelled during close.
+Socket deadlines do not forcibly cancel filesystem/SQLite work.
+
+See [chapter audit](docs/chapter16-review.md) for executed regressions, graph review
+and remaining deployment boundaries. [Latest process report](benchmarks/review-2026-10-24.json)
+again verified 4,096 delta bytes downloaded and 8,192 unchanged bytes reused, with
+durable device progress after an API restart; these tiny local fixtures are not a
+production capacity claim.
