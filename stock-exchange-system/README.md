@@ -18,7 +18,7 @@ python examples/network_demo.py
 python tools/benchmark.py --pairs 20 --clients 4
 ```
 
-13 tests include four actual HTTP multi-process tests. The demo matches two FIFO sells against one buy, refunds price improvement, stops the primary, promotes the caught-up backup and cancels the remaining sell quantity. It verifies cash/share conservation, reporting and candles. Temporary labs stop only their own processes and remove their databases on exit.
+56 tests include five actual HTTP multi-process tests. The demo matches two FIFO sells against one buy, refunds price improvement, stops the primary, promotes the caught-up backup and cancels the remaining sell quantity. It verifies cash/share conservation, reporting and candles. Temporary labs stop only their own processes and remove their databases on exit.
 
 For persistent use, run `python tools/init_config.py` once, then launch four terminals with `PYTHONPATH=src` and this directory as working directory:
 
@@ -95,6 +95,24 @@ Snapshots are fsynced and atomically replaced. Startup checks the entire command
 
 ## Measured limits
 
-See [design](docs/design.md), [verification report](benchmarks/REPORT.md) and [raw sample](benchmarks/latest.json). A 20-taker/4-client sample measured **14.43 filled taker orders/s**, submit-to-fill **p99 473.58 ms**. It includes HTTP and client polling, not a standalone matching-engine latency measurement; with 20 observations, nearest-rank p99 is the maximum sample.
+See [design](docs/design.md), [verification report](benchmarks/REPORT.md) and [current sample](benchmarks/review-2026-10-27.json) and [historical sample](benchmarks/latest.json). A 20-taker/4-client sample measured **17.11 filled taker orders/s**, submit-to-fill **p99 377.02 ms**. It includes HTTP and client polling, not a standalone matching-engine latency measurement; with 20 observations, nearest-rank p99 is the maximum sample.
 
-The reference has no sequencer replication, automatic failover, independent-host durability, production KYC/compliance, trading calendar, settlement/clearing, real funds, shorting, fees, market orders or FIX. It bounds configuration to 100 symbols/100 accounts and history to 1,000 commands, uses full JSON state copies and linear book scans, and retains all command history. The book's billion orders/day, low-millisecond tail latency and 99.99% availability are unproven targets.
+The reference has no sequencer replication, automatic failover, independent-host durability, production KYC/compliance, trading calendar, settlement/clearing, real funds, shorting, fees, market orders or FIX. It bounds configuration to 100 symbols/100 accounts and history to 1,000 commands, uses full JSON state copies and price-level/FIFO indexes with full-state copying/auditing, and retains all command history. The book's billion orders/day, low-millisecond tail latency and 99.99% availability are unproven targets.
+
+## Chapter review additions (2026-10-27)
+
+- `POST /v1/order` is the book-style alias: retain stable `request_id`/`order_id`, and include `orderType: "limit"`. Existing `/v1/orders` remains supported.
+- Authenticated `GET /execution` and `/v1/executions` require `symbol`, with optional `orderId`, `startTime`, `endTime`. Only the caller's trade side is returned, with a half-open timestamp range. Both sides share a dense `execution_seq` and have distinct report IDs.
+- `/marketdata/orderBook/L2` and `/marketdata/candles` provide book-style aliases. Candle queries accept `startTime`/`endTime`, filtering complete buckets by bucket-start timestamp; they neither synthesize empty buckets nor truncate trades inside a bucket. Unknown/repeated queries fail.
+
+The matching index has price heaps, level volumes, FIFO doubly linked order nodes and order maps. Link insertion/removal is O(1), while new/removing best price levels use O(log P), with bounded stale-heap compaction. A whole command still copies/serializes the JSON state, audits it and scans for DAY expiry; it is not O(1) overall. One matching writer preserves determinism. Readers and background polling no longer share a global HTTP lock.
+
+HTTP admits 32 connections with a 15-second I/O budget. Gateway public requests are limited to 16, reserving capacity for internal epoch callbacks. Each owner gets 100 submissions/second and a burst of 100; duplicates count as attempts, and retries after429 retain the original identity. RPCs cap at two seconds within shared request/poll deadlines; poll cycles budget five seconds. JSON input is 1 MiB, RPC/output 8 MiB. Proxy/redirect forwarding, ambiguous framing, duplicate credentials/JSON fields and non-finite numbers are rejected.
+
+Promotion compares the full candidate state with independent sequencer replay. Publication checks epoch before/after reading; gateway/market consumers verify the sequencer prefix. Market ingestion validates snapshots, batches, levels, orders and bilateral execution quantities before atomically storing cursor/projection/duplicate fingerprints. Unverifiable old duplicates require a snapshot; stale snapshots/epochs and conflicting same-prefix states are rejected.
+
+Legacy engine snapshots are validated in their old shape, then upgraded by replaying the original commands into the new index/sequence format; derived batches are rebuilt too. Legacy market readers wait for a verified nonregressing snapshot before upgrading. Damaged durable request indexes refuse restart. Snapshot publication/rebuild owns a separate lock and unique temporary files; background threads cancel/drain on shutdown and never start after a failed bind.
+
+See [chapter coverage and gaps](docs/chapter29-review.md). mmap/SBE/FIX, multicast, CPU pinning, Raft/elections, sequencer replication, a separate outbound event bus, L3 subscriptions and production clearing remain open. Execution sequences are deterministic derived data persisted in engine state/output batches, not a separate authority. Socket deadlines cannot force-stop SQL/CPU or arbitrary blocking adapters; accepted work retains ownership until it exits.
+
+Upgrade the services together after stopping the lab and preserving its databases. Mixed reducer versions are not a supported rolling-upgrade protocol. Heap compaction is occasional O(P log P) work, separate from the O(1) linked-node operations.

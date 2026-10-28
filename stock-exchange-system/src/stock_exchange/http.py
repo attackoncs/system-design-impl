@@ -1,12 +1,15 @@
 from abc import ABC, abstractmethod
-from contextlib import nullcontext
 import hmac
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import json
+from http.server import BaseHTTPRequestHandler
+import threading
 import sqlite3
-from urllib.parse import parse_qs, urlsplit
 
 from .common import Error, encode, integer, request
+from .contracts import fields, freeze, MAX_TIMESTAMP
+from .routes import target
+from .server_runtime import Server
+from .transport import loads, length
+from .admission import OwnerRate
 from .market import candles, levels, report
 
 
@@ -27,187 +30,264 @@ class StaticIdentity(IdentityProvider):
         raise Error(401, "owner credential required")
 
 
-def server(role, store, config, gate, host, port):
+def server(
+    role, store, config, gate, host, port, *, concurrency=32, request_timeout=15
+):
+    config = freeze(config)
     identity = StaticIdentity(config["owners"])
+    public_slots = threading.BoundedSemaphore(16)
+    rate = OwnerRate(config["owners"])
 
     class Handler(BaseHTTPRequestHandler):
-        # Apply before parsing headers, including clients that send no request.
-        timeout = 10.0
+        timeout = 10
 
         def log_message(self, *args):
             pass
 
         def auth(self, kind):
             supplied = self.headers.get("Authorization", "")
+            if (
+                len(self.headers.get_all("Authorization", [])) != 1
+                or not supplied.isascii()
+            ):
+                raise Error(401, "one ASCII role credential required")
             if kind == "owner":
                 return identity.owner(supplied)
             if not hmac.compare_digest(supplied, "Bearer " + config[kind + "_token"]):
                 raise Error(401, "role credential required")
 
         def body(self):
-            size = int(self.headers.get("Content-Length", "0"))
+            sizes = self.headers.get_all("Content-Length", [])
+            if len(sizes) != 1 or self.headers.get_all("Transfer-Encoding", []):
+                raise ValueError(
+                    "one Content-Length without Transfer-Encoding required"
+                )
+            size = length(sizes[0])
             if not 0 < size <= 1024 * 1024:
                 raise Error(413, "JSON body must be 1..1048576 bytes")
+            types = self.headers.get_all("Content-Type", [])
+            if (
+                len(types) != 1
+                or types[0].split(";", 1)[0].strip().lower() != "application/json"
+            ):
+                raise ValueError("application/json required")
             raw = self.rfile.read(size)
-            value = json.loads(raw)
-            if len(raw) != size or not isinstance(value, dict):
-                raise ValueError("complete JSON object required")
+            if len(raw) != size:
+                raise ValueError("truncated request")
+            value = loads(raw)
+            if not isinstance(value, dict):
+                raise ValueError("JSON object required")
             return value
 
-        def active(self):
-            control = store.control()
+        def rpc(self, url, body=None):
             return request(
-                config["engines"][control["active"]]
-                + "/internal/serve?epoch="
-                + str(control["epoch"]),
+                url,
                 config["internal_token"],
+                body,
+                timeout=2,
+                deadline=self.server.local.deadline,
+                cancel=self.server.local.cancel,
             )
 
-        def publish_check(self, query):
-            control = request(
-                config["gateway"] + "/internal/control",
-                config["internal_token"],
-                timeout=2,
+        def active(self, kind, key, owner):
+            control = store.control()
+            value = self.rpc(
+                config["engines"][control["active"]]
+                + "/internal/query?epoch="
+                + str(control["epoch"])
+                + "&kind="
+                + kind
+                + "&key="
+                + key
+                + "&owner="
+                + owner
             )
-            store.fence(control["epoch"])
+            fields(value, {"seq", "head", "epoch", "kind", "key", "owner", "value"})
+            current = store.control()
+            integer(value["seq"], 1, current["seq"])
             if (
-                control["active"] != role
-                or int(query.get("epoch", ["0"])[0]) != control["epoch"]
+                (current["epoch"], current["active"])
+                != (control["epoch"], control["active"])
+                or value["epoch"] != control["epoch"]
+                or (value["kind"], value["key"], value["owner"]) != (kind, key, owner)
             ):
+                raise Error(409, "active matching epoch/query changed")
+            rows = store.events(value["seq"] - 1, 1)
+            if not rows or rows[0]["hash"] != value["head"]:
+                raise Error(502, "engine response is outside sequencer history")
+            return value
+
+        def published(self, query, callback):
+            control = self.rpc(config["gateway"] + "/internal/control")
+            if control["active"] != role or query.get("epoch", 0) != control["epoch"]:
                 raise Error(409, "matching publisher fenced by active epoch")
+            store.fence(control["epoch"])
+            value = callback()
+            current = self.rpc(config["gateway"] + "/internal/control")
+            if (current["epoch"], current["active"]) != (control["epoch"], role):
+                raise Error(409, "matching publisher changed during read")
+            store.fence(control["epoch"])
+            return value
 
         def dispatch(self):
-            parsed = urlsplit(self.path)
-            path, method = parsed.path, self.command
-            query = parse_qs(parsed.query, strict_parsing=True)
-            if path == "/health" and method == "GET":
+            path, query = target(self.requestline.split()[1], role, self.command)
+            method = self.command
+            sizes = self.headers.get_all("Content-Length", [])
+            if (
+                len(sizes) > 1
+                or method == "GET"
+                and (
+                    self.headers.get_all("Transfer-Encoding", [])
+                    or any(length(size) != 0 for size in sizes)
+                )
+            ):
+                raise ValueError("ambiguous/unused request body")
+            if path == "/health":
                 return {"role": role, "synthetic_orders_only": True}
             if path.startswith("/admin/"):
                 self.auth("admin")
                 if role == "gateway":
-                    if path == "/admin/status" and method == "GET":
+                    if path == "/admin/status":
                         return store.control()
-                    if path == "/admin/clock" and method == "POST":
-                        return store.clock(self.body()["timestamp"])
-                    if path == "/admin/promote" and method == "POST":
-                        node = self.body()["node"]
+                    if path == "/admin/clock":
+                        return store.clock(
+                            fields(self.body(), {"timestamp"})["timestamp"]
+                        )
+                    if path == "/admin/promote":
+                        node = fields(self.body(), {"node"})["node"]
                         if node not in config["engines"]:
                             raise ValueError("unknown matching node")
-                        replica = request(
-                            config["engines"][node] + "/internal/raw",
-                            config["internal_token"],
-                            timeout=2,
+                        return store.promote(
+                            node, self.rpc(config["engines"][node] + "/internal/raw")
                         )
-                        return store.promote(node, replica)
                 if role in ("primary", "backup"):
-                    if path == "/admin/snapshot" and method == "POST":
+                    if path == "/admin/snapshot":
+                        fields(self.body(), set())
                         return store.snapshot()
-                    if path == "/admin/audit" and method == "GET":
-                        return store.audit()
-                if role == "market" and path == "/admin/status" and method == "GET":
-                    value = store.view()
-                    return {key: value[key] for key in ("seq", "head", "resyncs")}
-                raise Error(404, "admin route missing")
+                    return store.audit()
+                value = store.view()
+                return {key: value[key] for key in ("seq", "head", "resyncs", "epoch")}
             if path.startswith("/internal/"):
                 self.auth("internal")
                 if role == "gateway":
-                    if path == "/internal/control" and method == "GET":
+                    if path == "/internal/control":
                         return store.control()
-                    if path == "/internal/events" and method == "GET":
-                        after = integer(int(query.get("after", ["0"])[0]))
-                        with store.connection() as db:
-                            return {"events": store.rows(db)[after : after + 100]}
-                if role in ("primary", "backup"):
-                    if path == "/internal/raw" and method == "GET":
-                        return store.raw()
-                    if path == "/internal/serve" and method == "GET":
-                        self.publish_check(query)
-                        return store.raw()
-                    if path == "/internal/feed" and method == "GET":
-                        self.publish_check(query)
-                        return store.feed(integer(int(query.get("after", ["0"])[0])))
-                raise Error(404, "internal route missing")
+                    return {"events": store.events(query.get("after", 0))}
+                if path == "/internal/raw":
+                    return store.raw()
+                if path == "/internal/serve":
+                    return self.published(query, store.raw)
+                if path == "/internal/feed":
+                    return self.published(
+                        query, lambda: store.feed(query.get("after", 0))
+                    )
+
+                def result():
+                    value = store.query(
+                        query.get("kind", ""),
+                        query.get("key", ""),
+                        query.get("owner", ""),
+                    )
+                    return {**value, "epoch": query["epoch"]}
+
+                return self.published(query, result)
             if role == "gateway":
                 owner = self.auth("owner")
-                if method == "POST" and path in ("/v1/orders", "/v1/cancels"):
+                if method == "POST":
+                    rate.take(owner)
+                    body = self.body()
+                    if path == "/v1/order":
+                        fields(
+                            body,
+                            {
+                                "request_id",
+                                "order_id",
+                                "symbol",
+                                "side",
+                                "price",
+                                "quantity",
+                                "orderType",
+                            },
+                        )
+                        if body.pop("orderType") != "limit":
+                            raise ValueError("only limit orderType supported")
                     return store.submit(
-                        owner, "new" if path == "/v1/orders" else "cancel", self.body()
+                        owner, "cancel" if path == "/v1/cancels" else "new", body
                     )
-                if path.startswith("/v1/requests/") and method == "GET":
-                    seq = store.lookup(owner, path.split("/")[-1])
-                    value = self.active()
-                    return (
-                        value["state"]
-                        .get("results", {})
-                        .get(str(seq), {"seq": seq, "status": "PENDING"})
-                    )
-                if path == "/v1/account" and method == "GET":
-                    value = self.active()
-                    if not value["seq"]:
-                        raise Error(503, "matching engine initializing")
-                    return {"seq": value["seq"], **value["state"]["accounts"][owner]}
-                if path.startswith("/v1/orders/") and method == "GET":
-                    value = self.active()
-                    order = value["state"].get("orders", {}).get(path.split("/")[-1])
-                    if not order or order["owner"] != owner:
-                        raise Error(404, "owned order missing")
-                    return order
-            if role == "market":
-                if path == "/v1/report" and method == "GET":
-                    return report(store.view(), self.auth("owner"))
-                if path == "/market/snapshot" and method == "GET":
-                    value = store.view()
-                    return {
-                        "seq": value["seq"],
-                        "head": value["head"],
-                        "books": value["books"],
-                    }
-                if path == "/market/deltas" and method == "GET":
-                    return store.deltas(integer(int(query.get("after", ["0"])[0])))
-                if path == "/market/book" and method == "GET":
-                    return levels(
-                        store.view(),
-                        query.get("symbol", [""])[0],
-                        integer(int(query.get("depth", ["10"])[0]), 1, 100),
-                    )
-                if path == "/market/candles" and method == "GET":
-                    value = store.view()
-                    return {
-                        "seq": value["seq"],
-                        "candles": [
-                            row
-                            for row in candles(
-                                value["trades"],
-                                integer(
-                                    int(query.get("resolution", ["60"])[0]), 1, 86400
-                                ),
-                            )
-                            if row["symbol"] == query.get("symbol", [""])[0]
-                        ],
-                    }
-            raise Error(404, "route missing")
+                if path.startswith("/v1/requests/"):
+                    sequence = store.lookup(owner, path.split("/")[-1])
+                    return self.active("request", str(sequence), owner)["value"]
+                if path == "/v1/account":
+                    value = self.active("account", owner, owner)
+                    return {"seq": value["seq"], **value["value"]}
+                return self.active("order", path.split("/")[-1], owner)["value"]
+            if path in ("/v1/report", "/execution", "/v1/executions"):
+                owner = self.auth("owner")
+                value = store.view()
+                if path == "/v1/report":
+                    return report(value, owner)
+                return {
+                    "seq": value["seq"],
+                    "executions": store.executions(value, owner, query),
+                }
+            if path == "/market/deltas":
+                return store.deltas(query.get("after", 0))
+            value = store.view()
+            if path == "/market/snapshot":
+                return {key: value[key] for key in ("seq", "head", "books")}
+            if path in ("/market/book", "/marketdata/orderBook/L2"):
+                return levels(value, query.get("symbol", ""), query.get("depth", 10))
+            symbol = query.get("symbol", "")
+            if symbol not in value["books"]:
+                raise Error(404, "symbol missing")
+            return {
+                "seq": value["seq"],
+                "candles": [
+                    row
+                    for row in candles(value["trades"], query.get("resolution", 60))
+                    if row["symbol"] == symbol
+                    and query.get("startTime", 0)
+                    <= row["start"]
+                    < query.get("endTime", MAX_TIMESTAMP)
+                ],
+            }
 
         def handle_request(self):
-            self.connection.settimeout(15)
+            self.close_connection = True
+            self.connection.settimeout(min(10, request_timeout))
+            admitted = False
             try:
-                # Gateway callbacks from engines must not wait behind a gateway
-                # request that is itself awaiting an engine's publication fence.
-                with nullcontext() if role == "gateway" else gate:
-                    value = self.dispatch()
-                status = 200
+                if (
+                    role == "gateway"
+                    and not self.path.startswith("/internal/")
+                    and self.path != "/health"
+                ):
+                    admitted = public_slots.acquire(False)
+                    if not admitted:
+                        raise Error(503, "gateway public capacity exhausted")
+                value, status = self.dispatch(), 200
             except Error as exc:
                 value, status = {"error": str(exc)}, exc.status
-            except (ValueError, TypeError, KeyError) as exc:
+            except (ValueError, TypeError, KeyError, RecursionError) as exc:
                 value, status = {"error": str(exc)}, 400
             except (OSError, TimeoutError, sqlite3.OperationalError):
                 value, status = {"error": "unavailable; retry original request_id"}, 503
             except Exception:
                 value, status = {"error": "internal failure"}, 500
+            finally:
+                if admitted:
+                    public_slots.release()
             raw = encode(value).encode()
+            if len(raw) > 8 * 1024 * 1024:
+                status, raw = 503, b'{"error":"response exceeds 8 MiB budget"}'
             self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(raw)))
-            self.send_header("Cache-Control", "no-store")
+            for key, item in (
+                ("Content-Type", "application/json"),
+                ("Content-Length", str(len(raw))),
+                ("Cache-Control", "no-store"),
+                ("Connection", "close"),
+            ):
+                self.send_header(key, item)
             self.end_headers()
             try:
                 self.wfile.write(raw)
@@ -217,4 +297,6 @@ def server(role, store, config, gate, host, port):
         do_GET = handle_request
         do_POST = handle_request
 
-    return ThreadingHTTPServer((host, port), Handler)
+    return Server(
+        (host, port), Handler, concurrency=concurrency, request_timeout=request_timeout
+    )

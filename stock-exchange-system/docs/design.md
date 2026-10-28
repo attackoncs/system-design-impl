@@ -42,7 +42,7 @@ New orders pass known-symbol/session/daily-cap checks and reserve resources in t
 - Buy: move `limit_price * quantity` from available cash to held cash.
 - Sell: move quantity from available shares to held shares; no shorting is allowed.
 
-Eligible opposite orders are sorted by best price, then smallest acceptance sequence. The incoming order fills against that list at the resting maker's price. For a fill of q at execution price p:
+The order-book index selects the best opposite price and its FIFO head. Each price level has linked order nodes and an aggregate quantity; the incoming order fills at the resting maker's price. For a fill of q at execution price p:
 
 1. Remove `buy_limit * q` from buyer held cash.
 2. Return `(buy_limit - p) * q` to buyer available cash.
@@ -80,7 +80,7 @@ An in-flight read begun before promotion can still return an older valid prefix.
 
 Each processed command produces an output batch, including business rejections/commands with no book change. Batches preserve the global sequence and command-chain previous/head hashes, ensuring consumers can distinguish an empty update from a lost update. Book changes give absolute quantity per price level, zero for deletion. Batches also contain changed accepted orders and new trades for the authenticated report projection.
 
-The engine retains a bounded configured output window. The independent market process persists its book/order/trade projection and cursor in one transaction. It ignores duplicate batches, requires consecutive sequence/previous hash, and resnapshots on410 when it has missed the window. Snapshot replacement includes accepted-order/trade history, so private reports recover together with books. The matching command log is retained even when derived batches are dropped.
+The engine retains a bounded configured output window. The independent market process persists its book/order/trade projection and cursor in one transaction. It verifies retained duplicate fingerprints, requires consecutive sequence/previous hash, and resnapshots on410 when it has missed the window. Snapshot replacement includes accepted-order/trade history, so private reports recover together with books. The matching command log is retained even when derived batches are dropped.
 
 Public `/market/deltas` retains eight sanitized batches, removing owner and order identities. Clients initialize from `/market/snapshot`, then apply absolute L2 changes in order and resnapshot on410. Public depth views expose only aggregated levels. Private reports require owner credentials and emit one owned fill per trade side. Reporting is asynchronous; every result includes applied sequence. Rejected command results are queried at the gateway rather than mixed into accepted-order reports.
 
@@ -90,6 +90,24 @@ OHLCV buckets use the sequenced trade timestamp, preserving open/close by execut
 
 Audit verifies total cash, total shares per symbol, nonnegative balances, and held cash/shares against the exact open-order remainders. It independently replays the local journal and compares its state with the stored projection. Matching, reservation updates, execution outputs and projection commit together locally. Integrity checks detect accidental corruption, not an adversary with privileges to rewrite schema and all hashes.
 
-Actual tests and p99 measurements are in `../benchmarks/REPORT.md`. The implementation bounds configuration to100 symbols/accounts and history to1000 commands; it uses full JSON state copies, linear order scans, full local replay, whole-state internal reads and retained history. These choices favor a small inspectable reference over capacity.
+Actual tests and p99 measurements are in `../benchmarks/REPORT.md`. The implementation bounds configuration to100 symbols/accounts and history to1000 commands; it uses full JSON state copies, price-level/FIFO indexing with full-state copy/audit costs, full local replay, whole-state administrative inspection and retained history. These choices favor a small inspectable reference over capacity.
 
 There is no real venue routing, production compliance, KYC certification, bank/clearing integration, sequencer HA, automatic failover, cross-host durability, symbol-process partitioning, regulatory audit retention, replacement/market orders, fees or shorting. Billion orders/day, millisecond tail latency and99.99% availability remain design goals, not demonstrated properties.
+
+## 2026-10-27 engineering changes
+
+Contracts/settings validation live in `contracts.py`; deterministic session/risk policies in `policies.py`; price/FIFO mechanics in `order_book.py`; independent owner cash/share/quantity/index reconciliation in `audit.py`; market ingestion schemas in `publication.py`; public/private read models in `queries.py`; admission/routing/RPC/listener lifetime in `admission.py`, `routes.py`, `transport.py`, `server_runtime.py`. There are no runtime imports across chapter projects. Original matching/market exports remain available.
+
+Index links and level totals are serializable derived state. Price heaps choose the best opposing FIFO head without sorting all historical orders. The reducer still deep-copies/serializes complete state, and DAY expiry/audit scan retained state. Dense outbound `execution_seq` is shared across buyer/seller fills; command and trade IDs remain stable. This does not implement a separate outbound event-store sequencer. Audit checks owner-level cash/share flows and fills, not just aggregate conservation. Index drift blocks further matching until replay rebuilds it.
+
+SQLite reads explicitly pin head/sequence/projection. Current tail/duplicate lookups and event suffix feeds use indexes. Account/order/request RPCs return only the owned object. Market polling never holds a reader transaction/HTTP lock across network I/O. Engine snapshots use publication/rebuild ownership and unique fsynced temporary files, with bounded Windows replacement retries. Startup validates legacy shapes before regenerating current indexes, execution sequence and derived batches.
+
+Promotion independently replays the complete sequencer prefix and compares candidate state/hash inside the writer transaction. Active publication checks current role/epoch before and after reading; consumers verify the prefix and epoch again. A response already in flight can still represent an earlier valid prefix, so this is not a zero-latency invalidation guarantee or general leader election.
+
+Market snapshots/batches are frozen and validated, including integer levels, order identities, execution sequences/quantities and book-to-order reconciliation. Retained duplicate fingerprints reject changed content even when head/sequence match; unknown expired duplicates require410. A snapshot/epoch cannot regress, and same-prefix snapshots must agree. Each batch commits its cursor, report facts, public changes and receipt in one transaction; a feed may stop at a valid committed prefix if later data fails. Polling rechecks source epoch and sequencer lineage before ingestion.
+
+HTTP32/15 seconds, gateway public16 and owner submission100/second burst100 bound admission; internal callbacks keep capacity. RPCs2 seconds, polling5 seconds, requests1 MiB and outputs8 MiB share deadlines and cancellation. Bind occurs before non-daemon polling starts; stop/listener-close/join all run even on cleanup failures. Socket deadlines cannot interrupt arbitrary CPU/SQL/adapters; ownership drains. Public data is uncached HTTP polling; there is no claim of equal-time multicast delivery.
+
+Book-style order/L2/candle aliases, owned execution filters and half-open time ranges are specified in the README. Candle filtering uses complete bucket-start timestamps. See [chapter mapping and evidence](chapter29-review.md) for open production architecture and measured limits.
+
+Upgrade the services together after stopping the lab and preserving its databases. Mixed reducer versions are not a supported rolling-upgrade protocol. Heap compaction is occasional O(P log P) work, separate from the O(1) linked-node operations.

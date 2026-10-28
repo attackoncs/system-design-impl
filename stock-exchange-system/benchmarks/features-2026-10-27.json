@@ -1,0 +1,130 @@
+{
+  "processes": 4,
+  "synthetic_only": true,
+  "active": "backup",
+  "epoch": 2,
+  "buyer": {
+    "cash": {
+      "available": 999200,
+      "held": 0
+    },
+    "positions": {
+      "AAPL": {
+        "available": 1008,
+        "held": 0
+      },
+      "MSFT": {
+        "available": 1000,
+        "held": 0
+      }
+    },
+    "seq": 5
+  },
+  "audit": {
+    "cash_supply": 3000000,
+    "errors": [],
+    "matches": true,
+    "projection_matches": true,
+    "seq": 5,
+    "share_supply": {
+      "AAPL": 3000,
+      "MSFT": 3000
+    }
+  },
+  "book": {
+    "asks": [],
+    "bids": [],
+    "seq": 5,
+    "symbol": "AAPL"
+  },
+  "buyer_report": {
+    "fills": [
+      {
+        "execution_seq": 1,
+        "id": "trade_4_1_BUY",
+        "order_id": "take",
+        "price": 100,
+        "quantity": 5,
+        "seq": 4,
+        "side": "BUY",
+        "symbol": "AAPL",
+        "timestamp": 1792591200,
+        "trade_id": "trade_4_1"
+      },
+      {
+        "execution_seq": 2,
+        "id": "trade_4_2_BUY",
+        "order_id": "take",
+        "price": 100,
+        "quantity": 3,
+        "seq": 4,
+        "side": "BUY",
+        "symbol": "AAPL",
+        "timestamp": 1792591200,
+        "trade_id": "trade_4_2"
+      }
+    ],
+    "orders": [
+      {
+        "day": "2026-10-21",
+        "filled": 8,
+        "order_id": "take",
+        "owner": "alice",
+        "price": 110,
+        "quantity": 8,
+        "reason": "",
+        "remaining": 0,
+        "request_id": "request_take",
+        "seq": 4,
+        "side": "BUY",
+        "status": "FILLED",
+        "symbol": "AAPL",
+        "timestamp": 1792591200
+      }
+    ],
+    "seq": 5
+  },
+  "filtered_executions": [
+    {
+      "execution_seq": 1,
+      "id": "trade_4_1_BUY",
+      "order_id": "take",
+      "order_type": "LIMIT",
+      "price": 100,
+      "quantity": 5,
+      "seq": 4,
+      "side": "BUY",
+      "symbol": "AAPL",
+      "timestamp": 1792591200,
+      "trade_id": "trade_4_1"
+    },
+    {
+      "execution_seq": 2,
+      "id": "trade_4_2_BUY",
+      "order_id": "take",
+      "order_type": "LIMIT",
+      "price": 100,
+      "quantity": 3,
+      "seq": 4,
+      "side": "BUY",
+      "symbol": "AAPL",
+      "timestamp": 1792591200,
+      "trade_id": "trade_4_2"
+    }
+  ],
+  "candles": {
+    "candles": [
+      {
+        "close": 100,
+        "high": 100,
+        "low": 100,
+        "open": 100,
+        "start": 1792591200,
+        "symbol": "AAPL",
+        "volume": 8
+      }
+    ],
+    "seq": 5
+  },
+  "elapsed_seconds_including_lab": 3.304018400001951
+}

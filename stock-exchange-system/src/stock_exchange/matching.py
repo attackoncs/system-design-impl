@@ -1,60 +1,23 @@
-from abc import ABC, abstractmethod
 import copy
 from datetime import datetime, timezone
 
 from .common import identifier, integer
 
 
-class SessionPolicy(ABC):
-    @abstractmethod
-    def permits(self, timestamp, settings):
-        pass
-
-
-class UTCSession(SessionPolicy):
-    def permits(self, timestamp, settings):
-        moment = datetime.fromtimestamp(timestamp, timezone.utc)
-        return (
-            moment.weekday() in settings["weekdays"]
-            and settings["start_minute"]
-            <= moment.hour * 60 + moment.minute
-            < settings["end_minute"]
-        )
-
-
-class RiskPolicy(ABC):
-    @abstractmethod
-    def permits(self, used, quantity, maximum):
-        pass
-
-
-class SubmittedVolumeRisk(RiskPolicy):
-    def permits(self, used, quantity, maximum):
-        return used + quantity <= maximum
-
-
-def validate(body, kind):
-    required = {"request_id", "order_id"} | (
-        {"symbol", "side", "price", "quantity"} if kind == "new" else set()
-    )
-    if (
-        kind not in ("new", "cancel")
-        or not isinstance(body, dict)
-        or set(body) != required
-    ):
-        raise ValueError("exact limit-order/cancel fields required")
-    identifier(body["request_id"])
-    identifier(body["order_id"])
-    if kind == "new":
-        identifier(body["symbol"])
-        integer(body["price"], 1, 100_000_000)
-        integer(body["quantity"], 1, 1_000_000)
-        if body["side"] not in ("BUY", "SELL"):
-            raise ValueError("side must be BUY or SELL")
-    return body
+from .contracts import fields, settings as validate_settings, validate as validate
+from .contracts import MAX_TIMESTAMP
+from .order_book import OrderBook
+from .policies import (
+    SessionPolicy as SessionPolicy,
+    UTCSession as UTCSession,
+    RiskPolicy as RiskPolicy,
+    SubmittedVolumeRisk as SubmittedVolumeRisk,
+)
 
 
 def book(state, symbol):
+    if "book_index" in state:
+        return OrderBook(state["book_index"]).levels(symbol)
     levels = {"bids": {}, "asks": {}}
     for order in state["orders"].values():
         if order["symbol"] == symbol and order["status"] in ("OPEN", "PARTIAL"):
@@ -65,6 +28,7 @@ def book(state, symbol):
 
 
 def release(state, order, reason):
+    OrderBook(state["book_index"]).remove(order)
     account = state["accounts"][order["owner"]]
     remaining = order["remaining"]
     if order["side"] == "BUY":
@@ -81,10 +45,13 @@ def release(state, order, reason):
 
 def reduce_command(state, command):
     """Pure sequenced matching, replaying commands never emits network orders."""
-    if command["kind"] == "genesis":
+    if not isinstance(command, dict):
+        raise ValueError("command object required")
+    if command.get("kind") == "genesis":
+        fields(command, {"kind", "settings"})
         if state:
             raise ValueError("duplicate genesis")
-        data = command["settings"]
+        data = validate_settings(command["settings"])
         accounts = {
             owner: {
                 "cash": {"available": value["cash"], "held": 0},
@@ -102,8 +69,26 @@ def reduce_command(state, command):
             "results": {},
             "daily": {},
             "settings": data,
+            "book_index": OrderBook.empty(data["symbols"]),
+            "execution_seq": 0,
+            "last_seq": 1,
+            "last_timestamp": 0,
         }
+    fields(command, {"seq", "timestamp", "owner", "kind", "body"})
+    if not state:
+        raise ValueError("genesis required")
+    integer(command["seq"], 2, 1001)
+    integer(command["timestamp"], 1, MAX_TIMESTAMP)
+    identifier(command["owner"])
+    if (
+        command["seq"] != state["last_seq"] + 1
+        or command["timestamp"] < state["last_timestamp"]
+    ):
+        raise ValueError("command sequence or timestamp regressed/gapped")
+    if command["owner"] not in state["accounts"]:
+        raise ValueError("unknown command owner")
     state = copy.deepcopy(state)
+    state["last_seq"], state["last_timestamp"] = command["seq"], command["timestamp"]
     owner, body, seq, stamp = (
         command["owner"],
         command["body"],
@@ -111,7 +96,7 @@ def reduce_command(state, command):
         command["timestamp"],
     )
     kind = command["kind"]
-    validate(body, kind)
+    body = validate(body, kind)
     day = datetime.fromtimestamp(stamp, timezone.utc).date().isoformat()
     for old in state["orders"].values():
         if old["status"] in ("OPEN", "PARTIAL") and old["day"] != day:
@@ -173,17 +158,14 @@ def reduce_command(state, command):
         "reason": "",
     }
     state["orders"][body["order_id"]] = order
-    opposite = [
-        row
-        for row in state["orders"].values()
-        if row["symbol"] == symbol
-        and row["side"] != body["side"]
-        and row["status"] in ("OPEN", "PARTIAL")
-        and (row["price"] <= price if buy else row["price"] >= price)
-    ]
-    opposite.sort(key=lambda row: (row["price"] if buy else -row["price"], row["seq"]))
-    for maker in opposite:
-        if not order["remaining"]:
+    index = OrderBook(state["book_index"])
+    trade_index = 0
+    while order["remaining"]:
+        maker_id = index.best(symbol, body["side"])
+        if maker_id is None:
+            break
+        maker = state["orders"][maker_id]
+        if maker["price"] > price if buy else maker["price"] < price:
             break
         if maker["owner"] == owner:
             release(state, order, "SELF_TRADE_PREVENTION")
@@ -197,15 +179,14 @@ def reduce_command(state, command):
         seller["cash"]["available"] += execution_price * count
         seller["positions"][symbol]["held"] -= count
         buyer["positions"][symbol]["available"] += count
-        trade_id = (
-            "trade_"
-            + str(seq)
-            + "_"
-            + str(sum(trade["seq"] == seq for trade in state["trades"]) + 1)
-        )
+        trade_index += 1
+        state["execution_seq"] += 1
+        trade_id = "trade_" + str(seq) + "_" + str(trade_index)
+        index.consume(maker, count)
         state["trades"].append(
             {
                 "id": trade_id,
+                "execution_seq": state["execution_seq"],
                 "seq": seq,
                 "symbol": symbol,
                 "price": execution_price,
@@ -221,52 +202,11 @@ def reduce_command(state, command):
             row["remaining"] -= count
             row["filled"] += count
             row["status"] = "FILLED" if not row["remaining"] else "PARTIAL"
+    if order["status"] in ("OPEN", "PARTIAL"):
+        index.add(order)
     result.update(accepted=True, status=order["status"])
     state["results"][str(seq)] = result
     return state
 
 
-def audit(state):
-    settings = state["settings"]
-    errors = []
-    cash = sum(sum(account["cash"].values()) for account in state["accounts"].values())
-    expected_cash = sum(value["cash"] for value in settings["accounts"].values())
-    if cash != expected_cash:
-        errors.append("cash supply mismatch")
-    positions = {}
-    for symbol in settings["symbols"]:
-        positions[symbol] = sum(
-            sum(account["positions"][symbol].values())
-            for account in state["accounts"].values()
-        )
-        if positions[symbol] != sum(
-            value["positions"].get(symbol, 0) for value in settings["accounts"].values()
-        ):
-            errors.append("share supply mismatch: " + symbol)
-    for owner, account in state["accounts"].items():
-        open_orders = [
-            row
-            for row in state["orders"].values()
-            if row["owner"] == owner and row["status"] in ("OPEN", "PARTIAL")
-        ]
-        if account["cash"]["held"] != sum(
-            row["remaining"] * row["price"]
-            for row in open_orders
-            if row["side"] == "BUY"
-        ):
-            errors.append("cash reservation mismatch: " + owner)
-        for symbol, balance in account["positions"].items():
-            if min(balance.values()) < 0 or balance["held"] != sum(
-                row["remaining"]
-                for row in open_orders
-                if row["side"] == "SELL" and row["symbol"] == symbol
-            ):
-                errors.append("share reservation mismatch: " + owner)
-        if min(account["cash"].values()) < 0:
-            errors.append("negative cash: " + owner)
-    return {
-        "matches": not errors,
-        "errors": errors,
-        "cash_supply": cash,
-        "share_supply": positions,
-    }
+from .audit import audit as audit

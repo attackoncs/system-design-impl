@@ -1,0 +1,27 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "processes": 4,
+  "resting_orders": 20,
+  "measured_taker_orders": 20,
+  "clients": 4,
+  "elapsed_seconds": 1.169170999997732,
+  "filled_taker_orders_per_second": 17.10613759667217,
+  "submit_to_fill_p50_ms": 190.1371999992989,
+  "submit_to_fill_p95_ms": 300.2401000012469,
+  "submit_to_fill_p99_ms": 377.0210999973642,
+  "trades": 20,
+  "replicas_match": true,
+  "audit": {
+    "cash_supply": 3000000,
+    "errors": [],
+    "matches": true,
+    "projection_matches": true,
+    "seq": 41,
+    "share_supply": {
+      "AAPL": 3000,
+      "MSFT": 3000
+    }
+  },
+  "scope": "Loopback HTTP, sequencer SQLite FULL writes and asynchronous matching replicas, preseeded resting asks; includes client polling, excludes setup, replica catch-up and final market/audit drain."
+}
