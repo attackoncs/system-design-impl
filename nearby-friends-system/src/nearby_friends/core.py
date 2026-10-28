@@ -1,84 +1,55 @@
-from bisect import bisect_left
+"""Transactional friendship, presence and consented location history."""
+
 from contextlib import closing, contextmanager
 import hashlib
 import json
-import math
+import os
 from pathlib import Path
-import re
 import sqlite3
 import time
-from urllib.parse import urlsplit
 
-
-class Error(Exception):
-    def __init__(self, code, message):
-        self.code, self.message = code, message
-        super().__init__(message)
-
-
-def dumps(value):
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
-
-
-def user_id(value):
-    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", value):
-        raise Error(400, "invalid user ID")
-    return value
-
-
-def meters(a, b):
-    p, q = math.radians(a["latitude"]), math.radians(b["latitude"])
-    h = (
-        math.sin((q - p) / 2) ** 2
-        + math.cos(p)
-        * math.cos(q)
-        * math.sin(math.radians(b["longitude"] - a["longitude"]) / 2) ** 2
-    )
-    return 12742017.6 * math.asin(math.sqrt(max(0, min(1, h))))
-
-
-class Ring:
-    def __init__(self, nodes):
-        if not isinstance(nodes, dict) or not 1 <= len(nodes) <= 32:
-            raise Error(400, "ring requires 1..32 broker ID/URL pairs")
-        self.nodes = dict(nodes)
-        for node, url in self.nodes.items():
-            user_id(node)
-            parts = urlsplit(url)
-            if parts.scheme not in ("redis", "rediss") or not parts.hostname:
-                raise Error(400, "invalid Redis URL")
-        self.points = sorted(
-            (self.hash(f"{node}:{i}"), node) for node in self.nodes for i in range(64)
-        )
-        self.tokens = [point[0] for point in self.points]
-
-    @staticmethod
-    def hash(value):
-        return int.from_bytes(hashlib.sha256(value.encode()).digest(), "big")
-
-    def owner(self, user):
-        return self.points[
-            bisect_left(self.tokens, self.hash(user)) % len(self.points)
-        ][1]
+from .models import (
+    Error as Error,
+    dumps as dumps,
+    user_id as user_id,
+    meters as meters,
+    duration,
+    finite,
+    location,
+    page,
+)
+from .routing import Ring as Ring, redis_url as redis_url
+from .schema import SCHEMA
 
 
 class Store:
     def __init__(self, path, ttl=600, retention=86400, clock=time.time):
-        if ttl <= 0 or retention <= 0:
-            raise ValueError("positive TTL and retention required")
+        ttl, retention = duration(ttl), duration(retention)
+        if (
+            not isinstance(path, (str, os.PathLike))
+            or not str(path)
+            or str(path) == ":memory:"
+        ):
+            raise ValueError("Store requires a persistent database file")
+        if not callable(clock):
+            raise ValueError("clock must be callable")
         self.path, self.clock = str(path), clock
+        self.now()
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with closing(self.connect()) as db:
-            db.executescript("""
-            PRAGMA journal_mode=WAL;
-            CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,token TEXT UNIQUE,admin INTEGER,sharing INTEGER DEFAULT 0,history INTEGER DEFAULT 0,revision INTEGER DEFAULT 0,last_ts REAL DEFAULT 0);
-            CREATE TABLE IF NOT EXISTS requests(sender TEXT,recipient TEXT,PRIMARY KEY(sender,recipient));
-            CREATE TABLE IF NOT EXISTS friends(a TEXT,b TEXT,PRIMARY KEY(a,b));
-            CREATE TABLE IF NOT EXISTS current(user TEXT PRIMARY KEY,body TEXT,expires REAL);
-            CREATE TABLE IF NOT EXISTS history(user TEXT,revision INTEGER,body TEXT,received REAL,PRIMARY KEY(user,revision));
-            CREATE INDEX IF NOT EXISTS history_received ON history(received);
-            CREATE TABLE IF NOT EXISTS config(key TEXT PRIMARY KEY,value TEXT);
-            """)
+            deadline = time.monotonic() + 15
+            while True:
+                try:
+                    db.execute("PRAGMA journal_mode=WAL")
+                    break
+                except sqlite3.OperationalError as error:
+                    if (
+                        "locked" not in str(error).lower()
+                        or time.monotonic() >= deadline
+                    ):
+                        raise
+                    time.sleep(0.01)
+            db.executescript(SCHEMA)
             for key, value in {
                 "ttl": ttl,
                 "retention": retention,
@@ -87,12 +58,12 @@ class Store:
                 db.execute(
                     "INSERT OR IGNORE INTO config VALUES(?,?)", (key, dumps(value))
                 )
-            self.ttl = float(
+            self.ttl = duration(
                 json.loads(
                     db.execute("SELECT value FROM config WHERE key='ttl'").fetchone()[0]
                 )
             )
-            self.retention = float(
+            self.retention = duration(
                 json.loads(
                     db.execute(
                         "SELECT value FROM config WHERE key='retention'"
@@ -101,13 +72,26 @@ class Store:
             )
             db.commit()
 
+    def now(self):
+        value = self.clock()
+        if not finite(value) or value < 0:
+            raise ValueError("invalid server clock")
+        return float(value)
+
     def connect(self):
         db = sqlite3.connect(self.path, timeout=15)
-        db.row_factory = sqlite3.Row
-        return db
+        try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA busy_timeout=15000")
+            return db
+        except BaseException:
+            db.close()
+            raise
 
     @contextmanager
     def transaction(self, write=False):
+        if type(write) is not bool:
+            raise ValueError("write must be a boolean")
         with closing(self.connect()) as db:
             try:
                 db.execute("BEGIN IMMEDIATE" if write else "BEGIN")
@@ -119,8 +103,10 @@ class Store:
 
     def provision(self, user, token, admin=False):
         user_id(user)
-        if not isinstance(token, str) or len(token) < 8:
-            raise ValueError("token must contain at least 8 characters")
+        if not isinstance(token, str) or not 8 <= len(token) <= 4096:
+            raise ValueError("token must contain 8..4096 characters")
+        if type(admin) is not bool:
+            raise ValueError("admin must be a boolean")
         with self.transaction(True) as db:
             db.execute(
                 "INSERT INTO users(id,token,admin) VALUES(?,?,?)",
@@ -128,6 +114,8 @@ class Store:
             )
 
     def authenticate(self, token):
+        if not isinstance(token, str) or not 1 <= len(token) <= 4096:
+            raise Error(401, "invalid token")
         with self.transaction() as db:
             row = db.execute(
                 "SELECT id FROM users WHERE token=?",
@@ -138,13 +126,17 @@ class Store:
             return row["id"]
 
     def _user(self, db, user):
+        user_id(user)
         row = db.execute("SELECT * FROM users WHERE id=?", (user,)).fetchone()
         if not row:
             raise Error(404, "user not found")
         return row
 
     def friendship(self, actor, target, operation):
+        user_id(actor)
         user_id(target)
+        if operation not in ("friend.request", "friend.accept", "friend.remove"):
+            raise Error(400, "invalid friendship operation")
         if actor == target:
             raise Error(400, "cannot friend yourself")
         a, b = sorted((actor, target))
@@ -186,6 +178,7 @@ class Store:
 
     def friends(self, actor):
         with self.transaction() as db:
+            self._user(db, actor)
             return [
                 row[0]
                 for row in db.execute(
@@ -215,26 +208,16 @@ class Store:
         return {kind: enabled}
 
     def update(self, actor, body):
-        lat, lon, stamp = (
-            body.get("latitude"),
-            body.get("longitude"),
-            body.get("timestamp"),
-        )
-        if any(
-            type(v) not in (int, float) or not math.isfinite(v)
-            for v in (lat, lon, stamp)
-        ):
-            raise Error(400, "finite numeric coordinates/timestamp required")
-        now = self.clock()
-        if (
-            not -90 <= lat <= 90
-            or not -180 <= lon <= 180
-            or not now - self.ttl < stamp <= now + 30
-        ):
-            raise Error(400, "coordinates/timestamp outside allowed range")
-        device = user_id(body.get("device", "default"))
+        user_id(actor)
+        lat, lon, stamp, device = location(body)
         with self.transaction(True) as db:
             user = self._user(db, actor)
+            # Timestamp admissibility and receipt TTL are measured only after
+            # obtaining the writer. A queued report must not acquire a fresh
+            # lifetime based on a time sampled before waiting for SQLite.
+            now = self.now()
+            if not now - self.ttl < stamp <= now + 30:
+                raise Error(400, "timestamp outside allowed range")
             if not user["sharing"]:
                 raise Error(403, "location sharing disabled")
             if stamp <= user["last_ts"]:
@@ -262,44 +245,41 @@ class Store:
                     "INSERT INTO history VALUES(?,?,?,?)",
                     (actor, revision, dumps(report), now),
                 )
-            self._sweep(db)
         return report
 
     def _sweep(self, db):
-        db.execute("DELETE FROM current WHERE expires<=?", (self.clock(),))
-        db.execute(
-            "DELETE FROM history WHERE received<=?", (self.clock() - self.retention,)
-        )
+        now = self.now()
+        db.execute("DELETE FROM current WHERE expires<=?", (now,))
+        db.execute("DELETE FROM history WHERE received<=?", (now - self.retention,))
 
     def sweep(self):
         with self.transaction(True) as db:
             self._sweep(db)
 
     def read_history(self, actor, offset=0, limit=100):
-        if (
-            type(offset) is not int
-            or offset < 0
-            or type(limit) is not int
-            or not 1 <= limit <= 1000
-        ):
-            raise Error(400, "invalid history page")
+        user_id(actor)
+        page(offset, limit)
         with self.transaction() as db:
+            user = self._user(db, actor)
+            if not user["history"]:
+                return []
             return [
                 json.loads(row[0])
                 for row in db.execute(
                     "SELECT body FROM history WHERE user=? AND received>? ORDER BY revision DESC LIMIT ? OFFSET ?",
-                    (actor, self.clock() - self.retention, limit, offset),
+                    (actor, self.now() - self.retention, limit, offset),
                 )
             ]
 
     def reports(self, actor):
         with self.transaction() as db:
             viewer = self._user(db, actor)
+            now = self.now()
             if not viewer["sharing"]:
                 return None, []
             own = db.execute(
                 "SELECT body FROM current WHERE user=? AND expires>?",
-                (actor, self.clock()),
+                (actor, now),
             ).fetchone()
             if not own:
                 return None, []
@@ -308,7 +288,7 @@ class Store:
                 ON u.id=CASE WHEN f.a=? THEN f.b ELSE f.a END
                 JOIN current c ON c.user=u.id
                 WHERE (f.a=? OR f.b=?) AND u.sharing=1 AND c.expires>?""",
-                (actor, actor, actor, self.clock()),
+                (actor, actor, actor, now),
             )
             return json.loads(own[0]), [json.loads(row[0]) for row in rows]
 
@@ -319,7 +299,7 @@ class Store:
             )
 
     def set_ring(self, actor, nodes, expected_epoch):
-        Ring(nodes)
+        nodes = dict(Ring(nodes).nodes)
         with self.transaction(True) as db:
             if not self._user(db, actor)["admin"]:
                 raise Error(403, "admin required")

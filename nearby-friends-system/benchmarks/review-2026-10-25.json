@@ -1,0 +1,15 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "websocket_processes": 2,
+  "redis_processes": 2,
+  "observer_connections": 20,
+  "total_connections": 21,
+  "updates": 10,
+  "expected_deliveries": 200,
+  "actual_deliveries": 200,
+  "latency_p50_ms": 74.34,
+  "latency_p95_ms": 164.934,
+  "latency_max_ms": 197.023,
+  "scope": "localhost Windows WebSocket clients/servers plus WSL Redis; warm connections; end-to-end command through observed delta, not production throughput"
+}
