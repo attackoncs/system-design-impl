@@ -33,3 +33,14 @@
 - [x] 5.1 Create `consistent-hashing/examples/demo.py` demonstrating: ring creation with multiple servers, key assignment, adding a server and showing redistribution, removing a server and showing redistribution, printing distribution statistics before and after changes
 - [x] 5.2 Create `consistent-hashing/README.md` with overview, installation instructions, quick start usage, algorithm explanation (hash ring, virtual nodes, clockwise lookup), API reference, and example output
 - [x] 5.3 Copy requirements.md, design.md, and tasks.md into `consistent-hashing/docs/` directory
+
+
+## 2026-10-27 re-review acceptance
+
+- [x] Read chapter1508–1734 and graph impact; preserve existing behavior.
+- [x] Bulk construction, atomic weights, entry budget, shared hash validation.
+- [x] Stream assignments, node filtering and migrating keys; sweep boundaries.
+- [x] Strict assignment analysis and writer callback reentry detection.
+- [x] Run154 tests, four-process/three-hash/four-phase probe and both examples.
+- [x] Retain baseline/first/final measurements, including lookup/add regressions.
+- [x] Synchronize bilingual docs, review, report and root progress.

@@ -8,7 +8,7 @@ A Python consistent hashing library implementing the hash ring algorithm with vi
 
 ### FR-1: Hash Ring Core
 
-- **FR-1.1**: The system shall implement a hash ring using SHA-1 (or configurable hash function) mapping to a hash space of [0, 2^160 - 1].
+- **FR-1.1**: Default SHA-1 uses full160-bit positions; MD5/SHA-256 use128/256 bits. Custom callables return integer positions without an imposed modulus.
 - **FR-1.2**: The system shall map server nodes onto the hash ring by hashing their identifiers (e.g., "server-1", "192.168.1.1:8080") to positions on the ring.
 - **FR-1.3**: The system shall map keys onto the hash ring by hashing the key string to a position on the ring.
 - **FR-1.4**: The system shall resolve key-to-server lookup by traversing clockwise from the key's position until the first server node is found.
@@ -54,14 +54,14 @@ A Python consistent hashing library implementing the hash ring algorithm with vi
 ### NFR-1: Performance
 
 - **NFR-1.1**: Key lookup (`get_node`) shall complete in O(log N) time where N is the total number of virtual nodes on the ring, using binary search.
-- **NFR-1.2**: Server addition and removal shall complete in O(K log N) time where K is the number of virtual nodes for that server.
-- **NFR-1.3**: The ring shall support at least 10,000 virtual nodes without degradation.
+- **NFR-1.2**: Use immutable snapshots and copy/publication; report actual sort, mutation and planning costs instead of claiming inapplicable O(K log N).
+- **NFR-1.3**: Exercise10000/50000 entries and report time/memory, without promising no scaling degradation.
 
 ### NFR-2: Correctness
 
 - **NFR-2.1**: For a stable ring (no topology changes), the same key shall always map to the same server (deterministic).
-- **NFR-2.2**: Adding or removing a server shall redistribute at most K/N of total keys on average, where K is the number of keys and N is the number of servers.
-- **NFR-2.3**: With sufficient virtual nodes (≥100 per server), key distribution standard deviation shall be within 20% of the mean across servers.
+- **NFR-2.2**: Verify add/remove locality; uniform equal-weight average movement is an expectation, not a hard cap.
+- **NFR-2.3**: Measure sampled balance/memory without a universal20% CV bound or monotonic finite-sample improvement.
 
 ### NFR-3: Testing
 
@@ -75,3 +75,14 @@ A Python consistent hashing library implementing the hash ring algorithm with vi
 - **NFR-4.2**: The project shall use standard Python packaging with hatchling.
 - **NFR-4.3**: The project shall include type hints throughout.
 - **NFR-4.4**: The project shall provide a README with usage instructions and algorithm explanation.
+
+## 2026-10-27 review additions
+
+Capture batch topology at call time, filter supplied keys and accept one-pass
+statistics inputs. Publish weight changes once and retain unchanged positions.
+Validate capacity/hash failures before publication; default one-million entry
+budget per topology. Reject invalid containers, noncallables and writer reentry.
+Sweep ordered interval boundaries and select migrating candidates with one hash
+and binary search. Strict assignment comparison detects missing/unassigned pairs.
+Preserve valid legacy routes/collision boundaries; retain154-test, independent
+four-process and performance evidence in bilingual documentation.
