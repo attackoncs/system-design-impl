@@ -1,5 +1,11 @@
 # Video Streaming System
 
+<!-- LEARNING_GUIDE_START -->
+## Code reading guide
+
+[Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
+<!-- LEARNING_GUIDE_END -->
+
 Chapter 15's executable reference: resumable signed uploads, durable transcoding
 DAGs, independent workers, real FFmpeg, encrypted multi-rendition HLS and authorized
 HTTP playback. [中文说明](README_CN.md).

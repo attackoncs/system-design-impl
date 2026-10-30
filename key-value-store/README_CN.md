@@ -1,5 +1,11 @@
 # 分布式键值存储 — 第7章
 
+<!-- LEARNING_GUIDE_START -->
+## 从这里开始读代码
+
+[跟着一个案例读懂系统：架构、状态变化与关键代码详解](docs/learning-guide_cn.md)。
+<!-- LEARNING_GUIDE_END -->
+
 实现真实异步gRPC复制、可调quorum、向量时钟及siblings/墓碑、gossip、
 持久hinted handoff、Merkle修复和WAL/MemTable/SSTable。
 [English](README.md) · [章节复审](docs/chapter07-review.md) ·

@@ -1,5 +1,11 @@
 # Search Autocomplete System
 
+<!-- LEARNING_GUIDE_START -->
+## Code reading guide
+
+[Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
+<!-- LEARNING_GUIDE_END -->
+
 Chapter 14 reference implementation: completed-search logs, offline aggregation,
 atomic snapshots, cached top-five tries, filtering, balanced shards and HTTP replicas.
 Includes stable analytics sampling and an interruptible periodic snapshot worker.

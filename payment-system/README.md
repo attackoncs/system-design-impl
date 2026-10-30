@@ -1,5 +1,11 @@
 # Payment System — Chapter 27
 
+<!-- LEARNING_GUIDE_START -->
+## Code reading guide
+
+[Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
+<!-- LEARNING_GUIDE_END -->
+
 An executable, standard-library Python reference for single-currency merchant pay-ins, payouts and partial refunds. Four independent processes communicate over actual loopback HTTP: payment API, worker, synthetic PSP with hosted checkout, and an accounting-event consumer. **All money movements are simulated.** No real PSP adapter, card data or bank account numbers are accepted.
 
 ## Run

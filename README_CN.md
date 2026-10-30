@@ -1,5 +1,11 @@
 # System Design Interview - Python Implementations
 
+<!-- LEARNING_GUIDE_START -->
+## 从这里开始读代码
+
+[跟着一个案例读懂系统：架构、状态变化与关键代码详解](docs/learning-guide_cn.md)。
+<!-- LEARNING_GUIDE_END -->
+
 本项目是《System Design Interview》书中各章节系统设计的 Python 实现。每个章节作为独立的子项目，包含完整的设计文档、源代码、测试和使用示例。
 
 ## 已实现

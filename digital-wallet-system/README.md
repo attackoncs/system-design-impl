@@ -1,5 +1,11 @@
 # Digital Wallet — Chapter 28
 
+<!-- LEARNING_GUIDE_START -->
+## Code reading guide
+
+[Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
+<!-- LEARNING_GUIDE_END -->
+
 An executable reference for wallet-to-wallet transfers with integer USD cents, account sharding, TCC recovery, deterministic event replay and historical balances. **All opening balances are synthetic; no bank, card or real money service is connected.**
 
 The loopback lab uses seven independent processes: one fixed coordinator, one worker, two account shards and three coordinator-journal replicas. A journal entry needs two of three HTTP replicas before it is committed. The account shards are independent SQLite databases and are **not replicated**. This is a fixed-writer replication protocol with manual epoch fencing, not Raft, automatic leader election or production HA.

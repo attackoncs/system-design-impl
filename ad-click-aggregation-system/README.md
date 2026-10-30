@@ -1,5 +1,11 @@
 # Ad Click Event Aggregation — Chapter 22
 
+<!-- LEARNING_GUIDE_START -->
+## Code reading guide
+
+[Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
+<!-- LEARNING_GUIDE_END -->
+
 A standard-library Python reference implementation with an actual six-process HTTP pipeline: durable partitioned raw log → four independent event-time aggregators → global query/reduce API. Supports duplicates, late corrections, exact dimension filters, salted hot ads, checkpoint recovery, offline replay and independent reconciliation.
 
 Requires Python 3.10+. No external Python dependencies or external services are needed. This chapter uses its own single-owner SQLite raw-log transport; it does not claim replicated broker HA or the book's billion-event scale.

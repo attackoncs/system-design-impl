@@ -1,5 +1,11 @@
 # Unique ID Generator
 
+<!-- LEARNING_GUIDE_START -->
+## Code reading guide
+
+[Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
+<!-- LEARNING_GUIDE_END -->
+
 > 第 08 章核对与本轮变更见[审查记录](docs/chapter08-review.md)：新增有界序列等待和配置类型校验；说明节点身份、重启及吞吐边界。
 
 A Python implementation of the Twitter Snowflake algorithm for generating 64-bit unique, time-sortable IDs suitable for distributed systems. Designed for high-throughput scenarios requiring guaranteed uniqueness, strict monotonicity, and embedded machine identity.

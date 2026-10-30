@@ -1,5 +1,11 @@
 # 附近商家服务（第17章）
 
+<!-- LEARNING_GUIDE_START -->
+## 从这里开始读代码
+
+[跟着一个案例读懂系统：架构、状态变化与关键代码详解](docs/learning-guide_cn.md)。
+<!-- LEARNING_GUIDE_END -->
+
 已实现 geohash 搜索、商家增删改、持久化幂等、每日原子发布、有界 TTL 缓存、
 独立进程 HTTP 副本和按区域配置的读路由。
 

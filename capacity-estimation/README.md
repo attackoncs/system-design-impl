@@ -1,5 +1,11 @@
 # Back-of-the-envelope Estimation — Chapter 3
 
+<!-- LEARNING_GUIDE_START -->
+## Code reading guide
+
+[Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
+<!-- LEARNING_GUIDE_END -->
+
 A self-contained Decimal calculator for workload QPS, peak traffic, logical/physical storage, bandwidth, cache, serving nodes, Little's-law concurrency and availability budgets. Every result retains assumptions and unit labels. **These are estimates, not measured service capacity or SLA guarantees.**
 
 ## Run

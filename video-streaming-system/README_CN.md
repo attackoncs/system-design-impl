@@ -1,5 +1,11 @@
 # 视频流系统
 
+<!-- LEARNING_GUIDE_START -->
+## 从这里开始读代码
+
+[跟着一个案例读懂系统：架构、状态变化与关键代码详解](docs/learning-guide_cn.md)。
+<!-- LEARNING_GUIDE_END -->
+
 第 15 章参考实现：签名分片上传、断点续传、持久化转码 DAG、独立工作进程、
 真实 FFmpeg 转码、多清晰度加密 HLS、授权 HTTP 播放和故障恢复。
 

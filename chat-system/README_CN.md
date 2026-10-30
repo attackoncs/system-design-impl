@@ -1,5 +1,11 @@
 # 聊天系统
 
+<!-- LEARNING_GUIDE_START -->
+## 从这里开始读代码
+
+[跟着一个案例读懂系统：架构、状态变化与关键代码详解](docs/learning-guide_cn.md)。
+<!-- LEARNING_GUIDE_END -->
+
 基于《System Design Interview》第 13 章实现的 Python 聊天系统参考库。
 核心仅依赖标准库，可选 WebSocket 适配层提供真实网络收发。
 

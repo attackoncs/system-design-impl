@@ -1,5 +1,11 @@
 # 文件同步系统
 
+<!-- LEARNING_GUIDE_START -->
+## 从这里开始读代码
+
+[跟着一个案例读懂系统：架构、状态变化与关键代码详解](docs/learning-guide_cn.md)。
+<!-- LEARNING_GUIDE_END -->
+
 第 16 章 Google Drive 的参考实现：分块上传、断点续传、工作区内去重、压缩与
 AES-256-GCM 存储加密、修订历史、增量同步、冲突副本、分享撤销和持久化通知。
 

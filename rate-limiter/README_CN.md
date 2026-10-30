@@ -1,5 +1,11 @@
 # 限流器 — 第5章
 
+<!-- LEARNING_GUIDE_START -->
+## 从这里开始读代码
+
+[跟着一个案例读懂系统：架构、状态变化与关键代码详解](docs/learning-guide_cn.md)。
+<!-- LEARNING_GUIDE_END -->
+
 实现五种算法、内存/Redis原子状态、请求规则筛选及Flask/FastAPI适配。
 [English](README.md) · [章节复审与迁移](docs/chapter05-review.md) ·
 [设计](docs/design_cn.md) · [实测](benchmarks/REPORT.md)。

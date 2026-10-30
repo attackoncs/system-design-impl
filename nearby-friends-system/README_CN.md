@@ -1,5 +1,11 @@
 # 附近好友（第18章）
 
+<!-- LEARNING_GUIDE_START -->
+## 从这里开始读代码
+
+[跟着一个案例读懂系统：架构、状态变化与关键代码详解](docs/learning-guide_cn.md)。
+<!-- LEARNING_GUIDE_END -->
+
 实现真实 WebSocket 位置上报与通知、Redis TTL缓存和按用户的Pub/Sub频道、
 双向好友确认、共享开关、默认5英里半径、10分钟过期、多设备乱序抑制、
 历史记录授权与保留期限、一致性哈希和节点变更重订阅。

@@ -1,5 +1,11 @@
 # Chat System
 
+<!-- LEARNING_GUIDE_START -->
+## Code reading guide
+
+[Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
+<!-- LEARNING_GUIDE_END -->
+
 A Python reference implementation of Chapter 13, **Design A Chat System**, from
 *System Design Interview*. The core uses only the standard library; an optional
 WebSocket adapter provides actual network communication.

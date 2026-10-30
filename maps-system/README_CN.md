@@ -1,5 +1,11 @@
 # 地图系统（第19章）
 
+<!-- LEARNING_GUIDE_START -->
+## 从这里开始读代码
+
+[跟着一个案例读懂系统：架构、状态变化与关键代码详解](docs/learning-guide_cn.md)。
+<!-- LEARNING_GUIDE_END -->
+
 有向道路寻路/ETA、位置批量上报、交通聚合、分类路由瓦片、版本化GeoJSON/PNG，
 补齐持久预生成瓦片与私有导航会话的后台路线更新。示例为CC0合成道路，不是真实导航数据。
 [English](README.md)。

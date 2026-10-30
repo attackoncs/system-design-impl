@@ -1,5 +1,11 @@
 # Real-time Gaming Leaderboard — Chapter 26
 
+<!-- LEARNING_GUIDE_START -->
+## Code reading guide
+
+[Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
+<!-- LEARNING_GUIDE_END -->
+
 Monthly wins, exact competition ranks, fixed Top 10 and four-row neighbor windows using real hash-sharded Redis sorted sets. SQLite is the authoritative match journal; projections can replay after Redis loss. The lab runs seven processes: one authority, two HTTP projectors and four Redis primary/replica processes.
 
 Python 3.10+, standard-library client code; **a real Redis executable is required**. Redis 8.0.5 was tested. No Redis mock or sibling-project source is imported.

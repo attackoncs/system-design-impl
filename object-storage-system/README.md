@@ -1,5 +1,11 @@
 # S3-like Object Storage — Chapter 25
 
+<!-- LEARNING_GUIDE_START -->
+## Code reading guide
+
+[Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
+<!-- LEARNING_GUIDE_END -->
+
 Standard-library Python reference: one catalog/API coordinator, two metadata shards and three data nodes, all independent HTTP processes. Includes private versioned buckets, delete markers, SHA256 verification, resumable multipart uploads, packed small chunks, stable listing tokens, retention, repair and garbage collection.
 
 Python 3.10+; no extra packages/services. This is not AWS S3 wire compatibility or a production durability SLA.

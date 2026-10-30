@@ -1,5 +1,11 @@
 # Maps System (chapter 19)
 
+<!-- LEARNING_GUIDE_START -->
+## Code reading guide
+
+[Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
+<!-- LEARNING_GUIDE_END -->
+
 Executable reference for directed routing/ETA, batched locations, traffic,
 classified routing tiles and versioned GeoJSON/PNG maps. Includes precomputed
 persistent tiles and private navigation sessions with adaptive route updates.

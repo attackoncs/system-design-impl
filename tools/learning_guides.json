@@ -1,0 +1,164 @@
+[
+  {
+    "project": "scale-from-zero",
+    "chapter": 2,
+    "title": "从零扩容",
+    "purpose": "理解负载均衡、缓存、主从复制和异步任务怎样组成可扩展服务。"
+  },
+  {
+    "project": "capacity-estimation",
+    "chapter": 3,
+    "title": "容量估算",
+    "purpose": "把业务假设转换为带明确单位的QPS、存储、带宽和节点预算。"
+  },
+  {
+    "project": "rate-limiter",
+    "chapter": 5,
+    "title": "限流器",
+    "purpose": "沿规则匹配、算法决策和原子状态更新理解请求准入。"
+  },
+  {
+    "project": "consistent-hashing",
+    "chapter": 6,
+    "title": "一致性哈希",
+    "purpose": "通过不可变环快照理解键路由、虚拟节点和拓扑变化。"
+  },
+  {
+    "project": "key-value-store",
+    "chapter": 7,
+    "title": "键值存储",
+    "purpose": "从节点API深入副本协调、仲裁读写与LSM持久存储。"
+  },
+  {
+    "project": "unique-id-generator",
+    "chapter": 8,
+    "title": "唯一ID生成器",
+    "purpose": "用位布局、时钟与序列号理解Snowflake唯一ID的生成条件。"
+  },
+  {
+    "project": "url-shortener",
+    "chapter": 9,
+    "title": "短链接",
+    "purpose": "串起短码生成、唯一映射持久化和重定向读取。"
+  },
+  {
+    "project": "web-crawler",
+    "chapter": 10,
+    "title": "网页爬虫",
+    "purpose": "从有界调度深入礼貌抓取、内容去重、链接发现和重启恢复。"
+  },
+  {
+    "project": "notification-system",
+    "chapter": 11,
+    "title": "通知系统",
+    "purpose": "理解通知受理、通道队列、异步投递与至少一次重试。"
+  },
+  {
+    "project": "news-feed-system",
+    "chapter": 12,
+    "title": "新闻动态系统",
+    "purpose": "把帖子受理、混合推拉Feed和有界资料补全串成完整读写路径。"
+  },
+  {
+    "project": "chat-system",
+    "chapter": 13,
+    "title": "聊天系统",
+    "purpose": "从会话鉴权到消息持久化与增量同步，理解实时连接和离线恢复。"
+  },
+  {
+    "project": "search-autocomplete-system",
+    "chapter": 14,
+    "title": "搜索自动补全",
+    "purpose": "理解查询快照与采集聚合分离，以及Trie如何返回热门前缀候选。"
+  },
+  {
+    "project": "video-streaming-system",
+    "chapter": 15,
+    "title": "视频流媒体",
+    "purpose": "沿分片上传、异步转码和播放授权理解媒体数据与元数据分离。"
+  },
+  {
+    "project": "file-sync-system",
+    "chapter": 16,
+    "title": "文件同步",
+    "purpose": "从块上传和版本提交深入增量同步、冲突副本与设备确认。"
+  },
+  {
+    "project": "proximity-service",
+    "chapter": 17,
+    "title": "附近商家服务",
+    "purpose": "从Geohash候选过滤到精确距离计算，理解商家查询与每日发布。"
+  },
+  {
+    "project": "nearby-friends-system",
+    "chapter": 18,
+    "title": "附近好友",
+    "purpose": "串起位置授权、持久上报、Redis提示和周期快照校正。"
+  },
+  {
+    "project": "maps-system",
+    "chapter": 19,
+    "title": "地图系统",
+    "purpose": "从路网和定位报告理解路线计算、交通聚合及导航更新。"
+  },
+  {
+    "project": "distributed-message-queue",
+    "chapter": 20,
+    "title": "分布式消息队列",
+    "purpose": "从生产到分区日志再到消费确认，理解顺序、复制和重放。"
+  },
+  {
+    "project": "metrics-monitoring-system",
+    "chapter": 21,
+    "title": "指标监控与告警",
+    "purpose": "沿采集、持久排队、时序存储和告警投递理解监控数据生命周期。"
+  },
+  {
+    "project": "ad-click-aggregation-system",
+    "chapter": 22,
+    "title": "广告点击聚合",
+    "purpose": "理解事件去重、时间窗口聚合和检查点重放的关系。"
+  },
+  {
+    "project": "hotel-reservation-system",
+    "chapter": 23,
+    "title": "酒店预订",
+    "purpose": "从库存事务和预订状态深入异步支付与补偿，理解防超卖。"
+  },
+  {
+    "project": "distributed-email-service",
+    "chapter": 24,
+    "title": "分布式邮件",
+    "purpose": "从SMTP受理与收件处理深入邮箱存储、对象正文和异步发送。"
+  },
+  {
+    "project": "object-storage-system",
+    "chapter": 25,
+    "title": "对象存储",
+    "purpose": "理解对象元数据、分块数据副本和分段上传发布之间的边界。"
+  },
+  {
+    "project": "gaming-leaderboard-system",
+    "chapter": 26,
+    "title": "游戏排行榜",
+    "purpose": "把比赛事实日志、Redis排序投影和跨分片排名查询串起来。"
+  },
+  {
+    "project": "payment-system",
+    "chapter": 27,
+    "title": "支付系统",
+    "purpose": "从持久受理到供应商确认与复式记账，理解未知结果和对账。"
+  },
+  {
+    "project": "digital-wallet-system",
+    "chapter": 28,
+    "title": "数字钱包",
+    "purpose": "沿协调日志和分片参与者理解跨账户转账、恢复与审计。"
+  },
+  {
+    "project": "stock-exchange-system",
+    "chapter": 29,
+    "title": "证券交易",
+    "purpose": "通过有序命令日志和确定性撮合理解订单、成交与行情投影。"
+  }
+]

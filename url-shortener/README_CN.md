@@ -1,5 +1,11 @@
 # URL 短链接服务
 
+<!-- LEARNING_GUIDE_START -->
+## 从这里开始读代码
+
+[跟着一个案例读懂系统：架构、状态变化与关键代码详解](docs/learning-guide_cn.md)。
+<!-- LEARNING_GUIDE_END -->
+
 > 第 09 章已补充 SQLite 持久化、LRU 缓存及 WSGI HTTP 入口；保存映射改为拒绝覆盖。使用方法和运行边界见[章节核对记录](docs/chapter09-review.md)。
 
 基于《System Design Interview》第 9 章"设计 URL 短链接系统"的 Python 实现。支持可插拔的哈希策略（哈希+冲突解决和 Base-62 转换）、存储抽象层（默认内存存储）、点击追踪分析，以及基于标准库的 HTTP 演示服务器。零运行时依赖。

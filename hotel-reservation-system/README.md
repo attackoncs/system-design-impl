@@ -1,5 +1,11 @@
 # Hotel Reservation System — Chapter 23
 
+<!-- LEARNING_GUIDE_START -->
+## Code reading guide
+
+[Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
+<!-- LEARNING_GUIDE_END -->
+
 A Python standard-library reference with a real six-process HTTP lab: gateway, two hotel shards, two durable saga workers and a separate **simulated** payment ledger. Includes hotel/room-type management, nightly prices and inventory, atomic multi-night reservations, up to 10% overbooking, idempotent booking/cancellation, expired holds, refunds and recovery after unknown payment outcomes.
 
 Python 3.10+; no external packages or services required. No real money is charged. Hotel search and physical room-number assignment are outside scope.

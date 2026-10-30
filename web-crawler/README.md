@@ -1,5 +1,11 @@
 # Web Crawler
 
+<!-- LEARNING_GUIDE_START -->
+## Code reading guide
+
+[Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
+<!-- LEARNING_GUIDE_END -->
+
 > Chapter 10 now includes durable recovery, adaptive recrawling, host partition routing, DNS caching and bounded downloads. See the coverage and deployment limits in the [chapter review](docs/chapter10-review.md)。
 
 An asyncio-based Python web crawler library implementing the design from System Design Interview Chapter 10 "Design A Web Crawler". Features a pipeline architecture with URL frontier (priority + politeness), robots.txt compliance, content deduplication, link extraction, and pluggable components — all with zero runtime dependencies (stdlib only).

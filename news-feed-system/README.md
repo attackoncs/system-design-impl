@@ -1,5 +1,11 @@
 # News Feed System
 
+<!-- LEARNING_GUIDE_START -->
+## Code reading guide
+
+[Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
+<!-- LEARNING_GUIDE_END -->
+
 Chapter 12 of *System Design Interview*: an executable Python reference for publishing and reading a reverse chronological feed. See [requirements](docs/requirements.md), [tasks](docs/tasks.md), [the chapter audit](docs/chapter12-review.md) and [design](docs/design.md) for acceptance evidence and deployment limits.
 
 ## Features

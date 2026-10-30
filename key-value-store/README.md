@@ -1,5 +1,11 @@
 # Distributed Key-Value Store — Chapter 7
 
+<!-- LEARNING_GUIDE_START -->
+## Code reading guide
+
+[Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
+<!-- LEARNING_GUIDE_END -->
+
 A Dynamo-inspired learning implementation with real asynchronous gRPC replication,
 causal siblings/tombstones, quorum responses, gossip, durable hinted handoff,
 Merkle repair and WAL/MemTable/SSTable storage. [中文](README_CN.md).

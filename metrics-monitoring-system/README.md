@@ -1,5 +1,11 @@
 # Metrics Monitoring and Alerting (chapter 21)
 
+<!-- LEARNING_GUIDE_START -->
+## Code reading guide
+
+[Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
+<!-- LEARNING_GUIDE_END -->
+
 Durable push/pull infrastructure metrics, real queue transport, indexed time
 series, reset-aware rollups, stateful alerts and retry-safe webhooks.
 [中文](README_CN.md). Logs/traces and business analytics are excluded.

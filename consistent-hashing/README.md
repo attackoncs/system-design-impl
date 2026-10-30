@@ -1,5 +1,11 @@
 # Consistent Hashing — Chapter 6
 
+<!-- LEARNING_GUIDE_START -->
+## Code reading guide
+
+[Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
+<!-- LEARNING_GUIDE_END -->
+
 Hash-ring placement with virtual nodes, immutable read views, atomic weight
 changes and streaming migration selection. Runtime dependencies: standard library
 only. [中文](README_CN.md) · [chapter review](docs/chapter06-review.md) ·

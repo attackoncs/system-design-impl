@@ -1,5 +1,11 @@
 # 网页爬虫
 
+<!-- LEARNING_GUIDE_START -->
+## 从这里开始读代码
+
+[跟着一个案例读懂系统：架构、状态变化与关键代码详解](docs/learning-guide_cn.md)。
+<!-- LEARNING_GUIDE_END -->
+
 对应《System Design Interview.md》第 10 章。使用 Python 标准库与 asyncio，实现优先级调度、单主机礼貌访问、robots 检查、HTML/链接解析及 URL/内容去重。
 
 ```python

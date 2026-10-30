@@ -1,5 +1,11 @@
 # Notification System
 
+<!-- LEARNING_GUIDE_START -->
+## Code reading guide
+
+[Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
+<!-- LEARNING_GUIDE_END -->
+
 A Python 3.9+ asyncio reference implementation of chapter 11 of `System Design Interview.md`. It supports iOS push, Android push, SMS and email through a pluggable `Provider` interface. The bundled provider **simulates delivery**; it does not contact APNs, FCM, SMS or email services.
 
 [中文说明](README_CN.md) · [Design](docs/design.md) · [Chapter coverage](docs/chapter11-review.md)

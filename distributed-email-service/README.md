@@ -1,5 +1,11 @@
 # Distributed Email Service — Chapter 24
 
+<!-- LEARNING_GUIDE_START -->
+## Code reading guide
+
+[Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
+<!-- LEARNING_GUIDE_END -->
+
 A standard-library Python reference with **nine real processes**: HTTP API, two mailbox primaries, two asynchronous read replicas, an immutable object service, a local SMTP gateway and two send workers. Supports HTTP mailboxes, attachments, read/unread filters, subject/sender/body search, durable send/receive deduplication, quarantine and retained-disk recovery.
 
 Python 3.10+. No extra packages or external services. SMTP is confined to configured `local.test` mailboxes on loopback; there is no internet delivery or MX lookup. Test scanner rules are explicitly **not real anti-virus or anti-spam**.

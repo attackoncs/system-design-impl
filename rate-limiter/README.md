@@ -1,5 +1,11 @@
 # Rate Limiter — Chapter 5
 
+<!-- LEARNING_GUIDE_START -->
+## Code reading guide
+
+[Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
+<!-- LEARNING_GUIDE_END -->
+
 A runnable study of five rate limiting algorithms, atomic memory/Redis storage,
 request policy selection and Flask/FastAPI integration. [中文](README_CN.md).
 

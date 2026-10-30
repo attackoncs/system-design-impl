@@ -1,5 +1,11 @@
 # 新闻动态系统
 
+<!-- LEARNING_GUIDE_START -->
+## 从这里开始读代码
+
+[跟着一个案例读懂系统：架构、状态变化与关键代码详解](docs/learning-guide_cn.md)。
+<!-- LEARNING_GUIDE_END -->
+
 对应《System Design Interview》第12章，提供可运行的发布、读取与倒序动态参考实现。需求及验收见[需求文档](docs/requirements_cn.md)，进度见[任务清单](docs/tasks_cn.md)，逐项覆盖见[章节核对](docs/chapter12-review.md)，架构见[设计文档](docs/design_cn.md)。
 
 ## 已实现

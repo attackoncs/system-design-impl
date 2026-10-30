@@ -1,5 +1,11 @@
 # Stock Exchange — Chapter 29
 
+<!-- LEARNING_GUIDE_START -->
+## Code reading guide
+
+[Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
+<!-- LEARNING_GUIDE_END -->
+
 A standard-library Python reference for deterministic limit-order matching, cancellations, reserved cash/shares, price-time priority, asynchronous matching replicas and recoverable market data. **Accounts, holdings, clock and all trades are simulated. No orders reach a real exchange.**
 
 Four real loopback HTTP processes run independently: gateway/sequencer, primary matching engine, backup matching engine, and market-data/report projection. Each uses its own SQLite database. The sequencer is a single authority; matching failover is manual and does not provide sequencer HA.

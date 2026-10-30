@@ -1,5 +1,11 @@
 # File Sync System
 
+<!-- LEARNING_GUIDE_START -->
+## Code reading guide
+
+[Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
+<!-- LEARNING_GUIDE_END -->
+
 Chapter 16, Design Google Drive: encrypted block storage, resumable uploads,
 immutable revisions, delta sync, conflict copies, sharing and durable notifications.
 [中文说明](README_CN.md).

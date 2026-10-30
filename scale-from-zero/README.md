@@ -1,5 +1,11 @@
 # Scale From Zero to Millions of Users — Chapter 2
 
+<!-- LEARNING_GUIDE_START -->
+## Code reading guide
+
+[Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
+<!-- LEARNING_GUIDE_END -->
+
 A staged, standard-library experiment showing what changes when a single application becomes a stateless web tier with a cache, read replicas, sharded data and durable background work. **All services run on one host using real loopback HTTP. This is not a million-user capacity or multi-region HA demonstration.**
 
 | Stage | Processes | Components |

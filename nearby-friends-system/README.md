@@ -1,5 +1,11 @@
 # Nearby Friends (chapter 18)
 
+<!-- LEARNING_GUIDE_START -->
+## Code reading guide
+
+[Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
+<!-- LEARNING_GUIDE_END -->
+
 Live authorized nearby friends over WebSockets, Redis TTL cache and per-user
 Pub/Sub channels. Includes mutual friendship consent, opt-in sharing, ordered
 multi-device reports, configurable 5mi radius, inactivity expiry, history consent,

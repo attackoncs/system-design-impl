@@ -1,5 +1,11 @@
 # 第 26 章：实时游戏排行榜
 
+<!-- LEARNING_GUIDE_START -->
+## 从这里开始读代码
+
+[跟着一个案例读懂系统：架构、状态变化与关键代码详解](docs/learning-guide_cn.md)。
+<!-- LEARNING_GUIDE_END -->
+
 真实 Redis 哈希分片 sorted-set 实现月赛积分、同分竞赛名次、固定 Top 10 和前后四个显示位置。SQLite 保存权威比赛日志，Redis 丢失后可重放。实验共 7 个进程：权威服务、两个 HTTP 投影节点、两组 Redis 主备。
 
 要求 Python 3.10+ 和真实 Redis 程序，已验证 Redis 8.0.5。客户端为标准库实现，无 Redis 模拟或前章源码依赖。

@@ -1,5 +1,11 @@
 # 通知系统
 
+<!-- LEARNING_GUIDE_START -->
+## 从这里开始读代码
+
+[跟着一个案例读懂系统：架构、状态变化与关键代码详解](docs/learning-guide_cn.md)。
+<!-- LEARNING_GUIDE_END -->
+
 依据本地《System Design Interview.md》第 11 章实现的 Python 3.9+ asyncio 参考项目，包含 iOS 推送、Android 推送、短信与邮件通道。内置 `SimulatedProvider` **只模拟投递**，不会调用 APNs、FCM、短信或邮件外部服务。
 
 [English](README.md) · [设计文档](docs/design_cn.md) · [章节核对记录](docs/chapter11-review.md)

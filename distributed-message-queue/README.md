@@ -1,5 +1,11 @@
 # Distributed Message Queue (chapter 20)
 
+<!-- LEARNING_GUIDE_START -->
+## Code reading guide
+
+[Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
+<!-- LEARNING_GUIDE_END -->
+
 Partitioned, retained text logs with independent HTTP brokers, integrity checks,
 producer fencing/replay, consumer groups and atomic consume/produce visibility.
 [中文](README_CN.md). The 2026-10-26 core review adds automatic batching, explicit

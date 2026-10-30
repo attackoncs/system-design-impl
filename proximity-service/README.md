@@ -1,5 +1,11 @@
 # Proximity Service
 
+<!-- LEARNING_GUIDE_START -->
+## Code reading guide
+
+[Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
+<!-- LEARNING_GUIDE_END -->
+
 Chapter 17 executable reference: geohash nearby search, owner CRUD, durable
 idempotency, atomic daily snapshots, bounded caches, independent HTTP replicas
 and a region-aware read gateway. [中文说明](README_CN.md).

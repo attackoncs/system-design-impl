@@ -1,5 +1,11 @@
 # 一致性哈希 — 第6章
 
+<!-- LEARNING_GUIDE_START -->
+## 从这里开始读代码
+
+[跟着一个案例读懂系统：架构、状态变化与关键代码详解](docs/learning-guide_cn.md)。
+<!-- LEARNING_GUIDE_END -->
+
 实现虚拟节点哈希环、不可变读快照、原子权重调整和流式迁移键筛选，运行时
 只依赖标准库。[English](README.md) · [章节复审](docs/chapter06-review.md) ·
 [设计](docs/design_cn.md) · [实测](benchmarks/REPORT.md)。
