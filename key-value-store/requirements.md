@@ -33,8 +33,8 @@ A distributed key-value store implemented in Python, based on the design princip
 - **FR-4.1**: The system shall support configurable N (replica count), W (write quorum), and R (read quorum) parameters.
 - **FR-4.2**: A write operation shall be considered successful after receiving W acknowledgments from replicas.
 - **FR-4.3**: A read operation shall query R replicas and return the most recent value based on vector clock comparison.
-- **FR-4.4**: When W + R > N, strong consistency shall be guaranteed.
-- **FR-4.5**: Default configuration shall be N=3, W=2, R=2 (strong consistency).
+- **FR-4.4**: W + R > N expresses intersection for a stable replica set; it does not guarantee linearizability with causal conflicts, sloppy quorum or changing membership.
+- **FR-4.5**: Default configuration shall be N=3, W=2, R=2 (intersecting quorums).
 - **FR-4.6**: The system shall support eventual consistency mode (W=1, R=1) for low-latency use cases.
 
 ### FR-5: Vector Clock & Conflict Resolution
@@ -132,3 +132,17 @@ A distributed key-value store implemented in Python, based on the design princip
 - **NFR-5.3**: The project shall include unit tests and property-based tests using pytest + hypothesis.
 - **NFR-5.4**: The project shall provide usage examples and a demo script.
 - **NFR-5.5**: Python >= 3.9 shall be required.
+
+
+## 2026-10-27 review acceptance
+
+Root updates touch one Merkle path with the old hash format. Real repair must
+compare bounded subtree metadata and use sorted bounded-byte record pages;
+changed views abort and retry, oversized single records fail explicitly.
+Preserve causal siblings/tombstones, freeze inputs before locks, validate exact
+record schema/int64 counters and keep physical record timestamps monotonic.
+Drain local commits on cancellation, fsync/atomically publish SSTables before
+WAL truncation, close WAL even on failed shutdown, fence hint ACK against the
+original payload and reject corrupt final tables instead of silently skipping.
+Record raw performance regressions and disclose unimplemented load-based scaling,
+safe drain/topology consensus, large-data streaming/caching and cross-DC safeguards.
