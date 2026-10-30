@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import heapq
 import collections
 from dataclasses import dataclass
 from time import monotonic
-from collections.abc import Iterable
-from typing import Optional
+from collections.abc import Awaitable, Callable, Collection, Iterable
+from typing import Optional, TypeVar
 
 from news_feed_system.action_cache import ActionCache
 from news_feed_system.auth import Authenticator
@@ -31,6 +32,8 @@ from news_feed_system.post_cache import PostCache
 from news_feed_system.social_graph_cache import CachedSocialGraph
 from news_feed_system.storage import PostKey, UserStore, post_key
 from news_feed_system.user_cache import UserCache
+
+_ReadItem = TypeVar("_ReadItem")
 
 
 @dataclass(frozen=True)
@@ -105,6 +108,24 @@ class NewsFeedService:
         self._config = config or NewsFeedConfig()
         # Records only complete first-page windows, never arbitrary old pages.
         self._coverage = collections.OrderedDict()
+        # Coalesce profile misses without retaining one lock per author forever.
+        self._profile_locks = [asyncio.Lock() for _ in range(64)]
+
+    async def _read_each(
+        self,
+        items: Collection[_ReadItem],
+        read: Callable[[_ReadItem], Awaitable[None]],
+    ) -> None:
+        """Run one fixed reader set; failure/cancellation drains owned work."""
+        pending = iter(items)
+
+        async def consume() -> None:
+            for item in pending:
+                await read(item)
+
+        await gather_owned(
+            *(consume() for _ in range(min(self._config.read_concurrency, len(items))))
+        )
 
     async def retrieve(
         self,
@@ -130,7 +151,7 @@ class NewsFeedService:
         if len(following) > self._config.max_following:
             raise ValidationError("Following limit exceeded")
         posts = await self._candidates(user_id, following, limit + 1, before)
-        hydrated = [await self._hydrate(user_id, post) for post in posts]
+        hydrated = await self._hydrate_posts(user_id, posts)
         # Relationships/settings may change while the source or profile loads.
         current = set(await self._graph.get_following(user_id))
         hydrated = [
@@ -158,11 +179,7 @@ class NewsFeedService:
         signature = (frozenset(following), frozenset(muted), frozenset(celebrities))
         coverage = self._coverage.get(user_id)
         repair = self._needs_repair(coverage, signature, candidates)
-        await self._pull_posts(
-            eligible if repair else celebrities,
-            candidates,
-            worker_count=min(self._config.read_concurrency, len(following)),
-        )
+        await self._pull_posts(eligible if repair else celebrities, candidates)
         result = candidates.newest_first()
         self._remember_result(user_id, result, before, signature, coverage, repair)
         return result
@@ -170,9 +187,7 @@ class NewsFeedService:
     async def _cached_posts(
         self, user_id: str, following: set[str], candidates: _Candidates
     ) -> None:
-        for entry in self._feeds.get_entries(
-            user_id, page_size=self._feeds.max_entries
-        ):
+        async def load(entry: FeedEntry) -> None:
             if entry.author_id in following and (
                 candidates.before is None
                 or (entry.timestamp, entry.post_id) < candidates.before
@@ -181,21 +196,18 @@ class NewsFeedService:
                 if post is not None:
                     candidates.merge([post])
 
+        await self._read_each(
+            self._feeds.get_entries(user_id, page_size=self._feeds.max_entries), load
+        )
+
     async def _celebrity_authors(self, authors: set[str]) -> set[str]:
-        pending = iter(sorted(authors))
         celebrities = set()
 
-        async def classify() -> None:
-            for author in pending:
-                if await self._fanout.is_celebrity(author):
-                    celebrities.add(author)
+        async def classify(author: str) -> None:
+            if await self._fanout.is_celebrity(author):
+                celebrities.add(author)
 
-        await gather_owned(
-            *(
-                classify()
-                for _ in range(min(self._config.read_concurrency, len(authors)))
-            )
-        )
+        await self._read_each(sorted(authors), classify)
         return celebrities
 
     @staticmethod
@@ -216,21 +228,15 @@ class NewsFeedService:
             and oldest < coverage.oldest_key
         )
 
-    async def _pull_posts(
-        self, authors: set[str], candidates: _Candidates, *, worker_count: int
-    ) -> None:
-        pending = iter(sorted(authors))
+    async def _pull_posts(self, authors: set[str], candidates: _Candidates) -> None:
+        async def pull(author: str) -> None:
+            # Merge each page as it arrives instead of retaining one per author.
+            page = await self._author_posts(
+                candidates.user_id, author, candidates.limit, candidates.before
+            )
+            candidates.merge(page)
 
-        async def pull() -> None:
-            for author in pending:
-                # Repair covers cold/evicted push feeds, delayed workers and
-                # celebrity transitions. Warm windows only pull celebrities.
-                page = await self._author_posts(
-                    candidates.user_id, author, candidates.limit, candidates.before
-                )
-                candidates.merge(page)
-
-        await gather_owned(*(pull() for _ in range(worker_count)))
+        await self._read_each(sorted(authors), pull)
 
     def _remember_result(
         self,
@@ -277,13 +283,29 @@ class NewsFeedService:
             before = post_key(batch[-1])
         return result[:limit]
 
+    async def _hydrate_posts(
+        self, user_id: str, posts: list[Post]
+    ) -> list[HydratedFeedEntry]:
+        hydrated: dict[int, HydratedFeedEntry] = {}
+
+        async def hydrate(index: int) -> None:
+            hydrated[index] = await self._hydrate(user_id, posts[index])
+
+        await self._read_each(range(len(posts)), hydrate)
+        # Completion order must not change the chronological page or its cursor.
+        return [hydrated[index] for index in range(len(posts))]
+
     async def _hydrate(self, user_id: str, post: Post) -> HydratedFeedEntry:
         author = self._users.get(post.author_id)
         if author is None:
-            author = await run_sync(self._user_store.get, post.author_id)
-            if author is None:
-                author = UserProfile(post.author_id, post.author_id)
-            self._users.put(author)
+            lock = self._profile_locks[hash(post.author_id) % len(self._profile_locks)]
+            async with lock:
+                author = self._users.get(post.author_id)
+                if author is None:
+                    author = await run_sync(self._user_store.get, post.author_id)
+                    if author is None:
+                        author = UserProfile(post.author_id, post.author_id)
+                    self._users.put(author)
         return HydratedFeedEntry(
             post=post,
             author=author,

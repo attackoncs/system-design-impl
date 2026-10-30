@@ -32,6 +32,7 @@ from news_feed_system.storage import (
 )
 from news_feed_system.user_cache import UserCache
 from news_feed_system.worker import WorkerPool
+from news_feed_system.metrics import RequestMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +116,7 @@ class NewsFeedAPI:
         self._active_publications: set[asyncio.Task] = set()
         self._publications_drained = asyncio.Event()
         self._publications_drained.set()
+        self._metrics = RequestMetrics()
 
     def _check_loop(self) -> None:
         loop = asyncio.get_running_loop()
@@ -185,19 +187,20 @@ class NewsFeedAPI:
                     self._recovery_task = None
 
     async def publish(self, request: FeedRequest) -> str:
-        await self.start()
-        async with self._lifecycle_lock:
-            if self._stopping or not self._running:
-                raise RuntimeError("NewsFeedAPI is stopping")
-            task = asyncio.current_task()
-            self._active_publications.add(task)
-            self._publications_drained.clear()
-        try:
-            return await self.publisher.publish(request)
-        finally:
-            self._active_publications.discard(task)
-            if not self._active_publications:
-                self._publications_drained.set()
+        with self._metrics.measure("publish"):
+            await self.start()
+            async with self._lifecycle_lock:
+                if self._stopping or not self._running:
+                    raise RuntimeError("NewsFeedAPI is stopping")
+                task = asyncio.current_task()
+                self._active_publications.add(task)
+                self._publications_drained.clear()
+            try:
+                return await self.publisher.publish(request)
+            finally:
+                self._active_publications.discard(task)
+                if not self._active_publications:
+                    self._publications_drained.set()
 
     async def retrieve(
         self,
@@ -206,10 +209,20 @@ class NewsFeedAPI:
         page_size: Optional[int] = None,
         cursor: Optional[str] = None,
     ) -> HydratedFeed:
-        self._check_loop()
-        return await self.reader.retrieve(
-            auth_token, page_size=page_size, cursor=cursor
-        )
+        with self._metrics.measure("retrieve"):
+            self._check_loop()
+            return await self.reader.retrieve(
+                auth_token, page_size=page_size, cursor=cursor
+            )
+
+    def metrics(self) -> dict[str, dict]:
+        """Snapshot local request QPS/outcomes and latency in seconds.
+
+        Publication success means source acceptance, not fanout completion or
+        push delivery. HTTP requests rejected before reaching this API are not
+        counted. Snapshots can safely be collected from a monitoring thread.
+        """
+        return self._metrics.snapshot()
 
     async def mute(self, user_id: str, author_id: str) -> None:
         self._check_loop()

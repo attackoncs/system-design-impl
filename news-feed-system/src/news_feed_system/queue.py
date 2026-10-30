@@ -100,7 +100,7 @@ class MessageQueue:
             self._changed.clear()
             try:
                 await asyncio.wait_for(self._changed.wait(), timeout=delay)
-            except TimeoutError:
+            except asyncio.TimeoutError:
                 pass
 
     async def dequeue(self) -> news_feed_system.models.FanoutTask:

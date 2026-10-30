@@ -10,6 +10,7 @@ from news_feed_system.config import (
 from news_feed_system.models import FeedRequest, HydratedFeed, Post, UserProfile
 from news_feed_system.news_feed_service import NewsFeedService
 from news_feed_system.storage import SQLitePostStore, SQLiteUserStore
+from news_feed_system.metrics import RequestMetrics
 
 __all__ = [
     "NewsFeedAPI",
@@ -24,4 +25,5 @@ __all__ = [
     "NewsFeedService",
     "SQLitePostStore",
     "SQLiteUserStore",
+    "RequestMetrics",
 ]
