@@ -8,41 +8,73 @@ Production-quality Python implementations of system design concepts from the boo
 
 | Chapter | Topic | Status | Description |
 |---------|-------|--------|-------------|
-| 02 | [Scale From Zero](./scale-from-zero/) | ✅ Reference done | 1/8/10-process HTTP scaling lab: stateless sessions, load balancing, cache, profile replicas, sharding and durable jobs; 19 tests |
+| 02 | [Scale From Zero](./scale-from-zero/) | ✅ Core reviewed | Source-bound replication, cache fences, live Web pool, leased outbox, local GeoDNS failover and fenced profile promotion; 73 tests; production multi-region HA remains open |
 | 03 | [Capacity Estimation](./capacity-estimation/) | ✅ Reference done | Explicit-unit Decimal QPS/storage/bandwidth/cache/node/SLO budgets, scenario CLI and sensitivity analysis; 14 tests |
-| 05 | [Rate Limiter](./rate-limiter/) | ✅ Done | 5 algorithms, Redis/memory backends, FastAPI/Flask integration |
-| 06 | [Consistent Hashing](./consistent-hashing/) | ✅ Done | Virtual nodes, O(log N) lookup, distribution statistics |
+| 05 | [Rate Limiter](./rate-limiter/) | ✅ Core reviewed | 249 tests; file rules, stable identities, clock fencing, bounded FIFO; real4-process Redis and2HTTP validation |
+| 06 | [Consistent Hashing](./consistent-hashing/) | ✅ Core reviewed | 154 tests; streaming migration, atomic weights, bounded entries; four-process and build/plan measurements |
 | 07 | [Key-Value Store](./key-value-store/) | Core implemented; [review ongoing](key-value-store/docs/chapter07-review.md) | Dynamo-style, LSM-tree storage, quorum consensus, gossip protocol, gRPC |
 | 08 | [Unique ID Generator](./unique-id-generator/) | ✅ Done | Twitter Snowflake algorithm, configurable bit layout, thread-safe, ID parsing |
 | 09 | [URL Shortener](./url-shortener/) | ✅ Done | Pluggable hash strategies, base-62 conversion, click tracking, stdlib HTTP demo |
 | 10 | [Web Crawler](./web-crawler/) | ✅ Done | Durable crawl recovery, adaptive recrawling, host partition routing, DNS cache and bounded downloads |
 | 11 | [Notification System](./notification-system/) | ✅ Done | Durable per-channel queues, event deduplication, lease recovery, scheduled retry and authenticated demo (simulated providers) |
-| 12 | [News Feed System](./news-feed-system/) | ✅ Done | Hybrid push/pull fanout, async workers, five-layer cache architecture, pluggable social graph |
-| 13 | [Chat System](./chat-system/) | ✅ Done | Direct/group chat, Redis multi-node routing, Sentinel failover, shared presence, durable push retries, reconnect sync, measured load/fault tests |
-| 14 | [Search Autocomplete](./search-autocomplete-system/) | ✅ Done | Cached top-five trie, batch snapshots, filtering, range shards, HTTP replica recovery |
-| 15 | [Video Streaming](./video-streaming-system/) | ✅ Done | Resumable uploads, real FFmpeg/encrypted HLS, PostgreSQL failover, S3 shared storage, measured recovery |
-| 16 | [File Sync](./file-sync-system/) | ✅ Reference done | Resumable encrypted blocks, immutable revisions, conflict copies, ACLs, durable long polling and device delta sync |
-| 17 | [Proximity Service](./proximity-service/) | ✅ Reference done | Geohash search, owner CRUD, atomic daily snapshots, bounded caches, independent HTTP replicas and regional read failover |
-| 18 | [Nearby Friends](./nearby-friends-system/) | ✅ Reference done | Live WebSockets, Redis TTL/PubSub, mutual consent, ordered reports, ring changes and snapshot recovery; 12 tests |
-| 19 | [Maps System](./maps-system/) | ✅ Reference done | Lazy tiled routing/ETA, traffic reports, GeoJSON/PNG, versioned HTTP catalogs and regional read recovery; 14 tests |
-| 20 | [Distributed Message Queue](./distributed-message-queue/) | ✅ Reference done | Segmented replicated logs, producer fencing, consumer groups, queue-scoped transactions and real broker/transport faults; 15 tests |
-| 21 | [Metrics Monitoring and Alerting](./metrics-monitoring-system/) | ✅ Reference done | Durable collection through the message queue, tiered time series storage, grouped alerts and webhook retries; 15 tests |
-| 22 | [Ad Click Event Aggregation](./ad-click-aggregation-system/) | ✅ Reference done | Partitioned durable event log, salted hot ads, exact global Top N, late corrections, atomic checkpoints and replay reconciliation; 11 tests |
-| 23 | [Hotel Reservation](./hotel-reservation-system/) | ✅ Reference done | Hotel shards, atomic nightly inventory, bounded overbooking, price snapshots, idempotent bookings and simulated payment/refund recovery; 13 tests |
-| 24 | [Distributed Email](./distributed-email-service/) | ✅ Reference done | Local HTTP/SMTP delivery, immutable attachments, user shards, asynchronous metadata replicas, versioned read flags and fielded search; 9 tests |
-| 25 | [S3-like Object Storage](./object-storage-system/) | ✅ Reference done | Versioned buckets, resumable multipart uploads, packed chunks, sharded listing snapshots, three data replicas and repair/GC; 10 tests |
-| 26 | [Gaming Leaderboard](./gaming-leaderboard-system/) | ✅ Reference done | Trusted monthly match journal, Redis primary/replica score shards, competition ties, exact global rank/windows and replay; 8 tests |
-| 27 | [Payment System](./payment-system/) | ✅ Reference done | Simulated hosted pay-ins/payouts/refunds, immutable double-entry ledger, unknown-result recovery, transactional outbox and reconciliation; 13 tests |
-| 28 | [Digital Wallet](./digital-wallet-system/) | ✅ Reference done | Sharded synthetic transfers, TCC recovery, replay/history/snapshots, fixed-writer HTTP journal quorum and in-transit reconciliation; 14 tests |
-| 29 | [Stock Exchange](./stock-exchange-system/) | ✅ Reference done | Synthetic price-time matching, cash/share reservations, sequenced primary/backup replay, market delta resync and reports; 13 tests |
+| 12 | [News Feed System](./news-feed-system/) | ✅ Core reviewed | 282 tests; bilingual requirements/tasks, bounded concurrent hydration, request metrics, hybrid reads and recoverable publication outbox |
+| 13 | [Chat System](./chat-system/) | ✅ Done | Transactional inboxes, fenced Redis routing/push, bounded WebSockets, authorized message lookup and safe device cursor recovery |
+| 14 | [Search Autocomplete](./search-autocomplete-system/) | ✅ Core reviewed | Sampled logs, durable aggregates/periodic worker, immutable top-five trie, nonblocking publication, bounded HTTP failover; 170 tests |
+| 15 | [Video Streaming](./video-streaming-system/) | ✅ Core reviewed | Configurable GOP DAG, renewable bounded workers, metadata API, real encrypted HLS/PostgreSQL/S3 protocol tests; 160 tests |
+| 16 | [File Sync](./file-sync-system/) | ✅ Core reviewed | Bounded automatic sync, simple/resumable encrypted uploads, conflict/ACL/GC fences and durable notifications; 116 tests |
+| 17 | [Proximity Service](./proximity-service/) | ✅ Core reviewed | Daily publication with CAS, isolated/coalesced caches, bounded HTTP and regional failover, independent replicas; 76 tests |
+| 18 | [Nearby Friends](./nearby-friends-system/) | ✅ Core reviewed | Bounded WebSocket sessions/work, receipt TTL, batch cache repair, leased broker clients, safe deltas/draining; 76 tests |
+| 19 | [Maps System](./maps-system/) | ✅ Core reviewed | Directions/polyline, classified routing tiles, persistent precomputed maps, adaptive navigation/SSE and bounded HTTP; 113 tests |
+| 20 | [Distributed Message Queue](./distributed-message-queue/) | ✅ Core reviewed | Bounded batching, partition concurrency, tag filtering, leave/expansion, scheduled long polling and durable replication; 116 tests; production gaps documented |
+| 21 | [Metrics Monitoring and Alerting](./metrics-monitoring-system/) | ✅ Core reviewed | Partitioned collection, static discovery ownership, weighted gauge queries, incremental rollups and fenced alerts; 108 tests; production gaps documented |
+| 22 | [Ad Click Event Aggregation](./ad-click-aggregation-system/) | ✅ Core reviewed | Bounded query fan-out, exact Top N, verified replay/checkpoints, late corrections and independent audit; 76 tests; production gaps documented |
+| 23 | [Hotel Reservation](./hotel-reservation-system/) | ✅ Core reviewed | Rolling date inventory, room-type availability, atomic booking, frozen prices and fenced simulated payment compensation; 99 tests; production gaps documented |
+| 24 | [Distributed Email](./distributed-email-service/) | ✅ Core reviewed | Durable mailbox notifications, folder counts, read barriers, fenced delivery/replica replay and bounded transport; 96 tests; production gaps documented |
+| 25 | [S3-like Object Storage](./object-storage-system/) | ✅ Core reviewed | Owner/delimiter listing, bounded concurrent I/O, durable publication recovery and fenced GC/pack recovery; 137 tests; production gaps documented |
+| 26 | [Gaming Leaderboard](./gaming-leaderboard-system/) | ✅ Core reviewed | Coherent concurrent rank reads, exact shard/epoch barriers, bounded Redis/HTTP and revision profile cache; 72 tests |
+| 27 | [Payment System](./payment-system/) | ✅ Core reviewed | Trusted multi-order checkout, strict ledger/provider identity, fenced concurrent executors and reconciliation; 48 tests; simulated funds only |
+| 28 | [Digital Wallet](./digital-wallet-system/) | ✅ Core reviewed | Frozen TCC intents/receipts, coherent replay snapshots, parallel exact-prefix quorum, bounded completion waits and HTTP lifetimes; 54 tests; Raft/participant replication remain open |
+| 29 | [Stock Exchange](./stock-exchange-system/) | ✅ Core reviewed | Price-level/FIFO index, dense bilateral fills, execution/time APIs, full-state promotion and strict market ingestion; 56 tests; sequencer HA/mmap remain open |
 
 ## Planned
 
 Chapters 1 (community introduction) and 4 (interview framework) are reading chapters, not standalone system implementations.
 
-| Chapter | Topic | Status |
-|---------|-------|--------|
-| 30 | The Learning Continues | 📚 Further reading; no standalone system |
+## Chapter Documentation Index
+
+Each sub-project's `docs/` directory holds design, requirements, and task specifications. Chinese versions use the `_cn` suffix (e.g. `design_cn.md`). The table below is the per-chapter entry point for all of them.
+
+| Chapter | English docs | Chinese docs |
+|---------|--------------|--------------|
+| 02 | [design](./scale-from-zero/docs/design.md) · [requirements](./scale-from-zero/docs/requirements.md) · [tasks](./scale-from-zero/docs/tasks.md) | [design](./scale-from-zero/docs/design_cn.md) · [requirements](./scale-from-zero/docs/requirements_cn.md) · [tasks](./scale-from-zero/docs/tasks_cn.md) |
+| 03 | [design](./capacity-estimation/docs/design.md) · [requirements](./capacity-estimation/docs/requirements.md) · [tasks](./capacity-estimation/docs/tasks.md) | [design](./capacity-estimation/docs/design_cn.md) · [requirements](./capacity-estimation/docs/requirements_cn.md) · [tasks](./capacity-estimation/docs/tasks_cn.md) |
+| 05 | [design](./rate-limiter/docs/design.md) · [requirements](./rate-limiter/docs/requirements.md) · [tasks](./rate-limiter/docs/tasks.md) | [design](./rate-limiter/docs/design_cn.md) · [requirements](./rate-limiter/docs/requirements_cn.md) · [tasks](./rate-limiter/docs/tasks_cn.md) |
+| 06 | [design](./consistent-hashing/docs/design.md) · [requirements](./consistent-hashing/docs/requirements.md) · [tasks](./consistent-hashing/docs/tasks.md) | [design](./consistent-hashing/docs/design_cn.md) · [requirements](./consistent-hashing/docs/requirements_cn.md) · [tasks](./consistent-hashing/docs/tasks_cn.md) |
+| 07 | [design](./key-value-store/docs/design.md) · [requirements](./key-value-store/docs/requirements.md) · [tasks](./key-value-store/docs/tasks.md) | [design](./key-value-store/docs/design_cn.md) · [requirements](./key-value-store/docs/requirements_cn.md) · [tasks](./key-value-store/docs/tasks_cn.md) |
+| 08 | [design](./unique-id-generator/docs/design.md) · [requirements](./unique-id-generator/docs/requirements.md) · [tasks](./unique-id-generator/docs/tasks.md) | [design](./unique-id-generator/docs/design_cn.md) · [requirements](./unique-id-generator/docs/requirements_cn.md) · [tasks](./unique-id-generator/docs/tasks_cn.md) |
+| 09 | [design](./url-shortener/docs/design.md) · [requirements](./url-shortener/docs/requirements.md) · [tasks](./url-shortener/docs/tasks.md) | [design](./url-shortener/docs/design_cn.md) · [requirements](./url-shortener/docs/requirements_cn.md) · [tasks](./url-shortener/docs/tasks_cn.md) |
+| 10 | [design](./web-crawler/docs/design.md) · [requirements](./web-crawler/docs/requirements.md) · [tasks](./web-crawler/docs/tasks.md) | [design](./web-crawler/docs/design_cn.md) · [requirements](./web-crawler/docs/requirements_cn.md) · [tasks](./web-crawler/docs/tasks_cn.md) |
+| 11 | [design](./notification-system/docs/design.md) · [requirements](./notification-system/docs/requirements.md) · [tasks](./notification-system/docs/tasks.md) | [design](./notification-system/docs/design_cn.md) · [requirements](./notification-system/docs/requirements_cn.md) · [tasks](./notification-system/docs/tasks_cn.md) |
+| 12 | [design](./news-feed-system/docs/design.md) | [design](./news-feed-system/docs/design_cn.md) |
+| 13 | [design](./chat-system/docs/design.md) · [requirements](./chat-system/docs/requirements.md) · [tasks](./chat-system/docs/tasks.md) | [design](./chat-system/docs/design_cn.md) · [requirements](./chat-system/docs/requirements_cn.md) · [tasks](./chat-system/docs/tasks_cn.md) |
+| 14 | [design](./search-autocomplete-system/docs/design.md) · [requirements](./search-autocomplete-system/docs/requirements.md) · [tasks](./search-autocomplete-system/docs/tasks.md) | [design](./search-autocomplete-system/docs/design_cn.md) · [requirements](./search-autocomplete-system/docs/requirements_cn.md) · [tasks](./search-autocomplete-system/docs/tasks_cn.md) |
+| 15 | [design](./video-streaming-system/docs/design.md) · [requirements](./video-streaming-system/docs/requirements.md) · [tasks](./video-streaming-system/docs/tasks.md) | [design](./video-streaming-system/docs/design_cn.md) · [requirements](./video-streaming-system/docs/requirements_cn.md) · [tasks](./video-streaming-system/docs/tasks_cn.md) |
+| 16 | [design](./file-sync-system/docs/design.md) · [requirements](./file-sync-system/docs/requirements.md) · [tasks](./file-sync-system/docs/tasks.md) | [design](./file-sync-system/docs/design_cn.md) · [requirements](./file-sync-system/docs/requirements_cn.md) · [tasks](./file-sync-system/docs/tasks_cn.md) |
+| 17 | [design](./proximity-service/docs/design.md) · [requirements](./proximity-service/docs/requirements.md) · [tasks](./proximity-service/docs/tasks.md) | [design](./proximity-service/docs/design_cn.md) · [requirements](./proximity-service/docs/requirements_cn.md) · [tasks](./proximity-service/docs/tasks_cn.md) |
+| 18 | [design](./nearby-friends-system/docs/design.md) · [requirements](./nearby-friends-system/docs/requirements.md) · [tasks](./nearby-friends-system/docs/tasks.md) | [design](./nearby-friends-system/docs/design_cn.md) · [requirements](./nearby-friends-system/docs/requirements_cn.md) · [tasks](./nearby-friends-system/docs/tasks_cn.md) |
+| 19 | [design](./maps-system/docs/design.md) · [requirements](./maps-system/docs/requirements.md) · [tasks](./maps-system/docs/tasks.md) | [design](./maps-system/docs/design_cn.md) · [requirements](./maps-system/docs/requirements_cn.md) · [tasks](./maps-system/docs/tasks_cn.md) |
+| 20 | [design](./distributed-message-queue/docs/design.md) · [requirements](./distributed-message-queue/docs/requirements.md) · [tasks](./distributed-message-queue/docs/tasks.md) | [design](./distributed-message-queue/docs/design_cn.md) · [requirements](./distributed-message-queue/docs/requirements_cn.md) · [tasks](./distributed-message-queue/docs/tasks_cn.md) |
+| 21 | [design](./metrics-monitoring-system/docs/design.md) · [requirements](./metrics-monitoring-system/docs/requirements.md) · [tasks](./metrics-monitoring-system/docs/tasks.md) | [design](./metrics-monitoring-system/docs/design_cn.md) · [requirements](./metrics-monitoring-system/docs/requirements_cn.md) · [tasks](./metrics-monitoring-system/docs/tasks_cn.md) |
+| 22 | [design](./ad-click-aggregation-system/docs/design.md) · [requirements](./ad-click-aggregation-system/docs/requirements.md) · [tasks](./ad-click-aggregation-system/docs/tasks.md) | [design](./ad-click-aggregation-system/docs/design_cn.md) · [requirements](./ad-click-aggregation-system/docs/requirements_cn.md) · [tasks](./ad-click-aggregation-system/docs/tasks_cn.md) |
+| 23 | [design](./hotel-reservation-system/docs/design.md) · [requirements](./hotel-reservation-system/docs/requirements.md) · [tasks](./hotel-reservation-system/docs/tasks.md) | [design](./hotel-reservation-system/docs/design_cn.md) · [requirements](./hotel-reservation-system/docs/requirements_cn.md) · [tasks](./hotel-reservation-system/docs/tasks_cn.md) |
+| 24 | [design](./distributed-email-service/docs/design.md) · [requirements](./distributed-email-service/docs/requirements.md) · [tasks](./distributed-email-service/docs/tasks.md) | [design](./distributed-email-service/docs/design_cn.md) · [requirements](./distributed-email-service/docs/requirements_cn.md) · [tasks](./distributed-email-service/docs/tasks_cn.md) |
+| 25 | [design](./object-storage-system/docs/design.md) · [requirements](./object-storage-system/docs/requirements.md) · [tasks](./object-storage-system/docs/tasks.md) | [design](./object-storage-system/docs/design_cn.md) · [requirements](./object-storage-system/docs/requirements_cn.md) · [tasks](./object-storage-system/docs/tasks_cn.md) |
+| 26 | [design](./gaming-leaderboard-system/docs/design.md) · [requirements](./gaming-leaderboard-system/docs/requirements.md) · [tasks](./gaming-leaderboard-system/docs/tasks.md) | [design](./gaming-leaderboard-system/docs/design_cn.md) · [requirements](./gaming-leaderboard-system/docs/requirements_cn.md) · [tasks](./gaming-leaderboard-system/docs/tasks_cn.md) |
+| 27 | [design](./payment-system/docs/design.md) · [requirements](./payment-system/docs/requirements.md) · [tasks](./payment-system/docs/tasks.md) | [design](./payment-system/docs/design_cn.md) · [requirements](./payment-system/docs/requirements_cn.md) · [tasks](./payment-system/docs/tasks_cn.md) |
+| 28 | [design](./digital-wallet-system/docs/design.md) · [requirements](./digital-wallet-system/docs/requirements.md) · [tasks](./digital-wallet-system/docs/tasks.md) | [design](./digital-wallet-system/docs/design_cn.md) · [requirements](./digital-wallet-system/docs/requirements_cn.md) · [tasks](./digital-wallet-system/docs/tasks_cn.md) |
+| 29 | [design](./stock-exchange-system/docs/design.md) · [requirements](./stock-exchange-system/docs/requirements.md) · [tasks](./stock-exchange-system/docs/tasks.md) | [design](./stock-exchange-system/docs/design_cn.md) · [requirements](./stock-exchange-system/docs/requirements_cn.md) · [tasks](./stock-exchange-system/docs/tasks_cn.md) |
+
+Chapter 12 currently ships only the design document; requirements and tasks are not yet available.
 
 ## Project Structure
 
@@ -60,7 +92,7 @@ sdi-implement/
 │   ├── src/rate_limiter/       # Source code
 │   ├── tests/                  # Tests (180 tests)
 │   ├── examples/               # Usage examples
-│   └── docs/                   # Design spec documents
+│   └── docs/                   # Design, requirements and tasks documents
 ├── consistent-hashing/          # Ch.06: Consistent Hashing
 │   ├── README.md               # Usage documentation
 │   ├── README_CN.md            # Chinese documentation
@@ -68,7 +100,7 @@ sdi-implement/
 │   ├── src/consistent_hashing/ # Source code
 │   ├── tests/                  # Tests (77 tests)
 │   ├── examples/               # Usage examples
-│   └── docs/                   # Design spec documents
+│   └── docs/                   # Design, requirements and tasks documents
 ├── key-value-store/             # Ch.07: Key-Value Store
 │   ├── README.md               # Usage documentation
 │   ├── README_CN.md            # Chinese documentation
@@ -77,7 +109,7 @@ sdi-implement/
 │   ├── src/kv_store/           # Source code
 │   ├── tests/                  # Tests (unit, integration, property-based)
 │   ├── examples/               # Usage examples
-│   └── docs/                   # Design spec documents
+│   └── docs/                   # Design, requirements and tasks documents
 ├── unique-id-generator/         # Ch.08: Unique ID Generator
 │   ├── README.md               # Usage documentation
 │   ├── README_CN.md            # Chinese documentation
@@ -85,7 +117,7 @@ sdi-implement/
 │   ├── src/unique_id/          # Source code
 │   ├── tests/                  # Tests (75 tests)
 │   ├── examples/               # Usage examples
-│   └── docs/                   # Design spec documents
+│   └── docs/                   # Design, requirements and tasks documents
 ├── url-shortener/               # Ch.09: URL Shortener
 │   ├── README.md               # Usage documentation
 │   ├── README_CN.md            # Chinese documentation
@@ -93,7 +125,7 @@ sdi-implement/
 │   ├── src/url_shortener/      # Source code
 │   ├── tests/                  # Tests (unit + property-based)
 │   ├── examples/               # Demo server
-│   └── docs/                   # Design spec documents
+│   └── docs/                   # Design, requirements and tasks documents
 ├── web-crawler/                 # Ch.10: Web Crawler
 │   ├── README.md                # Usage documentation
 │   ├── pyproject.toml           # Package configuration
@@ -204,5 +236,3 @@ MIT
 See [engineering guidelines](CONTRIBUTING.md) and the [review and validation record](ENGINEERING_REVIEW.md). Run `python tools/audit_code.py` for a dependency-free source inventory and review signals.
 
 The engineering review covers all 27 projects, with per-project changes, concurrency regressions and explicit integration-test limits. Use `python tools/run_project_tests.py --jobs 2 --output .test-tmp/review` to run chapter suites in isolated interpreters after installing their dependencies.
-
-逐项目深入审查的完成状态、问题和修改证据见 [DEEP_REVIEW_PROGRESS.md](DEEP_REVIEW_PROGRESS.md)；此前全仓库基础检查不等于逐项深入审查全部完成。
