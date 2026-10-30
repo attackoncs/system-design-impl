@@ -212,6 +212,23 @@ Each sub-project follows these principles:
 4. **Production quality** — Type hints, error handling, performance considerations
 5. **Faithful to the book** — Implements the core concepts and algorithms described in each chapter
 
+## Install All Dependencies
+
+The repository root provides two aggregate entry points:
+
+- `pyproject.toml` — collects the third-party dependencies of all 27 sub-projects, grouped into `runtime`, `dev`, `demo`, and `all` extras
+- `requirements-all.txt` — installs every sub-project in editable mode together with its dev/test extras
+
+```bash
+# Third-party dependencies only
+pip install -e ".[all]"
+
+# Third-party dependencies + all sub-projects (recommended)
+pip install -r requirements-all.txt
+```
+
+Afterwards you can run `pytest` in any sub-project directory, or execute `python examples/xxx.py`. Note that `key-value-store` depends on the local package `consistent-hashing`; `requirements-all.txt` installs it first.
+
 ## Quick Start
 
 ```bash

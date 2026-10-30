@@ -209,6 +209,23 @@ sdi-implement/
 4. **生产级质量** — 类型注解、错误处理、性能考虑
 5. **忠于原书** — 实现书中描述的核心概念和算法
 
+## 一次性安装全部依赖
+
+根目录提供两个汇总入口，便于一次性准备所有章节的运行环境：
+
+- `pyproject.toml` — 汇总 27 个子项目的第三方依赖，按 `runtime`、`dev`、`demo`、`all` 分组
+- `requirements-all.txt` — 以可编辑模式安装全部 27 个子项目及其 dev/test 依赖
+
+```bash
+# 只安装全部第三方依赖
+pip install -e ".[all]"
+
+# 安装第三方依赖 + 全部子项目（推荐）
+pip install -r requirements-all.txt
+```
+
+完成后可直接在任意子目录运行 `pytest`，或执行 `python examples/xxx.py`。其中 `key-value-store` 依赖本地包 `consistent-hashing`，`requirements-all.txt` 已将其排在前面优先安装。
+
 ## 快速开始
 
 ```bash

@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "system-design-interview-implementations"
+version = "0.1.0"
+description = "Aggregate dependency manifest for the 27 chapter implementations"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = []
+
+# Third-party dependencies used at runtime, grouped by the chapters that need them.
+#   cryptography  - ch16 file-sync-system
+#   websockets    - ch13 chat-system, ch18 nearby-friends-system
+#   redis         - ch05 rate-limiter, ch18 nearby-friends-system
+#   grpcio / protobuf - ch07 key-value-store (consistent-hashing is installed from source)
+[project.optional-dependencies]
+runtime = [
+    "cryptography>=42,<52",
+    "websockets>=14,<17",
+    "redis>=5,<7",
+    "grpcio>=1.84.0",
+    "grpcio-tools==1.84.0",
+    "protobuf>=7.35.1,<8",
+]
+
+# Test and tooling dependencies used by the sub-projects' [dev]/[test] extras.
+dev = [
+    "pytest>=8,<10",
+    "pytest-asyncio",
+    "hypothesis",
+    "grpcio-testing",
+    "fakeredis[lua]",
+    "imageio-ffmpeg>=0.6,<0.7",
+]
+
+# Optional demo servers and clients, currently used by ch05 rate-limiter.
+demo = [
+    "flask",
+    "fastapi",
+    "uvicorn",
+    "httpx",
+]
+
+all = [
+    "cryptography>=42,<52",
+    "websockets>=14,<17",
+    "redis>=5,<7",
+    "grpcio>=1.84.0",
+    "grpcio-tools==1.84.0",
+    "protobuf>=7.35.1,<8",
+    "pytest>=8,<10",
+    "pytest-asyncio",
+    "hypothesis",
+    "grpcio-testing",
+    "fakeredis[lua]",
+    "imageio-ffmpeg>=0.6,<0.7",
+    "flask",
+    "fastapi",
+    "uvicorn",
+    "httpx",
+]
+
+[tool.setuptools]
+packages = []
