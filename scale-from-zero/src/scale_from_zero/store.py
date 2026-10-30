@@ -23,6 +23,7 @@ class Store(ProfileMixin, SessionMixin, JobMixin, ReplicationMixin, ClockedDatab
             )
         self._reads = 0
         self._metrics_lock = threading.Lock()
+        self.fence = None
 
     @property
     def reads(self):

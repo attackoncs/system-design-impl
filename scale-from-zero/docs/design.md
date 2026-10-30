@@ -23,7 +23,7 @@ flowchart LR
     E[Local edge-cache model] -->|Versioned static objects| L
 ```
 
-The `single` stage runs app/database and a consumer thread in one process. `balanced` has eight service processes with one primary/replica pair; `sharded` has ten with two pairs. Each lab uses independent files, private ports and only owned child cleanup. Transitions are separate deployments, not live migration of the same data directory. DNS, geographic routing, vertical hardware resizing and autoscaling remain design discussion rather than simulated success claims.
+The `single` stage runs app/database and a consumer thread in one process. `balanced` has eight service processes with one primary/replica pair; `sharded` has ten with two pairs. Each lab uses independent files, private ports and only owned child cleanup. Transitions are separate deployments, not live migration of the same data directory. Vertical hardware resizing and autoscaling remain design discussion. Geographic failover and replica promotion exist as the local models in `regions.py` and `leadership.py`; they are not a DNS deployment or automatic failover of the 1/8/10-process stages.
 
 ## Request routing and sessions
 
@@ -37,7 +37,7 @@ User routing is SHA256(user) modulo configured primary count. A data file record
 
 `users` stores a versioned synthetic profile. `requests` persists per-user command hashes and original results. A SQLite `BEGIN IMMEDIATE` transaction checks expected version and idempotency, updates the profile, appends a change and enqueues a stable outbox event. WAL/FULL synchronous settings preserve local commits. Duplicate identical keys return the original result; changed content or stale expected version is409. Two different concurrent keys using the same expected version cannot both overwrite the profile.
 
-The change stream contains contiguous shard-local sequence, user, new version/profile and checksum. Replica pull applies change and cursor atomically, rejects gaps/corruption/conflicting replay, and ignores identical duplicates. Replicas preserve changes/profile state only; they do not hold primary session/request/outbox state and cannot safely be promoted. Profile history is bounded to1000 mutations per primary in this reference.
+The change stream contains contiguous shard-local sequence, user, new version/profile and checksum. Replica pull applies change and cursor atomically, rejects gaps/corruption/conflicting replay, and ignores identical duplicates. Replicas preserve changes/profile state only; they do not hold primary session/request/outbox state. Promoting one requires an explicit `Fence` and still does not move sessions or jobs. Profile history is bounded to1000 mutations per primary in this reference.
 
 ## Cache and read consistency
 
@@ -45,7 +45,7 @@ Shared cache is a separate volatile process with32-entry LRU and2-second monoton
 
 Eventual reads can be stale. Generation tickets reject fills started before an observed invalidation; retained version floors reject values older than observed writes. Failed invalidation, restart or floor eviction can still permit stale replica refills. Therefore the TTL is not a staleness SLA. `min_version` filters cache/replica versions and falls back to primary; `consistency=strong` bypasses both. A required version newer than the primary returns409. No cross-shard atomic read is offered. Session authentication always contacts the primary even for a cache hit, so cache hit reductions describe **profile** queries, not all primary traffic.
 
-Failure of the read replica routes profile reads to the primary; failure of the primary does not trigger promotion. Other shards continue with their own primaries, and worker polling isolates per-shard transport failures. There is no cross-host replication, distributed transaction or independent failure-domain guarantee.
+Failure of the read replica routes profile reads to the primary. Failure of the primary does not promote a replica inside `App`; promotion happens only when a `Fence` is attached and `/internal/promote` succeeds. Other shards continue with their own primaries, and worker polling isolates per-shard transport failures. There is no cross-host replication, distributed transaction or independent failure-domain guarantee.
 
 ## Durable asynchronous work
 
@@ -79,4 +79,12 @@ Persistent database/source identities survive restart. Feeds carry after/previou
 
 Workers use5-second leases, with one finite clock sample after writer ownership. ACK checks actual expiry/token/payload/source; consumer IDs include source identity. Each service HTTP32/15 seconds,64 KiB/8 MiB; bounded RPCs inherit deadlines. SQL/CPU cannot be force-stopped; ownership drains. Non-daemon workers start after binding, stop/close/join even on close failure.
 
-Web pools can add/remove1–8 configured nodes online without holding the routing lock over I/O; restart restores config, and DB shards remain static. Edge invalidation and explicit client-origin fallback are local models. GeoDNS/regions/database promotion/migration/production capacity are unimplemented. See [chapter review](chapter02-review.md).
+Web pools can add/remove1–8 configured nodes online without holding the routing lock over I/O; restart restores config, and DB shards remain static. Edge invalidation and explicit client-origin fallback are local models. Online migration and production capacity are unimplemented. See [chapter review](chapter02-review.md).
+
+## Local datacenter and promotion model (2026-10-29)
+
+`regions.GeoDNS` is the chapter's traffic redirect: a location resolves to its configured center, and an unhealthy center yields the next healthy one. With two centers, an outage sends every resolve to the survivor. It does not query DNS, shift a percentage of live packets, or replicate storage. Point `replicate_once` at the remote primary for the chapter's asynchronous copy.
+
+`leadership.Fence` is the chapter's "promote a slave when the master is offline" step, bounded to profile rows. The shared lease publishes the primary cursor. Promotion waits until the lease expires and refuses a replica that has not caught up, which is the chapter's warning that a slave can be missing data and needs recovery before it becomes master. The promoted process accepts `/internal/update` only. Sessions, idempotency keys, and outbox jobs are not on the replica, so authentication and background work do not move. The default stages leave `Store.fence` unset and keep replicas read-only.
+
+Cache eviction follows the chapter's LRU default, with LFU and FIFO as explicit policies. `set`/`get` cover the chapter's text cache call. `CacheCluster` hides one member failure. The running lab still uses one cache process unless a caller builds a cluster. None of this is multi-region HA or a million-user run. The suite is 73 tests.

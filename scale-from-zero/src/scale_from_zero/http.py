@@ -164,6 +164,12 @@ def server(
                         return store.changes(query.get("after", 0))
                     if method == "POST":
                         body = self.body()
+                        if role == "replica" and path == "/internal/promote":
+                            fields(body, set())
+                            fence = getattr(store, "fence", None)
+                            if fence is None:
+                                raise Error(409, "promotion fence is not configured")
+                            return fence.promote(store.status()["seq"])
                         if path in (
                             "/internal/get",
                             "/internal/update",
@@ -185,7 +191,12 @@ def server(
                                 raise Error(409, "wrong database shard")
                             if path == "/internal/get":
                                 return store.get(user)
-                            if role != "primary":
+                            fence = getattr(store, "fence", None)
+                            if role != "primary" and not (
+                                path == "/internal/update"
+                                and fence is not None
+                                and fence.holds()
+                            ):
                                 raise Error(403, "replica is read-only")
                             if path == "/internal/update":
                                 return store.update(user, body["profile"])

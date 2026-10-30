@@ -25,7 +25,7 @@ python tools/benchmark.py --requests 30 --clients 4 --output benchmarks/review-2
 
 [HEAD原始样本](baseline-2026-10-27.json)、[本轮样本](review-2026-10-27.json)、[原阶段演示](stages-2026-10-27.json)、[9进程新演示](resilience-2026-10-27.json)保留，Oct21的latest.json不覆盖。新演示含生命周期6.367074秒，拒绝旧填充/版本2/三Web同会话/失效0项/回源/唯一2事件均通过。
 
-[章节对照与图盲区](../docs/chapter02-review.md)说明首个旧源绑定/旧inbox迁移、缓存最终一致、SQL不可强杀以及主库HA/GeoDNS/多地域/生产监控等剩余项。
+[章节对照与图盲区](../docs/chapter02-review.md)说明首个旧源绑定/旧inbox迁移、缓存最终一致、SQL不可强杀。2026-10-27 记录的主库 HA/GeoDNS 缺口里，本地 GeoDNS 目录和显式资料提升已在 2026-10-29 补上；生产级多地域 HA 与真实 GeoDNS 服务仍未实现。本报告的 66 项计时是当时的样本。
 
 ---
 

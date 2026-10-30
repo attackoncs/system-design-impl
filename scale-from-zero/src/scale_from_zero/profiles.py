@@ -26,7 +26,12 @@ class ProfileMixin:
     def update(self, user, body):
         identifier(user)
         body = validate_update(body)
+        fence = getattr(self, "fence", None)
+        if fence is not None:
+            fence.assert_held()
         fingerprint = checksum(body)
+        published = None
+        result = None
         with self.transaction() as db:
             self.check_partition(db, user)
             old = db.execute(
@@ -63,7 +68,10 @@ class ProfileMixin:
                 "INSERT INTO jobs VALUES(?,?,'pending',0,'',0)",
                 (user + "_" + str(version + 1), encode(change)),
             )
-            return result
+            published = seq
+        if fence is not None and published is not None:
+            fence.publish(published)
+        return result
 
     def get(self, user):
         identifier(user)

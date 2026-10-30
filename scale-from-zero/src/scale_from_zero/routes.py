@@ -42,6 +42,8 @@ def target(raw, role, method):
         )
     if role == "primary":
         routes.update({"/internal/claim": {"POST"}, "/internal/ack": {"POST"}})
+    if role == "replica":
+        routes["/internal/promote"] = {"POST"}
     if role == "cache":
         routes.update(
             {

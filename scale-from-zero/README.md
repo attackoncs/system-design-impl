@@ -8,7 +8,7 @@ A staged, standard-library experiment showing what changes when a single applica
 | `balanced` | 8 | Round-robin load balancer, 2 stateless web nodes, 1 primary, 1 read replica, cache, worker, local edge-cache model |
 | `sharded` | 10 | Same web/cache/worker/edge tiers, with 2 primary/replica pairs |
 
-The edge cache is an explicit local **CDN model**, not a real CDN or GeoDNS. Data and session records use independent primary database files per shard. Read replicas copy profile changes only; they are not promotable replacements for primaries.
+The edge cache is an explicit local **CDN model**, not a real CDN or GeoDNS service. Data and session records use independent primary database files per shard. Read replicas copy profile changes only. They do not replace primaries on their own. An attached `Fence` can promote a caught-up replica for profile writes after the primary lease expires; sessions and jobs stay on the original primary. The default 1/8/10-process stages do not attach that fence.
 
 ## Run
 
@@ -25,7 +25,7 @@ python examples/network_demo.py --stage sharded
 python tools/benchmark.py --requests 30 --clients 4
 ```
 
-Eleven tests cover components plus four independent-process HTTP cases. The demo starts each topology with fresh isolated data, logs in two synthetic users, updates their profiles, verifies replica/cache reads and drains background jobs. Labs stop only their own processes and remove temporary databases on exit. Each stage is a separate experiment, **not an online migration procedure**.
+The suite has 73 tests, including the original multi-process HTTP cases. The demo starts each topology with fresh isolated data, logs in two synthetic users, updates their profiles, verifies replica/cache reads and drains background jobs. Labs stop only their own processes and remove temporary databases on exit. Each stage is a separate experiment, **not an online migration procedure**.
 
 For a persistent topology:
 
@@ -72,7 +72,7 @@ The load balancer retries a failed upstream for GETs and profile POSTs carrying 
 
 Default reads are eventual: cache-aside tries a bounded32-entry LRU cache with2-second TTL, then the corresponding asynchronous read replica, then primary on replica failure/missing/too-old version. Cache failure is bypassed. Writes commit before best-effort cache invalidation. Generation tickets reject pre-invalidation fills, and observed write-version floors reject older values. Failed invalidation, cache restart or eviction of bounded floor metadata can still permit replica staleness: **TTL bounds one entry's lifetime, not total replica staleness**. Use strong/min-version reads when freshness matters. Authentication itself still depends on the primary session store.
 
-Each profile write atomically persists the profile/version, idempotency result, replication change and outbox job in one SQLite transaction. Replicas enforce sequence/checksum/deduplication and apply a change/cursor together. Sessions, idempotency indices and jobs are not replicated; no automatic primary promotion is attempted.
+Each profile write atomically persists the profile/version, idempotency result, replication change and outbox job in one SQLite transaction. Replicas enforce sequence/checksum/deduplication and apply a change/cursor together. Sessions, idempotency indices and jobs are not replicated. The default replica loop does not promote itself. Promotion is an explicit `POST /internal/promote` on a replica that has a `Fence` attached.
 
 The worker consumes per-primary durable jobs with five-second leases (direct Store.claim retains a one-second default) and claim-token fencing. Its independent inbox deduplicates stable event IDs. A lost ACK causes repeated attempts but one recorded event effect; an unavailable shard does not starve another. Events stand in for background notification/audit work, and no email or external message is sent. Delivery is at least once, with unbounded retry in this small lab, no production broker/DLQ or exactly-once network guarantee.
 
@@ -86,7 +86,7 @@ Use the admin token for `GET /admin/status` on a specific service. Available met
 
 See [design](docs/design.md), [verification/measurements](benchmarks/REPORT.md) and [current sample](benchmarks/review-2026-10-27.json) and [historical sample](benchmarks/latest.json). Adding tiers creates network cost at small scale; the benchmark measures that tradeoff and primary profile-read reduction without assuming a speedup.
 
-Shard routing is fixed SHA256(user) modulo count. There is no online resharding. Primaries, balancer, session stores, worker and cache/edge instances remain individual services; primary failure stops authentication/writes/strong reads for that shard. Replicas support profile-read fallback only. No cross-host durability, automatic database failover, real CDN, GeoDNS, geographic deployment, million-user load, production identity/TLS or autoscaling has been verified. Each primary retains at most1000 profile changes and1000 live sessions; complete history is kept for replay. Related later chapters provide deeper standalone components, not automatically integrated infrastructure here.
+Shard routing is fixed SHA256(user) modulo count. There is no online resharding. Primaries, balancer, session stores, worker and cache/edge instances remain individual services; primary failure stops authentication and strong reads for that shard unless a `Fence` has promoted profile writes. Replicas support profile-read fallback without a fence. No cross-host durability, automatic database failover of the default stages, real CDN, real GeoDNS service, geographic deployment, million-user load, production identity/TLS or autoscaling has been verified. Each primary retains at most1000 profile changes and1000 live sessions; complete history is kept for replay. Related later chapters provide deeper standalone components, not automatically integrated infrastructure here.
 
 ## Engineering review (2026-10-23)
 
@@ -104,4 +104,12 @@ Claim replies include actual lease/attempt/source identity. ACK validates live e
 
 HTTP is32 connections/service and15-second I/O budget,64 KiB input/8 MiB output. Bounded RPCs share request/poll deadlines, reject ambiguous paths/queries/JSON/credentials/framing and bypass proxies/redirects. Non-daemon workers stop/close/join; socket cancellation cannot force-stop SQL/CPU/custom adapters. Contracts, profiles, sessions, jobs, replication, consumer and protocol concerns have focused modules with compatible Store/Consumer/partition exports.
 
-See [chapter mapping and open architecture](docs/chapter02-review.md). Real database HA, GeoDNS/regions/CDN, autoscaling/migration and production observability remain open. Measurements include regressions; no overall speedup is claimed.
+See [chapter mapping and open architecture](docs/chapter02-review.md). Production database HA, a real GeoDNS service, regional disk sync, autoscaling, migration and production observability remain open. Measurements include regressions; no overall speedup is claimed.
+
+## Datacenter routing and cache policy (2026-10-29)
+
+`regions.GeoDNS` maps a client location to the nearest of two to four data-center entries. If that center is unhealthy, resolution walks to the next healthy center, so a two-center outage sends every lookup to the survivor. Unknown locations use a stable hash. This directory does not speak DNS and does not copy disks. Cross-center profile copy is still `workers.replicate_once` pointed at the home primary.
+
+`leadership.Fence` is a shared SQLite lease. The writer heartbeats a cursor. `POST /internal/promote` on a replica takes the next epoch only after that lease expires and only when the replica cursor is at least the published cursor. A lagging replica is refused. After promotion, profile updates run on the replica and the old primary's writes fail closed. Session create, claim, and ack stay on the original primary role.
+
+`Cache` remains LRU by default and also accepts `policy="lfu"` or `"fifo"`. `Cache.set(key, text, ttl)` / `Cache.get(key)` store the chapter's short text values. `CacheCluster` reads the first healthy member and writes every member, so one failed cache is not a single point of failure. These types are not wired into the default one-cache process topology.
