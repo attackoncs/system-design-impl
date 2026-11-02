@@ -241,7 +241,8 @@ def test_actual_http_merge_replica_fallback_and_filter(store):
                 )
                 with pytest.raises(urllib.error.HTTPError) as error:
                     get(endpoint + "/suggest?prefix=bad%21")
-                assert error.value.code == 400
+                with contextlib.closing(error.value):
+                    assert error.value.code == 400
         finally:
             coordinator.close()
 

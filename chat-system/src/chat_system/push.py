@@ -8,7 +8,6 @@ import json
 import logging
 import math
 import urllib.request
-import urllib.parse
 import uuid
 
 from chat_system.redis_scripts import (
@@ -18,6 +17,7 @@ from chat_system.redis_scripts import (
     _PUSH_RETRY,
 )
 from chat_system.concurrency import _wait_owned, run_blocking
+from chat_system.http_utils import open_response, parse_endpoint
 
 try:
     from redis import exceptions as redis_exceptions
@@ -47,11 +47,9 @@ class HTTPWebhookNotifier:
     """
 
     def __init__(self, url, bearer_token=None, timeout=5):
-        endpoint = urllib.parse.urlsplit(url)
+        endpoint = parse_endpoint(url, ("https", "http"))
         if (
-            endpoint.scheme not in ("https", "http")
-            or not endpoint.hostname
-            or endpoint.username is not None
+            endpoint.username is not None
             or endpoint.password is not None
             or not isinstance(timeout, (int, float))
             or isinstance(timeout, bool)
@@ -81,7 +79,7 @@ class HTTPWebhookNotifier:
                 self.url, data=body, headers=headers, method="POST"
             )
             opener = urllib.request.build_opener(NoRedirect())
-            with opener.open(request, timeout=self.timeout) as response:
+            with open_response(opener.open, request, self.timeout) as response:
                 if not 200 <= response.status < 300:
                     raise RuntimeError("push provider rejected delivery")
 

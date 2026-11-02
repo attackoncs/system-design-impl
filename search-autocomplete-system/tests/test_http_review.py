@@ -364,8 +364,9 @@ def test_http_strict_request_validation(store, query):
     ) as endpoint:
         with pytest.raises(urllib.error.HTTPError) as error:
             get(endpoint, "prefix=aa&" + query)
-        assert error.value.code == 400
-        assert error.value.headers["Cache-Control"] == "no-store"
+        with contextlib.closing(error.value):
+            assert error.value.code == 400
+            assert error.value.headers["Cache-Control"] == "no-store"
 
 
 def test_generation_pinning_does_not_enable_stale_browser_cache(store):
@@ -380,7 +381,8 @@ def test_generation_pinning_does_not_enable_stale_browser_cache(store):
         store.block("aa")
         with pytest.raises(urllib.error.HTTPError) as error:
             get(endpoint, "prefix=aa&version=1&revision=0&shard=0")
-        assert error.value.code == 503
+        with contextlib.closing(error.value):
+            assert error.value.code == 503
 
 
 def test_overload_returns_http_503_and_slot_recovers(store):
@@ -391,7 +393,8 @@ def test_overload_returns_http_503_and_slot_recovers(store):
         try:
             with pytest.raises(urllib.error.HTTPError) as error:
                 get(endpoint, "prefix=aa")
-            assert error.value.code == 503
+            with contextlib.closing(error.value):
+                assert error.value.code == 503
         finally:
             server.slots.release()
         with get(endpoint, "prefix=aa") as response:
@@ -404,7 +407,8 @@ def test_coordinator_rejects_ignored_pinned_parameters(store):
         with running(transport.server(coordinator)) as endpoint:
             with pytest.raises(urllib.error.HTTPError) as error:
                 get(endpoint, "prefix=aa&version=1")
-            assert error.value.code == 400
+            with contextlib.closing(error.value):
+                assert error.value.code == 400
     finally:
         coordinator.close()
 
@@ -416,7 +420,8 @@ def test_no_active_snapshot_is_http_unavailable():
         with running(transport.server(coordinator)) as endpoint:
             with pytest.raises(urllib.error.HTTPError) as error:
                 get(endpoint)
-            assert error.value.code == 503
+            with contextlib.closing(error.value):
+                assert error.value.code == 503
     finally:
         coordinator.close()
         store.close()

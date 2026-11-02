@@ -302,7 +302,7 @@ def test_existing_database_migrates_without_overwriting_generation(tmp_path):
         "shards": [[["hello", 1]]],
         "lower": ["hello"],
     }
-    with sqlite3.connect(path) as database:
+    with contextlib.closing(sqlite3.connect(path)) as database, database:
         database.executescript(
             "CREATE TABLE events(id TEXT PRIMARY KEY, query TEXT NOT NULL, at REAL NOT NULL);"
             "CREATE TABLE snapshots(id INTEGER PRIMARY KEY, data TEXT NOT NULL);"

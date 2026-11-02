@@ -27,8 +27,13 @@ Source: root `System Design Interview.md`, Chapter 14, Design A Search Autocompl
 - R9: Provide actual HTTP query nodes and a coordinator that contacts shard replicas,
   fails over on unavailable replicas and rejects mixed snapshot versions. Missing
   shards return unavailable rather than an incorrectly ranked partial response.
+  Reject early EOF when Content-Length remains, even if the received bytes form
+  valid JSON; try the next replica. Legal close-delimited responses remain valid.
 - R10: Include runnable local/network examples, English/Chinese READMEs, tests and
   a measured latency tool. Deployment and scale limits must be explicit.
+- R11: Collector, worker and coordinator numeric inputs share finite-number
+  validation. Reject booleans, non-finite values and unrepresentably large integers
+  with ValueError, preserving each field's positive/nonnegative constraints.
 
 ## Validation and boundaries
 
@@ -36,7 +41,8 @@ Source: root `System Design Interview.md`, Chapter 14, Design A Search Autocompl
   10 million daily users. A local measurement is not proof of those capacities.
 - Tests must cover ranks, phrases, ties, invalid input, event deduplication, time
   windows, snapshot atomicity/restart, cache eviction, filtering, multi-shard merge,
-  actual HTTP replica failure and version mismatch.
+  actual HTTP replica failure, truncated responses and version mismatch. Close
+  HTTPError response bodies and SQLite connections; strict warnings must pass.
 - Initial storage is SQLite on one host; query replicas load immutable snapshots.
   Multi-host object storage, distributed log ingestion, consensus metadata, automatic
   infrastructure provisioning and live trending are extensions, not claimed features.

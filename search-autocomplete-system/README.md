@@ -6,6 +6,8 @@
 [Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
 <!-- LEARNING_GUIDE_END -->
 
+Reviewed against Chapter 14, GitHub source and CodeGraph on 2026-11-02. See the [source comparison and verification](docs/open-source-review_cn.md). This review fixes truncated-response failover, shared numeric validation and resource cleanup.
+
 Chapter 14 reference implementation: completed-search logs, offline aggregation,
 atomic snapshots, cached top-five tries, filtering, balanced shards and HTTP replicas.
 Includes stable analytics sampling and an interruptible periodic snapshot worker.
@@ -99,11 +101,11 @@ This intentionally omits the chapter's one-hour browser cache optimization.
 The regression suite covers actual HTTP merge/fallback and independent-process
 termination, cross-instance event deduplication, nonblocking builds, publication
 races, sampled collection, worker retries, immutable tries and ranked filtering.
-**170 tests pass**. See the [chapter audit](docs/chapter14-review.md) for coverage.
+**188 tests pass**. See the [chapter audit](docs/chapter14-review.md) for coverage.
 Run `python tools/benchmark.py --output .runtime/benchmark.json` after creating
 the output directory. The saved [latency report](benchmarks/results.md) measures
 10,000 queries, 10,000 local lookups and 500 actual HTTP requests. The latest audit
-run measured local P99 0.0596ms and HTTP P99 26.17ms; this is a sequential local
+run measured local P99 0.0416ms and HTTP P99 16.4731ms; this is a sequential local
 measurement, not a production SLO or concurrent throughput claim.
 
 SQLite log/snapshot/metadata storage is shared on one host. The query protocol

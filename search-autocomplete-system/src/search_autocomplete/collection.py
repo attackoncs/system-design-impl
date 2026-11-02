@@ -1,8 +1,8 @@
 """Stable sampling of completed searches, separate from suggestion traffic."""
 
 import hashlib
-import math
 
+from search_autocomplete.store import _finite_number
 from search_autocomplete.trie import normalize
 
 
@@ -34,11 +34,6 @@ class Collector:
         """Return True only when a selected event was newly persisted."""
         selected = self.selected(event_id)
         query = normalize(query)
-        if at is not None and (
-            not isinstance(at, (int, float))
-            or isinstance(at, bool)
-            or not math.isfinite(at)
-            or at < 0
-        ):
+        if at is not None and (not _finite_number(at) or at < 0):
             raise ValueError("invalid event time")
         return selected and self.store.record(event_id, query, at)

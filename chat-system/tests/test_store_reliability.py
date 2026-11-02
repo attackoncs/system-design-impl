@@ -4,6 +4,7 @@ import concurrent.futures
 import dataclasses
 import json
 import sqlite3
+from contextlib import closing
 import threading
 
 import pytest
@@ -182,7 +183,7 @@ def test_restart_preserves_retry_identity_and_increasing_message_ids(tmp_path):
 
 def test_legacy_direct_channels_gain_a_canonical_pair_index(tmp_path):
     path = tmp_path / "legacy.sqlite3"
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db:
         db.executescript(
             "CREATE TABLE channels (id TEXT PRIMARY KEY, owner TEXT NOT NULL, kind TEXT NOT NULL);"
             "CREATE TABLE members (channel TEXT, user TEXT, PRIMARY KEY(channel,user));"

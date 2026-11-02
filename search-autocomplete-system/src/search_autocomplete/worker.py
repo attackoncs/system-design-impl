@@ -1,22 +1,16 @@
 """Periodic offline builds; failed work leaves the published generation intact."""
 
-import math
 import sqlite3
 import threading
 import time
 
-from search_autocomplete.store import Unavailable
+from search_autocomplete.store import Unavailable, _finite_number
 
 WEEK = 7 * 86400
 
 
 def _duration(value, name):
-    if (
-        not isinstance(value, (int, float))
-        or isinstance(value, bool)
-        or not math.isfinite(value)
-        or value <= 0
-    ):
+    if not _finite_number(value) or value <= 0:
         raise ValueError(f"{name} must be positive and finite")
     return value
 

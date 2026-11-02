@@ -6,7 +6,6 @@ import contextlib
 import http.client
 import http.server
 import json
-import math
 import socket
 import sqlite3
 import threading
@@ -19,12 +18,7 @@ import search_autocomplete.trie
 
 
 def _positive_seconds(value):
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-        and value > 0
-    )
+    return search_autocomplete.store._finite_number(value) and value > 0
 
 
 def _valid_endpoint(value):
@@ -224,6 +218,10 @@ class Coordinator:
                 raw.extend(part)
             if len(raw) > 65536:
                 raise ValueError("replica response too large")
+            if response.length not in (None, 0):
+                # read1() permits early EOF even when Content-Length remains.
+                # A parseable JSON prefix does not make that response complete.
+                raise http.client.IncompleteRead(bytes(raw), response.length)
             return json.loads(raw)
         finally:
             timer.cancel()

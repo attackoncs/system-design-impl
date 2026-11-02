@@ -31,8 +31,9 @@ def main():
     options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
     runtime = pathlib.Path(__file__).resolve().parents[1] / ".runtime"
     runtime.mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=runtime) as directory:
-        db = pathlib.Path(directory) / "demo.sqlite3"
+    directory = tempfile.TemporaryDirectory(dir=runtime)
+    try:
+        db = pathlib.Path(directory.name) / "demo.sqlite3"
         store = search_autocomplete.Store(db)
         try:
             for query, count in [
@@ -51,7 +52,7 @@ def main():
                 "0": [f"http://127.0.0.1:{port}" for port in ports[:2]],
                 "1": [f"http://127.0.0.1:{ports[2]}"],
             }
-            mapping = pathlib.Path(directory) / "replicas.json"
+            mapping = pathlib.Path(directory.name) / "replicas.json"
             mapping.write_text(json.dumps(replicas), encoding="utf-8")
             commands = [
                 ["node", "--shard", str(shard), "--port", str(port)]
@@ -102,6 +103,17 @@ def main():
                     child.terminate()
                     child.wait(timeout=5)
             store.close()
+    finally:
+        # Windows may briefly retain mapped-file handles after process exit.
+        # Retry cleanup of this owned directory; persistent errors stay visible.
+        for attempt in range(10):
+            try:
+                directory.cleanup()
+                break
+            except PermissionError as error:
+                if getattr(error, "winerror", None) not in (32, 33) or attempt == 9:
+                    raise
+                time.sleep(0.1)
 
 
 if __name__ == "__main__":

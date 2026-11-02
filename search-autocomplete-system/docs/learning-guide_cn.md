@@ -35,16 +35,17 @@ flowchart TB
 | Trie | 前缀节点及排名候选 | 不可变快照 | 查询不必扫描全部原始事件 |
 | 服务缓存 | generation／revision／shard关联的Trie | 可丢失加速 | 未命中可加载，不能改变答案 |
 
-## 六站阅读路线
+## 七站阅读路线
 
 | 顺序 | 源码入口 | 输入→输出 | 重点 |
 |---|---|---|---|
 | 1 | [Store.record](../src/search_autocomplete/store.py#L158) | 事件ID、词、时间→接受结果 | 规范化、去重与内容冲突 |
 | 2 | [Store.aggregate](../src/search_autocomplete/store.py#L245) | 时间窗口→频次统计 | 事件时间和聚合边界 |
 | 3 | [Store.build](../src/search_autocomplete/store.py#L316) | 统计与分片配置→发布快照 | 慢构建与短发布事务分开 |
-| 4 | [SnapshotWorker.run_once](../src/search_autocomplete/worker.py#L60) | 当前时间／窗口→一轮构建 | 后台推进与过滤清理 |
+| 4 | [SnapshotWorker.run_once](../src/search_autocomplete/worker.py#L54) | 当前时间／窗口→一轮构建 | 后台推进与过滤清理 |
 | 5 | [Autocomplete.suggest](../src/search_autocomplete/service.py#L82) | prefix及可选版本→候选元组 | 固定一致视图，不读取半成品 |
 | 6 | [Trie.suggest](../src/search_autocomplete/trie.py#L143) | 规范化前缀→节点候选 | 前缀定位和缓存候选的收益 |
+| 7 | [Coordinator._read_reply](../src/search_autocomplete/http.py#L161) | 副本HTTP响应→候选数据 | 传输完整后才能解析，再校验版本与排名 |
 
 先跑“记录两词→build→suggest”这条路，再读HTTP协调器如何散发到多个副本。后者不能替代本地版本一致性。
 
@@ -109,6 +110,38 @@ sequenceDiagram
 
 屏蔽词过滤不是简单裁掉最终五个词就够了：如果前五个里有屏蔽词，Trie需要能补到更深的合法候选。先读对应Trie测试，再理解这一点对节点缓存的影响。
 
+## 微观三：能解析JSON还不够
+
+[http.py:221](../src/search_autocomplete/http.py#L221)
+
+```python
+if response.length not in (None, 0):
+    # read1() permits early EOF even when Content-Length remains.
+    # A parseable JSON prefix does not make that response complete.
+    raise http.client.IncompleteRead(bytes(raw), response.length)
+return json.loads(raw)
+```
+
+分段读取使用read1以便遵守期限，但它允许响应在Content-Length尚有剩余时提前结束。如果收到的前半段恰好是合法JSON，单纯json.loads不会发现传输已经截断。这里先确认声明的长度已读完，再接受数据；失败沿 [Coordinator._query](../src/search_autocomplete/http.py#L233) 切换下一副本。未声明长度、按连接关闭分隔的合法响应仍被支持。
+
+```mermaid
+sequenceDiagram
+  participant U as 查询方
+  participant C as Coordinator
+  participant A as 副本A
+  participant B as 副本B
+  U->>C: suggest(prefix)
+  C->>A: 固定version和revision查询
+  A-->>C: 合法JSON但少于Content-Length
+  Note over C: 拒绝截断响应
+  C->>B: 使用剩余预算重试相同视图
+  B-->>C: 完整响应
+  C->>C: 校验版本、归属和排序
+  C-->>U: 合并后的Top 5
+```
+
+HTTP完整性检查不替代版本栅栏，也不让慢任务提前释放并发槽位。输入校验则复用 [_finite_number](../src/search_autocomplete/store.py#L20)；采集、Worker和协调器不会对同一种超大整数暴露不同的异常类型。
+
 ## 并发失败：较早开始的构建较晚结束
 
 设构建A暂停，构建B读到更新数据并完成发布，随后A恢复。正确结果是仍保留B。应检查Store.build的条件发布，而不是仅靠单个进程的锁；项目测试使用两个连接制造这个交错。
@@ -121,6 +154,8 @@ sequenceDiagram
 - [test_chapter_ranking_and_prefixes](../tests/test_autocomplete.py#L44)：查看TW和twin前缀的结果，理解“最多五个”与分片合并。
 - [test_older_build_cannot_overwrite_newer_cross_connection_publication](../tests/test_store_reliability.py#L76)：按事件屏障读A、B发布先后，预测恢复A后哪个generation仍有效。
 - [test_cache_hit_fences_mid_request_filter_change](../tests/test_service_reliability.py#L65)：温缓存也必须遵守过滤栅栏。
+- [test_truncated_replica_falls_back_to_complete_replica](../tests/test_http_integrity_review.py#L78)：首副本的JSON合法但HTTP截断，结果必须来自健康备用副本。
+- [test_close_delimited_http_body_remains_supported](../tests/test_http_integrity_review.py#L87)：不要把没有Content-Length的合法关闭分隔响应一并拒绝。
 
 ## 自查与练习
 
@@ -131,6 +166,8 @@ sequenceDiagram
 **本地锁能防止另一个Store连接旧构建覆盖新构建吗？** 不能单靠它，发布必须有持久版本条件。
 
 练习：用两个词各记录一次并build，查询new；再给newark记录一个新事件但暂不build。预期旧快照不变；重新build后newark频次更高、排名提前。
+
+再运行网络示例，观察主副本退出后排行仍正确，以及即时屏蔽后的补位。GitHub源码与本地排序语义的区别见 [open-source-review_cn.md](../docs/open-source-review_cn.md)；测量范围见 [results.md](../benchmarks/results.md)。
 
 
 ---

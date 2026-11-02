@@ -79,6 +79,10 @@ during cold builds. Cache capacities are counts, not strict byte/RSS limits.
 
 ## Shards and replicas
 
+Collector, SnapshotWorker and coordinator timeout configuration reuse the existing
+finite-number predicate. Very large integers fail as ValueError rather than leaking
+an OverflowError during conversion to a floating-point number.
+
 Sort queries by text and partition into approximately equal query-count ranges.
 The shard map stores inclusive lower and exclusive upper bounds. A prefix range can
 overlap multiple shards; the coordinator fans out only to overlapping ranges and
@@ -90,6 +94,11 @@ endpoints. The coordinator tries replicas with finite timeouts, validates versio
 filter revision, shard identity and lexical ownership, and returns unavailable if any required shard
 has no valid replica. This guarantees correct complete rankings over availability
 of partial results. HTTP examples run distinct OS processes on loopback.
+
+Streaming response reads also validate transport completeness: read1 may reach EOF
+with Content-Length still remaining. Such a reply raises IncompleteRead and uses
+the existing fallback path, even when its partial body parses as JSON. Responses
+delimited by connection closure remain supported. See the [source review](open-source-review_cn.md).
 
 The coordinator bounds all unfinished shard tasks by its concurrency limit;
 timed-out I/O retains its slot until it actually exits. One request budget covers

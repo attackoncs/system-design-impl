@@ -44,7 +44,7 @@ flowchart TB
 3. [ChatService.send](../src/chat_system/service.py#L381)：跟踪hello和retry从参数进入持久化，再进入实时分发。
 4. [SQLiteMessageStore.append](../src/chat_system/store.py#L235)：重点看去重身份、正文冲突、消息和inbox是否在同一事务提交。
 5. [ChatService._deliver_live](../src/chat_system/service.py#L425)：看接收者队列满后的处理；实时失败不能删除已提交消息。
-6. [ChatService.sync](../src/chat_system/service.py#L463)：输入Session、after和limit，输出该用户可见消息；随后阅读 [ReconnectingChatClient.acknowledge](../src/chat_system/client.py#L256) 的整页确认约束。
+6. [ChatService.sync](../src/chat_system/service.py#L463)：输入Session、after和limit，输出该用户可见消息；随后阅读 [ReconnectingChatClient.acknowledge](../src/chat_system/client.py#L253) 的整页确认约束。
 
 每站只追Alice这一条消息。先忽略presence订阅与群成员管理，待direct消息主线清楚再加入这些分支。
 
@@ -121,7 +121,7 @@ def sync(self, session, after=0, limit=100):
 
 ## 两组实验式测试
 
-- [test_identical_retries_commit_exactly_one_message_and_inbox](../tests/test_store_reliability.py#L66)：两个连接并发追加相同retry；created结果一真一假，两边得到同一消息，inbox总数为2而不是4。
+- [test_identical_retries_commit_exactly_one_message_and_inbox](../tests/test_store_reliability.py#L67)：两个连接并发追加相同retry；created结果一真一假，两边得到同一消息，inbox总数为2而不是4。
 - [test_cancelled_commit_finishes_before_send_lock_is_released](../tests/test_service_reliability.py#L102)：用事件暂停append，然后取消send。观察测试为何先确认锁仍受保护，再释放底层线程。
 - [test_acknowledgement_must_match_the_complete_received_page](../tests/test_client_reliability.py#L120)：同步页的确认必须匹配收到的整页，不能随意跳过未处理消息。
 

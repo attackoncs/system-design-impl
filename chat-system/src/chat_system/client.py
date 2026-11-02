@@ -11,6 +11,7 @@ import urllib.parse
 import urllib.request
 
 import chat_system.models
+from chat_system.http_utils import open_response, parse_endpoint
 
 try:
     import websockets.asyncio.client
@@ -46,9 +47,7 @@ class ReconnectingChatClient:
                 raise ValueError("invalid reconnect settings")
         if type(max_reconnects) is not int or max_reconnects < 1:
             raise ValueError("invalid reconnect settings")
-        parsed = urllib.parse.urlsplit(discovery_url)
-        if parsed.scheme not in ("http", "https") or not parsed.hostname:
-            raise ValueError("discovery URL must use HTTP or HTTPS")
+        parse_endpoint(discovery_url, ("http", "https"))
         self.discovery_url, self.token, self.device_id, self.region = (
             discovery_url,
             token,
@@ -59,7 +58,7 @@ class ReconnectingChatClient:
         self.cursor = 0
         if self.cursor_file and self.cursor_file.exists():
             self.cursor = int(self.cursor_file.read_text(encoding="utf-8"))
-            if self.cursor < 0:
+            if not 0 <= self.cursor <= 2**63 - 1:
                 raise ValueError("invalid saved cursor")
         self.timeout, self.retry_delay, self.max_reconnects = (
             timeout,
@@ -84,7 +83,7 @@ class ReconnectingChatClient:
             )
 
         def fetch():
-            with urllib.request.urlopen(url, timeout=self.timeout) as response:
+            with open_response(urllib.request.urlopen, url, self.timeout) as response:
                 payload = response.read(8193)
             if len(payload) > 8192:
                 raise chat_system.models.ChatError("discovery response is too large")
@@ -92,11 +91,9 @@ class ReconnectingChatClient:
                 endpoint = json.loads(payload)["url"]
                 if not isinstance(endpoint, str):
                     raise ValueError("invalid endpoint")
-                parsed = urllib.parse.urlsplit(endpoint)
+                parsed = parse_endpoint(endpoint, ("ws", "wss"))
                 if (
-                    parsed.scheme not in ("ws", "wss")
-                    or not parsed.hostname
-                    or parsed.username is not None
+                    parsed.username is not None
                     or parsed.password is not None
                     or parsed.fragment
                 ):
@@ -247,7 +244,7 @@ class ReconnectingChatClient:
         if not isinstance(messages, list):
             raise ValueError("message page must be a list")
         ids = tuple(message["message_id"] for message in messages)
-        if any(type(value) is not int or value <= 0 for value in ids):
+        if any(type(value) is not int or not 1 <= value <= 2**63 - 1 for value in ids):
             raise ValueError("invalid message ID")
         if any(first >= second for first, second in zip(ids, ids[1:])):
             raise ValueError("message page must be ordered")
