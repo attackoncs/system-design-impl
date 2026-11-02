@@ -91,11 +91,34 @@ sequenceDiagram
 
 数据库成功受理但HTTP客户端断开：不能因此删除已持久化视频。客户端查询status或重试同一完成操作，恢复当前状态。
 
-## 两组测试足够建立主线
+## 微观三：收到分片不等于源文件仍然完整
+
+{{excerpt:src/video_streaming/storage.py:LocalObjects.assemble:6:14}}
+
+上传时记录的对象键是分片内容的 SHA-256。组装时一边读取、一边再次计算每片摘要，
+直到 EOF 后才比较。即使坏分片长度没有变、调用方没有传整源校验和，也不能把它
+重新命名成另一份“正确”的源。失败由 write 的 finally 清理临时文件；finish 尚未
+进入创建任务的事务，视频保持 UPLOADING。读取缓冲固定 1 MiB，不随视频大小增长。
+
+```mermaid
+flowchart TD
+  A["finish：分片已收齐"] --> B["逐片读取并核对 SHA-256"]
+  B -->|"匹配"| C["核对总大小及可选整源校验和"]
+  C --> D["事务提交源引用与 DAG"]
+  B -->|"损坏"| E["OSError；清理临时源；不创建任务"]
+  E --> F["原授权和原字节重传修复"]
+  F --> A
+```
+
+## 用测试验证三条主线
 
 - {{symbol:tests/test_video.py:test_resumable_idempotent_parts_and_finalization}}：按1→0上传，分别观察缺失分片拒绝、相同内容幂等、不同内容冲突，以及重复finish只生成一套任务。
 - {{symbol:tests/test_video.py:test_dependencies_concurrent_claims_and_lease_fencing}}：八个领取者最初只有一个能拿到inspect；旧租约完成和失败均被拒绝，新租约完成后才释放下游。
 - {{symbol:tests/test_pipeline_reliability.py:test_long_running_task_renews_before_competing_worker_reclaims}}：再阅读持续处理时续租如何维持资格。
+- {{symbol:tests/test_storage_review.py:test_finish_without_checksum_rejects_corrupt_part_and_can_retry}}：上传后把分片改成等长坏数据，观察 finish 拒绝、无任务；原授权重传后再次完成成功。
+
+本轮 {{file:docs/open-source-review_cn.md}} 对照 PeerTube、MediaCMS 的
+上传幂等、任务完成与视频发布、有限重试及取消传播；阅读时留意两者的并行粒度差异。
 
 ## 自查与练习
 

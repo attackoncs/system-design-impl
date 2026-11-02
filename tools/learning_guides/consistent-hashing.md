@@ -67,6 +67,35 @@ flowchart TD
 
 权重调整同样要读 {{symbol:src/consistent_hashing/ring.py:ConsistentHashRing.set_virtual_nodes}}：增加权重只追加新索引，减小则删除较大索引，不先删除整台机器再重新加入。
 
+## 微观三：未变拓扑为什么不必扫描
+
+{{excerpt:src/consistent_hashing/migration.py:affected_ranges:8:6}}
+
+连续捕获的两个快照可能共享同一份不可变状态。完成类型与哈希兼容校验后，
+状态身份相同即可O(1)确认没有迁移；分别构造但内容相同的环仍要比较。
+{{symbol:src/consistent_hashing/migration.py:iter_migrations}} 复用该结果，无变化时
+连调用方候选键也不读取，没有增加全局缓存或键注册表。
+
+```mermaid
+flowchart TD
+  A[前后快照] --> B[校验类型与哈希函数身份]
+  B --> C{共享同一不可变状态?}
+  C -->|是| D[直接返回空计划]
+  C -->|否| E[合并边界并扫描主owner变化]
+  E --> F{存在变化区间?}
+  F -->|否| D
+  F -->|是| G[每候选一次哈希 二分筛选迁移键]
+```
+
+{{symbol:tests/test_open_source_review.py:test_unchanged_plans_do_not_consume_candidates}}
+用一旦消费便报错的输入验证无变化路径；
+{{symbol:tests/test_open_source_review.py:test_routes_and_migrations_match_linear_oracle}}
+用线性顺时针参照核对主节点、副本候选和迁移结果，覆盖碰撞及权重变化。
+
+键数量的均衡是样本指标，不是无条件保证。若所有候选都落在新增节点接管的
+区间，100%的候选都可能迁移；碰撞也可能使某成员分不到主键。详见
+{{file:docs/open-source-review_cn.md}}中的反例和GitHub源码对照。
+
 ## 用测试看“旧视图还能用”
 
 - {{symbol:tests/test_chapter_coverage.py:test_snapshot_remains_usable_after_live_ring_becomes_empty}}：保存快照后删空活环；旧快照仍能路由，活环读取则报空环错误。这是快照边界的直接证据。

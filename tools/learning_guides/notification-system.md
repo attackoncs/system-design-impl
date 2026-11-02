@@ -11,6 +11,8 @@
 ```mermaid
 flowchart TB
   B[业务调用者] -->|await send 仅等受理| S[NotificationService]
+  B -->|send_batch| A[有界受理协程 默认最多16个]
+  A --> S
   C[联系人 偏好 模板] --> S
   S -->|事务入队及事件身份| Q[(SQLite队列与事件账本)]
   Q -.->|后台claim租约| W[通道Worker]
@@ -29,7 +31,7 @@ flowchart TB
 | `NotificationTask` | notification_id、endpoints、attempt、completed_endpoints | 同一通知投递与重试的载荷 |
 | `notification_events` | event_id、recipient_id、channel → notification_id | 接受成功后保留，终态后也不删除 |
 | `notification_jobs` | id、payload、available、receipt、lease_until | 可领取、执行、延迟重试直至确认 |
-| `receipt` | 每次claim新生成的随机凭据 | 防止过期Worker确认新租约 |
+| `receipt` | 每次claim新生成的随机凭据；独立任务快照 | 旧对象不会获得新凭据，防止旧Worker控制新领取 |
 | `notification_log` | status、attempt、error_details | 持久审计，不是外部收件人的已读证明 |
 
 ## 七站阅读路线
@@ -37,7 +39,7 @@ flowchart TB
 1. {{symbol:src/notification_system/service.py:NotificationService.send}}：检查请求和计划时间，再按收件人条带锁串行受理；返回通知ID。
 2. {{symbol:src/notification_system/service.py:NotificationService._accept}}：先检查显式event_id，再解析端点、偏好和模板；找到任务快照在哪里构造。
 3. {{symbol:src/notification_system/durable.py:SQLiteMessageQueue._enqueue}}：在写事务里重新检查事件身份并接受任务；这才守住跨实例重复受理。
-4. {{symbol:src/notification_system/durable.py:SQLiteMessageQueue._claim}}：输入通道，输出带receipt的任务；数据库不删除任务，只标记租约。
+4. {{symbol:src/notification_system/durable.py:SQLiteMessageQueue._claim}}：输入通道，取得写锁后采样时间，输出带receipt的任务；数据库不删除任务，只标记租约。先读时钟再等写锁会白白消耗租期。
 5. {{symbol:src/notification_system/worker.py:Worker._process_claim}}：并行监视投递与续租，处理取消时返回任务或依赖租约恢复。
 6. {{symbol:src/notification_system/worker.py:Worker._process_task}}：再查偏好、跳过已完成端点、调用Provider；下一站处理失败。
 7. {{symbol:src/notification_system/retry.py:RetryHandler.handle_failure}}：决定重试或终态；最后看 {{symbol:src/notification_system/durable.py:SQLiteMessageQueue._ack}} 如何核验当前租约。
@@ -55,6 +57,8 @@ flowchart TB
 {{excerpt:src/notification_system/durable.py:SQLiteMessageQueue._ack:0:11}}
 
 删除语句同时匹配通知id、receipt和未过期租约。如果Worker停顿到租约失效，另一个Worker已经领取，旧receipt即使携带正确notification_id也不能删除新任务；rowcount为0时必须报错。
+
+内存队列也需要隔离领取身份。{{symbol:src/notification_system/queue.py:MessageQueue.claim}} 返回独立任务快照，不能原地修改已被旧worker持有的对象。用旧对象重排后重新领取，旧对象的receipt仍须保持原值。SQLite续租同样在写事务内重新读时间，过期后不能续租复活。
 
 ```mermaid
 sequenceDiagram
@@ -79,6 +83,14 @@ sequenceDiagram
 
 这条时序不承诺外部恰好一次：Provider已发送但Worker来不及确认时，恢复可能重复调用。供应商幂等需要额外集成。
 
+## 微观三：批量并发上限限制的是任务数
+
+{{excerpt:src/notification_system/service.py:NotificationService.send_batch:35:12}}
+
+`send_batch` 前半部分预分配结果位置，共享 `enumerate(requests)` 迭代器；消费者取下一项时没有await，同一事件循环中不会重复领取输入。这里只创建最多concurrency个消费者，不会先为百万条输入创建百万个任务再套Semaphore。默认16，传1可串行受理；结果顺序仍对应输入顺序。
+
+这层并发负责受理，不改变通道worker的投递并发。取消批次会取消并等待子任务退出，已经入队的任务仍保留；SQLite写入仍串行，不能以协程数量推导数据库吞吐。对照结果见 {{file:benchmarks/REPORT.md}}。
+
 ## 两个很容易误解的失败结果
 
 队列满不是“接受后等待”：入队拒绝应保持业务可重试，不能顺手耗尽本地限流额度或污染内容去重。已经受理的任务暂时投递失败，则使用延迟重试归还Worker，避免一个失败通知占住唯一Worker睡眠。
@@ -86,6 +98,10 @@ sequenceDiagram
 - {{symbol:tests/test_runtime_reliability.py:test_event_id_dedup_survives_ack_restart_and_concurrent_acceptance}}：两实例并发只接受一个，任务确认和重启后相同业务事件仍被识别。
 - {{symbol:tests/test_runtime_reliability.py:test_durable_lease_recovers_process_exit_and_fences_stale_ack}}：子进程领取后退出，过期任务可恢复；旧receipt不能确认它。
 - {{symbol:tests/test_runtime_reliability.py:test_retry_yields_worker_to_other_jobs_and_provider_exception_isolated}}：单Worker的实际投递次序为first、second、first，而非被first的重试等待堵住。
+- {{symbol:tests/test_queue_reliability_review.py:test_memory_old_claim_cannot_control_reclaimed_job}}：旧领取引用不能确认、重排或续租新的领取。
+- {{symbol:tests/test_queue_reliability_review.py:test_sqlite_claim_lease_starts_after_writer_wait}}：真实写锁等待之后，才开始新领取的租期。
+- {{symbol:tests/test_worker_lifecycle_review.py:test_reused_worker_honors_immediate_stop_after_readiness}}：退出后复用Worker，不能用上次的启动信号跳过等待。
+- {{symbol:tests/test_batch_admission_review.py:test_batch_cancellation_drains_all_children}}：取消大批次后没有遗留受理协程。
 
 ## 自查与练习
 
@@ -94,3 +110,5 @@ sequenceDiagram
 - **多设备推送部分成功后是否重试全部端点？** 任务记录已完成端点，重试只处理剩余端点；最终应结合永久拒绝分支检查结果。
 
 按运行示例把同一业务事件提交两次，再重启服务提交第三次；预期只产生一个被接受的通知身份。换成新event_id、相同正文应允许成为新的业务通知。随后在模拟Provider制造一次暂时失败，观察attempt、receipt和审计如何分别变化。运行方式见 {{file:README_CN.md}}。
+
+最后把批量受理并发分别设为1和16，比较包含异步等待的队列与SQLite。原书要求、GitHub参考和当前部署边界见 {{file:docs/open-source-review_cn.md}}。

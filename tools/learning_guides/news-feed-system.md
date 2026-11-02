@@ -92,12 +92,22 @@ sequenceDiagram
 
 例子里n3与c2来自不同路径，最终必须在同一个排序空间内比较。补全的并发完成顺序不能改变页面顺序；同作者资料未命中也不能让每条帖子都独立回源。最后的`can_view`检查覆盖读取过程中发生的静音或关注变化。
 
+### 只读足够的内容，保留固定工作协程
+
+{{excerpt:src/news_feed_system/news_feed_service.py:NewsFeedService._cached_posts:3:12}}
+
+`candidates.limit`包含页面之外用于判断has_more的一条。这里按**已得到的可见候选数**停止更旧内容I/O，而不是盲取前几个缓存ID。私有或缺失内容不能填满候选，需要继续扫描。{{symbol:src/news_feed_system/news_feed_service.py:NewsFeedService._read_each}} 仍只创建一组固定读取协程；已经开始的较新读取会排空并参与最终排序。
+
+默认保留500个ID、页面20条、读取并发16：没有过滤时，最多读取20+1+15=36条内容，其余仅遍历ID元数据。页面不能再被未必需要的第500条内容故障拖垮；但必需内容的异常仍正常传播，不会被吞掉。{{symbol:tests/test_open_source_review.py:test_unneeded_old_content_failure_cannot_break_complete_page}} 检查这一边界。
+
 ## 用两组测试检验理解
 
 - {{symbol:tests/test_chapter12.py:test_hybrid_hydration_and_stable_cursor_with_new_posts}}：先预测首页为n3、c2，再检查资料、点赞状态和计数。继续阅读后半段，观察新帖出现后游标仍保持旧边界。
 - {{symbol:tests/test_api_lifecycle.py:test_api_publication_accepts_before_slow_fanout}}：分发钩子故意报错，publish仍能返回，且post_store能读到帖子。该测试使用内存后端，只证明源受理不等待分发，不能单独证明SQLite持久化。
 - {{symbol:tests/test_chapter12.py:test_restart_recovers_posts_profiles_graph_and_mutes}}：使用同一SQLite路径重建API，Feed缓存最初为空，解除静音后仍能从持久源恢复帖子和资料。用它核对本文所选SQLite方案的恢复边界。
 - {{symbol:tests/test_chapter12_read_audit.py:test_parallel_hydration_rechecks_follow_and_mute_policy}}：观察测试何时改变关系，以及返回结果为何需要在最后再次过滤。
+- {{symbol:tests/test_open_source_review.py:test_private_cached_prefix_is_skipped_until_page_and_sentinel_are_full}}：缓存最前25条不可见时仍补满页面与续读候选，同时限制无用内容读取。
+- {{symbol:tests/test_open_source_review.py:test_invalid_media_urls_fail_validation_before_source_acceptance}}：无效媒体地址在源接受前失败；正文UTF-8验证也在 {{symbol:src/news_feed_system/post_service.py:PostService._snapshot_request}}，不应交给SQLite编码错误处理。
 
 ## 读懂了吗
 
@@ -110,3 +120,5 @@ sequenceDiagram
 ## 一个小练习
 
 沿用n1、n3、c2的例子，把reader静音author。先预测第一页只剩celebrity的可见候选，再运行相关读取测试。重点观察过滤后是否继续补页；不要通过修改时间戳来掩盖排序问题。
+
+再运行 {{file:tools/benchmark.py}}，比较500个缓存ID和一页20条所需的内容读取次数；测量范围与原始结果见 {{file:benchmarks/REPORT.md}}，原书/GitHub对照见 {{file:docs/open-source-review_cn.md}}。

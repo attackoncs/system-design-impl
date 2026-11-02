@@ -29,6 +29,7 @@ flowchart LR
 | `epoch_ms` | 时间字段的起点 | 不可变配置 |
 | `machine_id/datacenter_id` | 区分不同发号身份 | 配置；由部署方保证分配 |
 | `max_sequence` | 2位对应3，是位掩码 | 根据配置推导 |
+| `_node_prefix/_timestamp_shift` | 已移位的节点字段及时间位移 | 构造时由冻结配置预计算，逐ID复用 |
 | 返回ID | 时间偏移、节点和序列的组合 | 输出结果，可由解析器还原 |
 
 ## 六站源码阅读路线
@@ -78,6 +79,19 @@ flowchart TD
 - {{symbol:tests/test_review.py:test_overflow_timeout_does_not_reuse_ids}}：观察超时前后生成的ID和时钟推进；断言重点是恢复后没有复用旧ID。
 - {{symbol:tests/test_review.py:test_threads_share_sequence_without_duplicates}}：多个线程共享一个实例，输出应无重复；它证明的是共享实例的并发序列保护。
 - {{symbol:tests/test_snowflake.py:TestSnowflakeGenerate.test_sequence_increments_same_millisecond}}：从解析出的序列字段理解正常路径。
+
+## 微观三：整数毫秒不能绕道浮点秒
+
+自定义时间位足够宽时，3000年的`.123000`曾被解析为`.123001`；部分平台还无法
+通过系统timestamp函数转换9999年日期。沿
+{{symbol:src/unique_id/parser.py:IDParser.parse}} 看UTC Unix起点加整数毫秒
+timedelta的转换，先保证数值字段精确，再检查日期是否能被Python表示。
+
+- {{symbol:tests/test_open_source_review.py:test_custom_layout_preserves_exact_datetime_milliseconds}}：从合法自定义布局生成ID，逐一对照3000年和9999年边界的UTC与整数毫秒。
+- {{symbol:tests/test_open_source_review.py:test_datetime_overflow_has_a_consistent_public_error}}：数值ID仍合法，但日期到10000年，预期明确ValueError，不能混淆两种范围。
+
+发号路径预计算的是不变配置，时间和序列仍逐次校验并提交。它减少重复计算，
+不放松唯一性条件。开源取舍、完整覆盖与实测见 {{file:docs/open-source-review_cn.md}}。
 
 ## 三个自查问题
 

@@ -43,6 +43,8 @@ flowchart LR
 5. {{symbol:src/web_crawler/crawler.py:Crawler._claim_content}}：跟child的重复内容分支，理解临时指纹拥有者与已提交指纹的区别。
 6. {{symbol:src/web_crawler/state.py:SQLiteCrawlState.finish}}：提交状态、内容和主机可用时间，最后回到 {{symbol:src/web_crawler/crawler.py:Crawler._process_url}} 的异常与取消补偿。
 
+未设置state_path时，第三站改读 {{symbol:src/web_crawler/frontier.py:URLFrontier.get}}。其他业务管线相同，但恢复能力和队列数据位置不同。
+
 ## 微观一：并发容量在创建任务前就受限制
 
 {{excerpt:src/web_crawler/crawler.py:Crawler.crawl:21:11}}
@@ -51,11 +53,23 @@ flowchart LR
 
 没有任务但仍有未来重试时，循环暂时等待；未来的周期重爬则留到下一批次。理解这一点后，才不会把 `is_empty` 当作数据库里完全没有任何记录。
 
+当一个慢下载尚未结束，另一个主机的礼貌间隔可能已经到期。因此只在有空闲槽和剩余预算时，`asyncio.wait`最多等待50毫秒就返回调度循环重查；满载时等待任务完成。对应 {{symbol:tests/test_open_source_review.py:test_idle_slot_rechecks_host_deadline_while_other_download_is_slow}} 同时覆盖内存与持久模式。
+
+### 内存分支：队首可用才参与选择
+
+{{excerpt:src/web_crawler/frontier.py:URLFrontier._schedule:0:13}}
+
+先看active/waiting两个集合：主机在途或已有唤醒时间，就不向就绪堆重复发布。到期时只发布该主机优先堆的队首，`get`再从所有可用队首中选最高优先级；更高优先级新任务可能使旧队首项失效，因此出队时还核对序号。完成后再开始该主机的下一次间隔。
+
+这使一个活跃主机积压10000条URL时，也不会每次为另一个主机取任务而重扫这10000条。{{symbol:tests/test_open_source_review.py:test_frontier_matches_simple_scheduling_oracle}} 用全扫描oracle核对随机操作序列，{{symbol:tests/test_open_source_review.py:test_busy_host_backlog_is_not_scanned_per_poll}} 保护这一复杂度约束。
+
 ## 微观二：内容重复，发现过程仍要继续
 
 {{excerpt:src/web_crawler/crawler.py:Crawler._process_entry:66:17}}
 
 先得到内容指纹并申领，再用 `response.url` 作为相对链接基准提取链接。重复分支仍把链接入队，只是不再把相同HTML作为新的成功快照保存。否则相同HTML放在 `/a/` 和 `/b/` 下时，两个不同的 `child` 地址会漏掉一组。
+
+{{symbol:src/web_crawler/parser.py:LinkExtractor.extract}} 还会应用文档中第一个base href；例如文档位于`/index`、base为`/assets/`，则child是`/assets/child`。一个坏href只跳过自己，不能使好链接一起丢失。{{symbol:tests/test_open_source_review.py:test_pipeline_keeps_valid_links_and_document_base}} 将这些情况串进两种调度管线。
 
 ```mermaid
 flowchart TD
@@ -85,7 +99,10 @@ flowchart TD
 - **max_concurrent=4能让同一主机同时抓4个URL吗？** 还受主机保留与礼貌间隔约束，不能只看全局并发上限。
 - **Hook异常是否代表网页没下载成功？** Hook按实现隔离错误；不能把业务内容处理Hook当成调度事务的一部分。
 - **只给URLSeen加锁能解决内容重复吗？** 不能，两个不同URL可能返回相同字节。
+- **robots中的`%2A`和`*`一样吗？** 前者是字面字符，后者是通配符。{{symbol:src/web_crawler/robots.py:RobotsChecker._allows}} 先解析URL再规范化路径，保留转义分隔符；空路径带查询也从`/`开始。回归入口是 {{symbol:tests/test_open_source_review.py:test_robots_preserves_encoded_delimiters_and_literal_metacharacters}}。
 
 ## 动手练习
 
 把max_pages改成1，预期第一批只尝试主页，child仍在持久队列；新建Crawler并用空种子继续，预期child仍可被处理。再将child内容改为不同字节，预期其结果变为SUCCESS且快照数增加。配置和运行方式见 {{file:README_CN.md}}。
+
+然后运行 {{file:tools/verify_http.py}} 的自有回环HTTP案例，观察base href、坏链接隔离、robots禁止与重启恢复；测量范围见 {{file:benchmarks/REPORT.md}}。原书和Scrapy的取舍记录在 {{file:docs/open-source-review_cn.md}}。

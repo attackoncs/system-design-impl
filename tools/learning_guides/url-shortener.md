@@ -4,7 +4,7 @@
 
 ## 一个贯穿全篇的请求
 
-采用 `SQLiteStorage` 保存映射；连续两次缩短 `https://example.com/guide`。把首次得到的短码记为 `c`，不预先猜随机／哈希策略产生的具体字符。两次返回应相同，数据库只保留一条该URL的映射。随后调用 `resolve(c)` 两次：两次返回原URL和重定向类型，首次回源，后续可以命中本实例缓存；本实例点击数应增加2。
+采用 `SQLiteStorage` 保存映射，并将同一个对象注入 `Base62Strategy(id_generator=storage)`；连续两次缩短 `https://example.com/guide`。把首次得到的短码记为 `c`，不预先猜数据库当前发到哪个ID。两次返回应相同，数据库只保留一条该URL的映射，也只消耗一个ID。随后调用 `resolve(c)` 两次：两次返回原URL和重定向类型，首次回源，后续可以命中本实例缓存；本实例点击数应增加2。
 
 ```mermaid
 flowchart LR
@@ -12,6 +12,7 @@ flowchart LR
   B --> C[URLShortener]
   C -->|生成候选码| D[可插拔策略]
   C -->|唯一映射事务| E[(SQLite urls)]
+  D -->|同一事务内发号| I[(SQLite id_sequence)]
   C -->|读命中或回填| F[本实例LRU缓存]
   C -->|成功解析后记录| G[本实例点击记录]
 ```
@@ -23,6 +24,7 @@ flowchart LR
 | 数据 | 关键字段 | 事实还是派生 |
 |---|---|---|
 | SQLite `urls` | `code/url/redirect/created`；code与url分别唯一 | 链接映射事实，重启后保留 |
+| SQLite `id_sequence` | 单行 `value` | 协调发号事实，与映射创建共用事务 |
 | `URLMapping` | `short_code/long_url/redirect_type/created_at` | 不可变业务对象 |
 | `_cache` | short_code → mapping，维护最近使用顺序 | 可丢弃的读取加速 |
 | `_clicks` | short_code → ClickRecord列表 | 进程内观测，和映射事务不同 |
@@ -31,19 +33,19 @@ flowchart LR
 ## 六站阅读路线
 
 1. {{symbol:src/url_shortener/shortener.py:URLShortener.shorten}}：输入长URL，输出完整短URL。先看最终的 `get_or_create`，理解原子性不在HTTP Handler里。
-2. {{symbol:src/url_shortener/shortener.py:URLShortener._validate_url}}：阻止空值、控制字符和非HTTP(S)地址进入策略层；下一站才开始创建候选码。
+2. {{symbol:src/url_shortener/urls.py:redirect_uri}}：由 `_validate_url` 调用；拒绝无效主机、端口、空白等，确认中文网址可编码。保存仍保留原串；HTTP层才使用转换后的URI。
 3. {{symbol:src/url_shortener/strategies.py:Base62Strategy.generate}}：理解策略只负责码的构造；切回服务代码看它如何被factory调用。
-4. {{symbol:src/url_shortener/sqlite_storage.py:SQLiteStorage.get_or_create}}：把查询、factory和保存放在一次事务中；这是案例两次创建得到同一映射的关键。
+4. {{symbol:src/url_shortener/sqlite_storage.py:SQLiteStorage.get_or_create}}：已存在先只读返回；未命中才在事务中重查、生成和保存。factory经 {{symbol:src/url_shortener/sqlite_storage.py:SQLiteStorage.next_id}} 发号；同一个存储对象会复用事务。
 5. {{symbol:src/url_shortener/shortener.py:URLShortener.resolve}}：输入短码，先查LRU，再查SQLite；成功后记录点击，输出 `(long_url, redirect_type)`。
 6. {{symbol:src/url_shortener/http.py:create_app}}：最后再看如何把业务结果转换成HTTP状态和Location，避免把业务方法返回值误认为已经发出了重定向响应。
 
 ## 微观一：为什么不是先查再单独保存
 
-{{excerpt:src/url_shortener/sqlite_storage.py:SQLiteStorage.get_or_create:0:16}}
+{{excerpt:src/url_shortener/sqlite_storage.py:SQLiteStorage.get_or_create:0:12}}
 
-`BEGIN IMMEDIATE` 在读取前取得写事务。查询、factory内的策略操作和 `save` 复用线程局部连接，因此第二个共享同一文件的实例会在前一个事务结束后重新看到已有URL。成功后提交，任意异常则回滚。
+第一次只读查询命中即可返回；映射不可变，不需要写锁。未命中时才由 `_transaction` 执行 `BEGIN IMMEDIATE`，随后重查。factory、ID分配和 `save` 复用线程局部连接，第二个实例进入事务后会看到前一个实例已保存的URL。成功提交，异常回滚；事务内重查不能删除。
 
-这段代码保证的是本地SQLite的映射接受语义。不能据此推导跨数据库集群的全局唯一性，也不能假设默认进程内ID生成器适合多实例统一发号。
+这段代码保证本地共享SQLite文件的接受语义。默认进程内ID计数器仍不适合跨实例发号；持久场景应按上面的方式注入SQLite分配器。不能据此推导跨数据库集群全局唯一性。Base62超过七位时保留全部编码，绝不截断。
 
 ```mermaid
 sequenceDiagram
@@ -53,14 +55,22 @@ sequenceDiagram
   participant H as 生成策略
   A->>S: shorten(相同长URL)
   S->>D: get_or_create(URL, factory)
-  D->>D: BEGIN IMMEDIATE并查询URL
+  D->>D: 只读查询URL
   alt 已有映射
     D-->>S: 返回原映射
   else 尚未创建
-    D->>H: factory生成候选短码
-    H-->>D: 候选映射
-    D->>D: INSERT并COMMIT
-    D-->>S: 返回新映射
+    D->>D: BEGIN IMMEDIATE并重查
+    alt 另一实例已创建
+      D->>D: COMMIT
+      D-->>S: 返回已有映射
+    else 仍未创建
+      D->>H: factory生成候选短码
+      H->>D: next_id复用事务
+      D-->>H: 持久计数递增后的ID
+      H-->>D: 候选映射
+      D->>D: INSERT并COMMIT
+      D-->>S: 返回新映射
+    end
   end
   S-->>A: domain加短码
 ```
@@ -79,14 +89,20 @@ sequenceDiagram
 
 - {{symbol:tests/test_chapter_review.py:test_shared_database_atomic_creation_and_restart}}：并发共享数据库创建相同URL，检查相同返回以及重启后仍能读取。
 - {{symbol:tests/test_chapter_review.py:test_collision_never_overwrites_old_link}}：强制短码冲突，观察旧映射保持不变。
+- {{symbol:tests/test_open_source_review.py:test_existing_url_does_not_wait_for_sqlite_writer}}：另一条连接持有写事务时，重复创建已有URL仍能只读完成。
+- {{symbol:tests/test_open_source_review.py:test_id_allocation_rolls_back_with_failed_mapping}}：factory分配ID后失败，观察计数和映射一起回滚。
 - {{symbol:tests/test_shortener.py:TestResolve.test_resolve_records_click_analytics}}：成功解析后才增加点击记录。
 
 ## 读完应能解释
 
 - **重复缩短相同URL会改成新的302或301吗？** `get_or_create` 返回已有不可变映射，不把新参数覆盖到旧记录。
 - **SQLite重启恢复能保证点击数恢复吗？** 不能，点击保存在实例内存中。
+- **中文网址为什么库能返回原文、HTTP却不能直接发送原文？** `Location` 必须适合传输；HTTP层调用同一个 `redirect_uri` 做IDNA与百分号编码，存储身份保持原输入。
+- **为什么Base62接SQLite时要传同一个对象两次？** 发号器才能复用映射写事务；不要用另一个对象的连接等待当前对象自己持有的写锁。
 - **为什么保存接口还要唯一约束，策略已经检查过存在性？** 检查和保存之间可能有并发，最终冲突必须由接受数据的一层守住。
 
 ## 动手练习
 
 把缓存容量设为1，依次解析 `c1`、`c2`、`c1`。预期最后一次 `c1` 再次回源，两个URL映射从未消失；本实例点击计数分别为2和1。然后用同一SQLite文件重建实例，预期映射仍在、点击计数重新从0开始。运行方式见 {{file:README_CN.md}}。
+
+再运行 {{file:tools/verify_concurrency.py}}，观察4个独立进程如何对同一个URL去重、为不同URL发不同ID，并在重开数据库后继续创建。原书与GitHub代码的取舍见 {{file:docs/open-source-review_cn.md}}。

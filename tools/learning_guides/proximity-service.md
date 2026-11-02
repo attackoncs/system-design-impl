@@ -89,11 +89,35 @@ sequenceDiagram
 
 分页游标也依赖版本。如果页间发布切换，代码应该按游标契约处理版本不匹配，不能把不同version的offset当作稳定快照继续读取。
 
+## 微观三：降低格子精度没有扩大搜索半径
+
+{{excerpt:src/proximity/geo.py:cover:37:9}}
+
+高纬度的经度格子更窄，固定取中心和八个邻格可能漏掉圆内商家。cover先建立保守
+球面边界，日期线拆分、极点覆盖全部经度；格子数超过预算时逐级降低精度，最多
+枚举4096格。返回的格子允许有圆外候选，search仍用原radius做最终距离判断。
+
+```mermaid
+flowchart TD
+  Q["位置与指定radius"] --> B["保守球面边界；日期线拆分／极点处理"]
+  B --> C["按精度估算相交格子数"]
+  C --> L{"格子数不超过4096？"}
+  L -->|"否"| D["降低精度；radius保持不变"]
+  D --> C
+  L -->|"是"| I["格子索引取得候选ID"]
+  I --> F["按原radius精确过滤、排序分页"]
+```
+
+{{file:docs/open-source-review_cn.md}} 对照Redis GEO同样区分候选与距离过滤的做法，
+以及Tile38的R-tree近邻遍历。它们的存储、纬度范围和分页语义不同，不能把API或
+性能数字直接替换。本地极点正确性由独立球面参考测试验证。
+
 ## 用测试看见版本
 
 - {{symbol:tests/test_service.py:StoreTests.test_next_day_restart_and_delayed_deletion}}：逐步预测total的0→1→0，再检查改名与删除何时可见。它也验证重启后的发布数据。
 - {{symbol:tests/test_publication_reliability.py:PublicationTests.test_readers_serve_old_generation_while_due_build_runs}}：用事件暂停_prepare，查询仍应及时返回旧Cafe，而不是半成品Moved。
 - {{symbol:tests/test_publication_reliability.py:PublicationTests.test_offline_build_retries_changed_draft_revision}}：构建期间再编辑，观察发布如何处理旧输入。
+- {{file:tests/test_geo_reliability.py}}：阅读25,920个候选点和1000组点对的独立球面参考，预测降低精度后哪些圆外点仍需被过滤。
 
 ## 自查与练习
 

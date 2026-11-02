@@ -76,6 +76,24 @@ flowchart TD
 - {{symbol:tests/test_chapter05_review.py:test_clock_regression_never_resets_quota}}：时钟回退不能凭空恢复已消耗额度。
 - {{symbol:tests/test_chapter05_review.py:test_burst_capacity_is_independent_of_steady_rate}}：capacity允许短时突发，持续补充速率仍由limit/window决定。
 
+## 微观三：Redis脚本缓存与错误恢复
+
+{{symbol:src/rate_limiter/storage/redis.py:RedisStorage.execute_algorithm}} 把服务端时钟包装和算法交给 {{symbol:src/rate_limiter/storage/redis.py:RedisStorage.execute_atomic}}，后者复用最多16个redis-py脚本对象。缓存的是Lua代码的摘要与执行对象；额度始终从共享Redis内原子读取和扣除，不会因为本地缓存命中而绕过Redis。
+
+```mermaid
+flowchart TD
+  A[执行EVALSHA] --> B{Redis有脚本?}
+  B -->|有| C[原子读取与扣额]
+  B -->|NOSCRIPT 未执行| D[SCRIPT LOAD]
+  D --> E[再次EVALSHA]
+  E --> C
+  A -->|超时或连接错误| F[按失败策略返回 不重放]
+```
+
+服务器丢失脚本缓存与丢失额度状态是两件事。前者可以重新加载代码；后者可能恢复配额，不在硬限额保证内。{{symbol:tests/test_open_source_review.py:test_script_cache_loss_preserves_shared_quota}} 验证重新加载代码仍只允许原额度；{{symbol:tests/test_open_source_review.py:test_script_timeout_is_not_retried}} 验证超时不重放可能已经发生的扣额。首次使用和恢复需要额外往返，稳态每条规则只发送一次EVALSHA。
+
+完整的开源对照与章节边界见 {{file:docs/open-source-review_cn.md}}，包含本轮参考仓库和未实现能力。
+
 ## 自查与练习
 
 - **两个独立MemoryStorage能限制同一个全局主体吗？** 不能，它们各有自己的额度；共享同一对象或使用共享Redis才共享状态。
