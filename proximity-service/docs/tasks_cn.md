@@ -2,7 +2,8 @@
 
 来源：根目录 `System Design Interview.md` 第17章，章节起始行5880。
 
-状态：可执行参考已实现，工程审查更新于2026-10-25。
+状态：可执行参考已实现，源码审查更新于2026-11-02，76项严格测试通过。
+本轮未发现需要修改源码的确认缺陷。
 真实本机独立进程 HTTP 复制已验证；生产扩展不视为部署完成。
 
 ## 范围
@@ -21,10 +22,13 @@
 - [x] T7. 原有1,350点／45查询边界、400点／30查询全球对照；新增独立25,920点覆盖和1000组点对距离检查，以及缓存、发布、回滚、游标、迁移回归。
 - [x] T8. 保留带日期的10,000商家密集／稀疏测量和4客户端120次真实HTTP实测；有界传输、严格framing／JSON、取消、准入和后台资源回收均有回归覆盖。
 - [x] T9. 自清理4进程示例、中英文README、章节审查和实测报告；根README／路线图由主任务统一维护，最初并行任务的整合便笺仅保留为历史记录。
+- [x] T10. 阅读固定版本Tile38/Redis GEO的候选、距离和精度源码，记录纬度/度量、索引与分页差异。
+- [x] T11. 结合CodeGraph与完整严格套件复核覆盖、缓存竞争、发布CAS、副本不可变和有界网络。
+- [x] T12. 复跑4进程示例和带日期本地/HTTP实测，同步中英文档、开源索引及3幅学习图。
 
 ## 验证证据
 
-当前完整回归和2026-10-25本地／HTTP实测集中记录于
+当前完整回归和2026-11-02本地／HTTP实测集中记录于
 [benchmarks/results.md](../benchmarks/results.md)，包含命令和限制。
 [章节审查记录](chapter17-review.md)给出需求映射和新增测试范围。
 
@@ -35,8 +39,8 @@
 - `python tools/benchmark.py --output benchmarks/local-results.json`：10,000商家，发布0.809秒。
 - `python tools/http_benchmark.py --output benchmarks/http-results.json`：4客户端120请求，4.068秒、29.5QPS、零错误。
 
-新报告：[review-local-2026-10-25.json](../benchmarks/review-local-2026-10-25.json)和
-[review-http-2026-10-25.json](../benchmarks/review-http-2026-10-25.json)。
+新报告：[review-local-2026-11-02.json](../benchmarks/review-local-2026-11-02.json)和
+[review-http-2026-11-02.json](../benchmarks/review-http-2026-11-02.json)。
 本机小样本不代表生产持续负载或容量证明。
 
 ## 未落地的生产扩展

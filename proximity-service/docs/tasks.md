@@ -2,7 +2,8 @@
 
 Source: chapter 17 of the root `System Design Interview.md`, section start line 5880.
 
-Status: executable reference implemented; engineering review updated 2026-10-25.
+Status: executable reference implemented; source review updated 2026-11-02,
+76 strict tests passing. No confirmed defect required source changes this round.
 Real local independent-process HTTP replication has been verified. Production
 extensions do not count as deployment completion.
 
@@ -23,10 +24,13 @@ normal changes take effect at the next UTC-day publication.
 - [x] T7. Original 1,350-point/45-query boundary fixture and 400-point/30-query global fixture, plus independent 25,920-point coverage and 1,000-pair distance checks; cache, publication, rollback, cursor and migration regressions.
 - [x] T8. 10,000-business dense/sparse measurements and real HTTP load with four clients/120 requests, retained as dated raw results. Bounded transport, strict framing/JSON, cancellation, admission and worker ownership have regression coverage.
 - [x] T9. Self-cleaning four-process example, bilingual READMEs, chapter review and benchmark report. Root README/roadmap integration is maintained centrally; the original parallel-task integration note is historical.
+- [x] T10. Read pinned Tile38/Redis GEO candidate, distance and precision source; record latitude/metric, index and pagination differences.
+- [x] T11. Recheck geometry, cache races, publication CAS, replica immutability and bounded transport using CodeGraph and the complete strict suite.
+- [x] T12. Rerun the four-process demo and dated local/HTTP measurements; synchronize bilingual docs, source index and three learning diagrams.
 
 ## Verification Evidence
 
-The current complete regression result and 2026-10-25 local/HTTP measurements are
+The current complete regression result and 2026-11-02 local/HTTP measurements are
 recorded in [benchmarks/results.md](../benchmarks/results.md), with commands and
 limits. [Chapter review](chapter17-review.md) maps requirements and new tests.
 
@@ -37,8 +41,8 @@ Historical baseline, executed **2026-10-13**, retained for comparison:
 - `python tools/benchmark.py --output benchmarks/local-results.json`: 10,000 businesses, publication 0.809s.
 - `python tools/http_benchmark.py --output benchmarks/http-results.json`: four clients, 120 requests, 4.068s, 29.5 QPS, zero errors.
 
-New reports are [review-local-2026-10-25.json](../benchmarks/review-local-2026-10-25.json)
-and [review-http-2026-10-25.json](../benchmarks/review-http-2026-10-25.json).
+New reports are [review-local-2026-11-02.json](../benchmarks/review-local-2026-11-02.json)
+and [review-http-2026-11-02.json](../benchmarks/review-http-2026-11-02.json).
 Small local samples are not production soak or capacity evidence.
 
 ## Production Extensions Not Yet Landed

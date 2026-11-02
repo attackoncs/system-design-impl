@@ -1,5 +1,53 @@
 # Validation report
 
+## Source review revalidation — 2026-11-02
+
+No production or test source changed in this round. All **76 tests passed in
+14.998s**, with `python -W error -m unittest discover -s tests -v`, no skips.
+The four-process demo again used three independent SQLite files: pending total 0,
+published total 1, antimeridian distance 222.39016046812768m, and total 1 after a
+replica stopped and then the primary stopped. Owned processes/directories were cleaned.
+[Source comparison and chapter coverage](../docs/open-source-review_cn.md).
+
+Windows11 build26100, Python3.13.9. Measurements ran sequentially after the tests,
+using the unchanged seeded 10,000 businesses and six dense/sparse cases:
+
+```powershell
+python tools/benchmark.py --output benchmarks/review-local-2026-11-02.json
+python tools/http_benchmark.py --output benchmarks/review-http-2026-11-02.json
+```
+
+[Local raw data](review-local-2026-11-02.json): publication 0.610s, SQLite 6,033,408
+bytes, 30 repeated queries per case. Each row also has an initial query, which may
+reuse earlier cases' caches. Search still computes total over all candidates.
+
+| Area/radius | Candidates / total | Cells | Warm p50 / p95 ms |
+| --- | ---: | ---: | ---: |
+| Dense / 500m | 543 / 109 | 6 | 7.297 / 7.994 |
+| Dense / 5km | 5000 / 5000 | 1 | 82.005 / 89.454 |
+| Dense / 20km | 5000 / 5000 | 9 | 80.472 / 82.830 |
+| Sparse / 500m | 0 / 0 | 4 | 2.410 / 2.678 |
+| Sparse / 5km | 0 / 0 | 2 | 2.287 / 2.638 |
+| Sparse / 20km | 0 / 0 | 12 | 2.528 / 2.904 |
+
+[HTTP raw data](review-http-2026-11-02.json): one independent primary process,
+four clients, 120 real loopback requests, **0 errors**, 3.612s, **33.22 QPS**.
+Each case has 20 samples; p95 uses sorted index floor(0.95×(n−1)).
+
+| Case | p50 / p95 ms |
+| --- | ---: |
+| Dense / 500m | 59.265 / 140.471 |
+| Dense / 5km | 285.411 / 330.489 |
+| Dense / 20km | 274.065 / 351.027 |
+| Sparse / 500m | 33.796 / 86.965 |
+| Sparse / 5km | 30.624 / 50.487 |
+| Sparse / 20km | 16.401 / 47.040 |
+
+These are small synthetic observations, not a sustained capacity test, an algorithm
+comparison or evidence of speedup. Dense scans exceed the 2048-entry detail cache;
+empty sparse results measure mostly request overhead. The benchmark targets the
+primary, while replica/gateway outages are exercised by the suite and demo.
+
 ## Core review — 2026-10-25 (Asia/Shanghai)
 
 Windows 11 build 26100, Python 3.13.9. No third-party runtime or test packages.

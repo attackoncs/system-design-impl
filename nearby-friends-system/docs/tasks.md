@@ -1,7 +1,8 @@
 # Tasks: Nearby Friends
 
 Source: root System Design Interview.md chapter 18, lines 6726–7293.
-Core review date: 2026-10-25. Final executed counts and measurements are in the
+Core review date: 2026-11-02. No confirmed defect required a source change this round.
+Final executed counts and measurements are in the
 [validation report](../benchmarks/results.md); historical counts are not current.
 
 ## Completed core work
@@ -23,12 +24,18 @@ Core review date: 2026-10-25. Final executed counts and measurements are in the
 - [x] Add transaction, backend, session/work and provisioning fault/concurrency tests;
   keep real independent-process tests and identify injected faults separately.
 - [x] Synchronize bilingual READMEs/design/requirements/tasks and chapter mapping.
+- [x] Read pinned OwnTracks Recorder/Hauk delivery, sharing and expiry code; record
+  differences from mutual-friend authorization, Redis hints and the 600-second TTL.
+- [x] Recheck Store/Backend/session/work/routing with CodeGraph and all 76 strict
+  tests, including real Redis/WebSocket processes without skips.
+- [x] Rerun the network example and 200-delivery fanout; update source references,
+  bilingual docs and three learning diagrams without unrelated source refactoring.
 
 ## Verification
 
 Use the current [report](../benchmarks/results.md) for commands and final execution
 results. The new raw fanout measurement is
-[review-2026-10-25.json](../benchmarks/review-2026-10-25.json).
+[review-2026-11-02.json](../benchmarks/review-2026-11-02.json).
 
 Historical baseline on **2026-10-20**: 12 tests passed (9 core, 3 real-network) in
 16.160s; two WebSocket/two Redis processes, 21 connections, 200/200 observed

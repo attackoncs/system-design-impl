@@ -1,5 +1,17 @@
 # 第17章审查：Proximity Service
 
+## 2026-11-02 开源源码复核
+
+重新阅读根文档5880–6725行，结合CodeGraph复核，并阅读Tile38和Redis GEO的实际
+候选生成、精度调整及距离过滤源码。本轮没有确认需要修改的源码缺陷，保持已有
+geo/models/cache/store/publisher/http职责，补充固定来源、章节对应及明确边界。
+
+完整严格套件 **76项通过（14.998秒），无跳过**；四进程示例通过，1万商家密集/
+稀疏基准及4客户端120次真实HTTP查询已重新执行，零请求错误。详见
+[本轮源码核对](open-source-review_cn.md)与[验证报告](../benchmarks/results.md)。
+
+## 2026-10-25 历史审查
+
 审查日期：2026-10-25（Asia/Shanghai）。依据仓库内
 [《System Design Interview.md》](<../../System Design Interview.md>)第17章，
 范围为附近商家服务，不涉及第18章的移动好友位置追踪。

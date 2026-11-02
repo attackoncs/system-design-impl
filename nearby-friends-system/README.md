@@ -11,6 +11,12 @@ Pub/Sub channels. Includes mutual friendship consent, opt-in sharing, ordered
 multi-device reports, configurable 5mi radius, inactivity expiry, history consent,
 consistent-hash broker routing and snapshot recovery. [中文](README_CN.md).
 
+2026-11-02 [source comparison and chapter review](docs/open-source-review_cn.md):
+read actual OwnTracks Recorder/Hauk location delivery and sharing code, then checked
+the local authorization, TTL, routing and session paths with CodeGraph. No confirmed
+defect required source changes. All **76 strict tests pass, with no skips**, including
+real Redis/WebSocket processes; the new fanout run observed **200/200 deliveries**.
+
 ## Run
 
 Python 3.10+, `websockets` 14–16 and `redis` 5–6. From this directory:
@@ -137,7 +143,7 @@ budgets. Redis/cache failures may lose hints; current SQL state remains availabl
 
 The [validation report](benchmarks/results.md) contains current test counts,
 independent-process evidence and dated measurements. New raw fanout observations
-are stored in [review-2026-10-25.json](benchmarks/review-2026-10-25.json).
+are stored in [review-2026-11-02.json](benchmarks/review-2026-11-02.json).
 The original 2026-10-20 experiment used 21 connections and delivered 200/200 updates
 with p95 140.323ms; it is a historical local result, not the current measurement
 or a production capacity claim.

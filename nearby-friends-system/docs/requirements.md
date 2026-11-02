@@ -1,7 +1,9 @@
 # Requirements: Nearby Friends (chapter 18)
 
 Source: repository System Design Interview.md, chapter 18, lines 6726–7293.
-Review date: 2026-10-25. See [chapter review](chapter18-review.md).
+Review date: 2026-11-02. See [chapter review](chapter18-review.md) and
+[pinned source comparison](open-source-review_cn.md). All 76 existing strict tests
+pass, with real Redis/WebSocket integration and no skips; deployment gaps below remain explicit.
 
 ## Functional contract
 

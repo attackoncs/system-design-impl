@@ -13,6 +13,12 @@ Source: chapter 17 of the repository's System Design Interview.md.
 - Provide real HTTP primary, independently stored pull replicas and region-aware read routing with failover. Logical shards are implemented locally; physical shard distribution and cloud regional deployment remain explicit extensions.
 
 ## Acceptance
+
+2026-11-02 verification: all 76 existing tests pass with `-W error`; the independent
+four-process demo and 10,000-business local/HTTP measurements were rerun. The
+[pinned source comparison](open-source-review_cn.md) separates executable chapter
+behavior from remaining production infrastructure and alternative index choices.
+
 Use standard-library Python, SQLite and repeatable unittest tests. Validate brute-force spatial equivalence, restart, authorization, replay, snapshot rollback, cache TTL, HTTP errors, independent-process replication and replica outage. Measure synthetic dense/sparse datasets and report local evidence only. The book's 200 million businesses, 100 million DAU, 5000 QPS and production availability are design targets, not local acceptance claims.
 
 ## Boundaries

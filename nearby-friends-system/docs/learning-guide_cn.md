@@ -1,6 +1,6 @@
 # 第18章：从一次位置上报看懂附近好友
 
-附近好友首先是一个授权与时效问题：**谁允许谁看到哪份仍新鲜的位置**，然后才是距离计算和实时推送。项目把好友确认、共享开关和位置记录放进SQLite，Redis承担位置加速与变化提示，WebSocket会话把当前快照变成enter／update／leave。
+附近好友首先是一个授权与时效问题：**谁允许谁看到哪份仍新鲜的位置**，然后才是距离计算和实时推送。项目把好友确认、共享开关和位置记录放进SQLite，Redis承担位置镜像与变化提示，WebSocket会话把当前快照变成enter／update／leave。当前Redis命中也不省略SQL授权读取。
 
 本文选本机共享SQLite元数据、Redis及WebSocket节点的实验方案。SQLite文件不是跨主机HA数据库，Pub/Sub也不是可重放消息日志，见 [README_CN.md](../README_CN.md) 的部署边界。
 
@@ -107,12 +107,48 @@ Redis不可用时，读取仍需从持久状态获得完整、已授权的数据
 
 Pub/Sub只提示发生变化，可能丢失；系统周期核对当前快照。重连恢复的是现在的快照，不是重放丢失的所有移动轨迹。
 
+## 微观三：为什么Redis之后还要再读一次SQL
+
+[backend.py:246](../src/nearby_friends/backend.py#L246)
+
+```python
+with self._operation():
+    own, reports = self.store.reports(actor)
+    if own is None:
+        return []
+    self._repair_cache(reports, time.monotonic() + self.repair_budget)
+    # Cache calls may block while TTL, sharing, friendships or either
+    # user's location changes. Re-read once after optional network work;
+    # this final consistent SQL read is the response authorization point.
+    own, reports = self.store.reports(actor)
+    if own is None:
+        return []
+```
+
+第一次reports读取当前候选，Redis镜像修复可能耗时。期间Bob可能关闭共享、被移除
+好友、位置过期，Alice也可能移动。第二次reports才决定本次返回的数据和授权；
+不能继续发送第一次读取的旧坐标。这个选择多一次SQL读取，当前没有Redis权威
+快速路径。最终SQL读取后仍可能发生撤权，已经在途的帧不能撤回。
+
+```mermaid
+flowchart TD
+  H["用户ID提示或周期对账"] --> R["第一次SQL：有效位置和授权候选"]
+  R --> C["可选Redis MGET／有界修复"]
+  C --> F["第二次SQL：重新核对好友、共享、TTL与位置"]
+  F -->|"仍在可见集合"| D["按当前坐标算距离，发送enter／update"]
+  F -->|"已不可见"| L["发送leave，只含ID"]
+```
+
+[open-source-review_cn.md](../docs/open-source-review_cn.md) 对照OwnTracks Recorder的快照/实时分发和
+Hauk的限时链接共享。连接过滤、链接过期与本项目双向好友授权是不同的边界。
+
 ## 用测试建立边界
 
 - [CoreTests.test_authentication_and_mutual_consent](../tests/test_core.py#L38)：双方都有位置仍不可见，确认好友后才出现，remove后消失。
 - [CoreTests.test_report_validation_and_ordering_across_devices](../tests/test_core.py#L76)：phone后来的tablet旧报告被拒绝；重启也不能绕过last_ts。
 - [CoreTests.test_privacy_off_requires_new_location_on_reenable](../tests/test_core.py#L52)：再次开启共享不复活旧坐标，必须有新报告。
 - [NetworkTests.test_reconnect_ttl_and_pubsub_loss_recovery](../tests/test_network.py#L142)：真实Redis／WebSocket实验核对断线、TTL与丢提示恢复，依赖环境按README准备。
+- [test_backend_reliability.py](../tests/test_backend_reliability.py)：让Redis操作变慢，观察共享、好友、TTL或查看者位置改变后，第二次SQL读取如何决定输出。
 
 ## 自查与练习
 

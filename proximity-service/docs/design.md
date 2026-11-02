@@ -1,5 +1,11 @@
 # Design: Proximity Service
 
+The [2026-11-02 source comparison](open-source-review_cn.md) reviews Tile38's R-tree
+and Redis GEO's scored geohash candidates. This implementation retains geohash,
+exact spherical filtering and immutable daily generations; it does not add a second
+index backend. Redis's latitude limit differs from this project's polar coverage.
+No confirmed implementation defect required a source change in that review.
+
 ## Module responsibilities
 
 `geo.py` owns spherical geometry and bounded geohash coverage. `models.py` owns

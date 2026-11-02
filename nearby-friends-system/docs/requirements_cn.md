@@ -1,7 +1,8 @@
 # 需求：附近好友（第18章）
 
-依据仓库《System Design Interview.md》第18章（6726–7293行）。核对日期2026-10-25。
-详见[章节记录](chapter18-review.md)。
+依据仓库《System Design Interview.md》第18章（6726–7293行）。核对日期2026-11-02。
+详见[章节记录](chapter18-review.md)和[固定来源对照](open-source-review_cn.md)。
+现有76项严格测试全部通过，包含真实Redis/WS且无跳过；下文部署差距保持明确。
 
 ## 功能约定
 

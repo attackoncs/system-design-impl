@@ -10,6 +10,12 @@ Chapter 17 executable reference: geohash nearby search, owner CRUD, durable
 idempotency, atomic daily snapshots, bounded caches, independent HTTP replicas
 and a region-aware read gateway. [中文说明](README_CN.md).
 
+2026-11-02 [source comparison and chapter audit](docs/open-source-review_cn.md):
+reviewed actual Tile38/Redis GEO code and the existing geometry, cache, publication
+and transport paths. No confirmed source defect required changes. All **76 tests**
+pass with warnings treated as errors; the four-process demo and dated local/HTTP
+measurements were rerun. See [current evidence](benchmarks/results.md).
+
 ## Run
 
 Python 3.10+, no third-party runtime/test dependencies. From this directory:

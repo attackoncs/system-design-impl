@@ -1,5 +1,10 @@
 # Design: Nearby Friends
 
+The [2026-11-02 source comparison](open-source-review_cn.md) checks OwnTracks
+Recorder's snapshot/live delivery and Hauk's expiring sharing sessions. Their
+access and transport models differ from mutual-friend WebSockets/Redis here.
+No confirmed implementation defect required a source change in this review.
+
 ## Responsibilities and state
 
 The reference uses independent WebSocket processes sharing one local SQLite WAL

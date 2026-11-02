@@ -1,5 +1,9 @@
 # 设计：附近好友
 
+[2026-11-02开源对照](open-source-review_cn.md)核对OwnTracks Recorder的快照/实时
+分发和Hauk的限时共享。两者的访问与传输模型不同于本项目双向好友WS/Redis路线；
+本轮未发现需要修改源码的确认缺陷。
+
 ## 职责与存储
 
 参考实现选择原书的Redis路线：独立WebSocket进程、同机共享SQLite WAL、真实Redis缓存和

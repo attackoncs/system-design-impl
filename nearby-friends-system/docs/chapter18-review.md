@@ -1,5 +1,17 @@
 # 第18章核对：附近好友
 
+## 2026-11-02 开源源码复核
+
+重新阅读6726–7293行，结合CodeGraph核对现有Store、Backend、会话、工作池、协议和
+路由；参考OwnTracks Recorder、Hauk的实际位置分发/共享代码。本轮未发现需要改动
+源码的确认缺陷，保留既有模块边界，补充固定来源及架构差异。
+
+完整严格回归 **76项通过（28.047秒），无跳过**。实际双Redis/双WS、21连接实验
+完成200/200次投递，P95为146.864ms；示例在关闭共享后快照为0。详见
+[本轮核对记录](open-source-review_cn.md)和[验证报告](../benchmarks/results.md)。
+
+## 2026-10-25 历史核对
+
 核对日期：2026-10-25（Asia/Shanghai）。依据
 [《System Design Interview.md》](<../../System Design Interview.md>)6726–7293行。
 当前选择WebSocket/Redis路线；以下区分可执行核心、可选替代与尚未部署的规模能力。

@@ -1,5 +1,44 @@
 # Nearby Friends verification
 
+## Source revalidation — 2026-11-02
+
+All **76 tests passed in 28.047s, no skips**, with `python -W error -m unittest
+discover -s tests -v`. No source or test code changed this round. Actual Redis
+8.0.5 ran under WSL Ubuntu-26.04; Windows11 build26100/Python3.13.9 used
+websockets16.1.1 and redis-py6.4.0. Cached binaries/dependencies were reused.
+See [pinned source comparison and chapter coverage](../docs/open-source-review_cn.md).
+
+The existing 9 core, 18 Store/Ring, 17 Backend, 23 protocol/session/work,
+4 provisioning and 5 real Redis tests ran. Controlled backends/fault injection
+remain distinct from the real Redis/WebSocket network and independent-process cases.
+Per-run Redis passwords/run IDs isolate owned services; processes are stopped on
+exit, while diagnostic files remain in ignored `.runtime/lab-<uuid>/` directories.
+
+`python -W error examples/network_demo.py` used two Redis and two WebSocket
+processes. Dateline distance: **222.39016046812768m**; cross-node entry: **346.688ms**;
+hint publication succeeded and the authorized snapshot became **0** after sharing
+was disabled. This includes initialization/subscription, not just transport time.
+
+```powershell
+python -W error tools/benchmark.py --connections 20 --updates 10 --output benchmarks/review-2026-11-02.json
+```
+
+| Metric | Observed |
+| --- | ---: |
+| Independent WebSocket / Redis processes | 2 / 2 |
+| Observer / total connections | 20 / 21 |
+| Publisher updates | 10 |
+| Expected / observed deliveries | 200 / 200 |
+| End-to-end p50 / p95 | 105.950 / 146.864ms |
+| Maximum observed | 173.977ms |
+
+[Raw report](review-2026-11-02.json). Warm connections; latency starts before the
+location command and ends at the matching revision's observed delta. Each update
+waits for its observer deliveries before the next update. p95 uses sorted index
+floor(0.95×(n−1)). This includes SQL, Redis, reconciliation, WS and client scheduling;
+it does not count Pub/Sub messages independently. The suite, demo and measurement
+ran sequentially. No before/after speedup, sustained capacity or WAN/HA claim follows.
+
 ## Core review — 2026-10-25 (Asia/Shanghai)
 
 Windows 11 build 26100 / Python 3.13.9, websockets 16.1.1, redis-py 6.4.0,
