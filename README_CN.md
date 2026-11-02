@@ -15,19 +15,19 @@
 | 02 | [从零扩容](./scale-from-zero/) | ✅ 核心已复审 | 源绑定复制、缓存栅栏、在线Web池、租约任务、本地GeoDNS故障切换与租约隔离的资料主库提升；73项测试；生产级多地域HA仍待实现 |
 | 03 | [容量估算](./capacity-estimation/) | ✅ 参考实现完成 | 显式单位Decimal QPS/存储/带宽/缓存/节点/可用性预算、场景CLI与敏感性分析；14项测试 |
 | 05 | [Rate Limiter](./rate-limiter/) | ✅ 核心复审完成 | 249项测试；文件规则/稳定身份/时钟水位/有界FIFO；真实4进程Redis及双HTTP验证 |
-| 06 | [Consistent Hashing](./consistent-hashing/) | ✅ 核心复审完成 | 154项测试；流式迁移/原子权重/容量校验；四进程一致性及建环/规划实测 |
-| 07 | [Key-Value Store](./key-value-store/) | 核心已实现，[深入审查进行中](key-value-store/docs/chapter07-review.md) | Dynamo 风格、LSM-tree 存储、仲裁一致性、Gossip 协议、gRPC |
-| 08 | [Unique ID Generator](./unique-id-generator/) | ✅ 完成 | Twitter Snowflake 算法、可配置位布局、线程安全、ID 解析 |
-| 09 | [URL Shortener](./url-shortener/) | ✅ 完成 | 可插拔哈希策略、Base-62 转换、点击追踪、标准库 HTTP 演示 |
+| 06 | [Consistent Hashing](./consistent-hashing/) | ✅ 核心复审完成 | 163项测试；GitHub源码对照、迁移局部性/统计属性、未变状态O(1)规划；四进程一致性验证 |
+| 07 | [Key-Value Store](./key-value-store/) | 核心已实现，[开源复审428项测试](key-value-store/docs/open-source-review_cn.md)；自动供给/安全下线未完成 | Dynamo 风格、LSM-tree 存储、仲裁交集、Gossip 协议、gRPC |
+| 08 | [Unique ID Generator](./unique-id-generator/) | 核心已实现，[开源复审122项测试](unique-id-generator/docs/open-source-review_cn.md)；身份/重启安全依赖部署 | Snowflake、位布局预计算、线程安全、精确UTC解析 |
+| 09 | [URL Shortener](./url-shortener/) | ✅ 完成 | CRC32/Base62、SQLite事务发号、只读去重、LRU与中文网址重定向；[开源对照](./url-shortener/docs/open-source-review_cn.md) |
 | 10 | [Web Crawler](./web-crawler/) | ✅ 完成 | 持久调度恢复、自适应重爬、主机分片路由、DNS 缓存与有界下载 |
-| 11 | [Notification System](./notification-system/) | ✅ 完成 | 持久通道队列、事件去重、租约恢复、计划重试与鉴权演示（模拟供应商） |
+| 11 | [Notification System](./notification-system/) | ✅ 核心已复审 | 466项测试；有界批量受理、领取凭据隔离、事务内租约计时与Worker复用；[开源对照](./notification-system/docs/open-source-review_cn.md) |
 | 12 | [News Feed System](./news-feed-system/) | ✅ 核心已复审 | 282项测试；中英文需求/任务、有界并发组装、请求指标、推拉读取与可恢复发布outbox |
 | 13 | [Chat System](./chat-system/) | ✅ 完成 | 事务收件箱、Redis 路由与推送凭据校验、有界 WebSocket、授权消息查询及设备游标恢复 |
-| 14 | [Search Autocomplete](./search-autocomplete-system/) | ✅ 核心链路已核对 | 采样日志、持久聚合/周期Worker、不可变Top 5 Trie、非阻塞构建、有界HTTP切换；170项测试 |
-| 15 | [Video Streaming](./video-streaming-system/) | ✅ 核心链路已核对 | 配置式GOP流水线、有界Worker续租、元数据API、真实HLS/PostgreSQL/S3协议验证；160项测试 |
-| 16 | [File Sync](./file-sync-system/) | ✅ 核心链路已核对 | 有界自动同步、简单/断点加密上传、冲突/权限/GC栅栏及持久通知；116项测试 |
-| 17 | [附近商家服务](./proximity-service/) | ✅ 核心链路已核对 | 后台每日发布与CAS、隔离/合并缓存、有界HTTP与区域切换、独立副本；76项测试 |
-| 18 | [附近好友](./nearby-friends-system/) | ✅ 核心链路已核对 | 有界会话/任务、接收TTL、批量缓存修复、broker租约、分页增量和退出排空；76项测试 |
+| 14 | [Search Autocomplete](./search-autocomplete-system/) | ✅ 核心链路已核对 | 采样日志、不可变Top 5 Trie、有界副本切换与响应完整性；188项测试；[开源对照](./search-autocomplete-system/docs/open-source-review_cn.md) |
+| 15 | [Video Streaming](./video-streaming-system/) | ✅ 核心链路已核对 | 分片组装校验与修复、有界租约DAG、真实HLS/PostgreSQL/S3验证；覆盖164项；[开源核对](./video-streaming-system/docs/open-source-review_cn.md) |
+| 16 | [File Sync](./file-sync-system/) | ✅ 核心链路已核对 | 加密增量同步、冲突/权限/GC栅栏、响应完整性与游标恢复；122项测试；[开源核对](./file-sync-system/docs/open-source-review_cn.md) |
+| 17 | [附近商家服务](./proximity-service/) | ✅ 核心链路已核对 | geohash与距离、每日CAS发布、有界缓存/HTTP及副本切换；76项测试；[Tile38/Redis源码核对](./proximity-service/docs/open-source-review_cn.md) |
+| 18 | [附近好友](./nearby-friends-system/) | ✅ 核心链路已核对 | WS/Redis授权快照、TTL、有界工作与重订阅；76项测试、200/200投递；[开源源码核对](./nearby-friends-system/docs/open-source-review_cn.md) |
 | 19 | [地图系统](./maps-system/) | ✅ 核心链路已核对 | 导航指令/编码路径、分级路由瓦片、持久预生成、动态导航/SSE与有界HTTP；113项测试 |
 | 20 | [分布式消息队列](./distributed-message-queue/) | ✅ 核心链路已核对 | 有界攒批、分区并发、标签过滤、退组/扩容、定时长轮询与持久复制；116项测试；生产边界见章节记录 |
 | 21 | [监控与告警系统](./metrics-monitoring-system/) | ✅ 核心链路已核对 | 分区采集、静态发现归属、量规加权查询、增量降采样和隔离告警；108项测试；生产边界见章节记录 |
