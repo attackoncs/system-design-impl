@@ -2,6 +2,7 @@
 
 import asyncio
 import sqlite3
+from contextlib import closing
 
 import pytest
 from web_crawler.config import CrawlerConfig
@@ -83,7 +84,7 @@ async def test_durable_handoff_is_recorded_before_callback_and_retried(tmp_path)
     pages = FakePages(b"<html>must not download</html>")
 
     async def route(owner, entry):
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db:
             row = db.execute(
                 "SELECT state,attempts FROM jobs WHERE url=?", (entry.url,)
             ).fetchone()
@@ -108,7 +109,7 @@ async def test_durable_handoff_is_recorded_before_callback_and_retried(tmp_path)
     ]
     assert observations == [("b", ("inflight", 1)), ("b", ("inflight", 2))]
     assert pages.calls == []
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db:
         assert db.execute("SELECT state,last_status FROM jobs").fetchone() == (
             "done",
             "filtered",

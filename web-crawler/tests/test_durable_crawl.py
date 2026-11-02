@@ -2,6 +2,7 @@
 
 import asyncio
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -114,7 +115,7 @@ async def test_new_instance_resumes_pending_children_and_deduplicates_disk_conte
     second = await Crawler(config, pages).crawl([])
     assert second[0].url == "https://a.test/child"
     assert second[0].status == CrawlStatus.DUPLICATE
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db:
         assert db.execute("SELECT count(*) FROM snapshots").fetchone()[0] == 1
 
 

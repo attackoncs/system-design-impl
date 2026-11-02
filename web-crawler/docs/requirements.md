@@ -33,7 +33,7 @@ A Python web crawler library implementing the design from System Design Intervie
 
 1.2 THE Crawler SHALL repeatedly dequeue URLs from the URL_Frontier, download their content, parse it, extract links, filter them, and enqueue new URLs until the frontier is empty or a stop condition is met.
 
-1.3 THE Crawler SHALL support a configurable maximum number of pages to crawl (max_pages), after which crawling stops.
+1.3 max_pages bounds attempts per batch, including errors, disallowed and duplicate URLs; pending work remains for later batches.
 
 1.4 THE Crawler SHALL support a configurable maximum crawl depth from seed URLs, after which deeper URLs are not enqueued.
 
@@ -41,7 +41,7 @@ A Python web crawler library implementing the design from System Design Intervie
 
 1.6 WHEN the URL_Frontier is empty and all in-flight downloads are complete, THE Crawler SHALL terminate gracefully.
 
-1.7 THE Crawler SHALL provide an async `crawl()` method that returns a collection of Crawl_Results for all successfully crawled pages.
+1.7 crawl() returns all attempted results from this batch, not just successes; one instance rejects concurrent crawl calls.
 
 1.8 THE Crawler SHALL invoke registered Content_Hooks for each successfully downloaded and parsed page.
 
@@ -53,15 +53,15 @@ A Python web crawler library implementing the design from System Design Intervie
 
 2.1 THE URL_Frontier SHALL maintain front queues that prioritize URLs into HIGH, MEDIUM, and LOW priority levels.
 
-2.2 WHEN dequeuing a URL, THE URL_Frontier SHALL select from higher-priority front queues before lower-priority ones.
+2.2 Choose HIGH/MEDIUM/LOW among eligible host heads with FIFO ties; reserved/delayed hosts do not block ready hosts.
 
 2.3 THE URL_Frontier SHALL maintain back queues that group URLs by their host (domain).
 
-2.4 THE URL_Frontier SHALL enforce a configurable per-host delay (default: 1 second) between consecutive requests to the same host.
+2.4 Reserve at most one task per host; start the next politeness delay on completion, default one second; first requests have no previous access to wait for.
 
-2.5 WHEN a URL is enqueued, THE URL_Frontier SHALL assign it to the appropriate front queue based on its priority and the appropriate back queue based on its host.
+2.5 Use per-host priority heaps, a ready-head heap and a delayed-host wake-up heap; do not scan a reserved-host backlog on each poll.
 
-2.6 WHEN dequeuing, THE URL_Frontier SHALL only return a URL whose host's politeness delay has elapsed since the last request to that host.
+2.6 Return only unreserved hosts whose delay has elapsed; completion republishes the next host head.
 
 2.7 THE URL_Frontier SHALL provide methods to check if it is empty and to get the current size (number of pending URLs).
 
@@ -97,15 +97,17 @@ A Python web crawler library implementing the design from System Design Intervie
 
 4.1 THE Robots_Checker SHALL fetch and parse robots.txt for each host before the first request to that host.
 
-4.2 THE Robots_Checker SHALL use `urllib.robotparser.RobotFileParser` from the Python standard library to parse robots.txt files.
+4.2 Reuse RobotFileParser for groups, extending wildcard, terminal-anchor and longest-rule matching.
 
-4.3 THE Robots_Checker SHALL cache parsed robots.txt results per host to avoid redundant fetches.
+4.3 Cache per origin (scheme/host/port); striped locks coalesce concurrent cache misses.
 
 4.4 WHEN checking if a URL is allowed, THE Robots_Checker SHALL use the configured User-Agent string for matching rules.
 
-4.5 IF robots.txt cannot be fetched (404, timeout, error), THEN THE Robots_Checker SHALL assume all paths are allowed for that host.
+4.5 Retain the network-error allow policy: cache unavailable results and allow on FetchError/OSError; full RFC HTTP failure-status policies are not claimed.
 
 4.6 THE Robots_Checker SHALL support a configurable cache TTL (time-to-live) for robots.txt entries (default: 3600 seconds).
+
+4.7 Support *, terminal $, longest-rule and equal-length Allow precedence. Keep literal %2A/%24 distinct from operators; parse URLs before decoding escaped delimiters. Retain stdlib group selection without all RFC group-merging behavior.
 
 ### Requirement 5: Content Parsing and Deduplication
 
@@ -119,9 +121,9 @@ A Python web crawler library implementing the design from System Design Intervie
 
 5.3 AFTER downloading a page, THE Crawler SHALL compute a Content_Fingerprint (SHA-256 hash) of the page body.
 
-5.4 IF the Content_Fingerprint has been seen before (exists in the content seen store), THEN THE Crawler SHALL skip further processing of that page and mark the Crawl_Result as "duplicate".
+5.4 Mark duplicates DUPLICATE without repeated archiving/hooks, but still discover links against the current document URL.
 
-5.5 IF the Content_Fingerprint is new, THEN THE Crawler SHALL add it to the content seen store and proceed with link extraction.
+5.5 Claim new fingerprints before processing and publish only after acceptance; concurrent duplicates wait and can retry after owner failure/cancellation.
 
 5.6 THE content seen store SHALL use an in-memory set of SHA-256 hex digests as the default implementation.
 
@@ -135,11 +137,13 @@ A Python web crawler library implementing the design from System Design Intervie
 
 6.2 THE Link_Extractor SHALL use `html.parser.HTMLParser` from the Python standard library.
 
-6.3 THE Link_Extractor SHALL resolve relative URLs to absolute URLs using the base URL of the page.
+6.3 Resolve relative URLs against the first base href and document address; missing/malformed base falls back to the document URL, and later base elements do not override the first.
 
-6.4 THE Link_Extractor SHALL normalize extracted URLs by removing fragments (#section) and normalizing scheme/host to lowercase.
+6.4 Remove fragments and lowercase scheme/host while preserving path, query and case-sensitive userinfo.
 
 6.5 THE Link_Extractor SHALL return a list of absolute, normalized URL strings.
+
+6.6 Skip individually malformed hrefs without discarding valid siblings; seeds and discovered links share the filter.
 
 ### Requirement 7: URL Filtering
 
@@ -159,7 +163,7 @@ A Python web crawler library implementing the design from System Design Intervie
 
 7.6 WHEN both whitelist and blacklist are configured, THE URL_Filter SHALL apply the whitelist first (URL must be in whitelist AND not in blacklist).
 
-7.7 THE URL_Filter SHALL reject URLs with schemes other than http and https.
+7.7 Reject non-HTTP(S), missing hosts, malformed IPv6 brackets and invalid/out-of-range ports; malformed input returns False.
 
 ### Requirement 8: URL Deduplication
 
@@ -173,7 +177,7 @@ A Python web crawler library implementing the design from System Design Intervie
 
 8.3 IF the URL has not been seen before, THEN THE Crawler SHALL add it to the URL_Seen_Store and enqueue it.
 
-8.4 THE URL_Seen_Store SHALL use an in-memory Python set as the default implementation.
+8.4 Use an in-memory set by default; state_path enables SQLite unique jobs/fingerprints and deduplication across restarts.
 
 8.5 THE URL_Seen_Store SHALL compare URLs after normalization (lowercase scheme/host, remove fragments).
 
@@ -237,7 +241,15 @@ A Python web crawler library implementing the design from System Design Intervie
 
 12.3 THE configuration SHALL be a dataclass with type hints for all fields.
 
-12.4 THE configuration SHALL validate that numeric values are positive and raise ValueError for invalid inputs.
+12.4 Strictly validate positive integer budgets; max_retries/max_redirects may be zero; durations must be finite and positive, and recrawling requires state_path.
+
+### Requirement 13: Durable Scheduling, Recrawling and Routing
+
+13.1 state_path enables SQLite with one active owner per file; process death releases the lock and startup recovers inflight jobs.
+13.2 Atomically commit snapshots, fingerprints, acknowledgements and host time; retry within budget and return unacknowledged cancelled work.
+13.3 External batch calls activate due recrawls; unchanged content backs off, changes restore the base interval and raise priority.
+13.4 Inject ConsistentHashPartition/route_url; persist remote discoveries before delivery and require durable target acknowledgement and idempotence.
+13.5 Membership, automatic safe handoff, replication/sharding, five-year retention cleanup, anti-spam models and dynamic rendering are deployment extensions.
 
 ## Non-Functional Requirements
 
@@ -264,12 +276,12 @@ A Python web crawler library implementing the design from System Design Intervie
 
 - **NFR-3.1**: URL deduplication lookup SHALL complete in O(1) average time using a hash set.
 - **NFR-3.2**: Content fingerprint computation SHALL complete in O(n) time where n is the content length.
-- **NFR-3.3**: The URL Frontier dequeue operation SHALL complete in O(log n) time or better.
-- **NFR-3.4**: The crawler SHALL support crawling at least 100 pages concurrently without degradation.
+- **NFR-3.3**: Heap work is amortized logarithmic per entry; one poll may wake multiple due hosts, so strict O(log n) per call is not claimed.
+- **NFR-3.4**: Concurrency is bounded by max_concurrent, host reservations and download slots; no universal no-degradation promise at 100 concurrent pages.
 
 ### NFR-4: Concurrency
 
 - **NFR-4.1**: The crawler SHALL use asyncio for concurrent downloads.
-- **NFR-4.2**: The crawler SHALL use asyncio.Semaphore to limit concurrent downloads to the configured maximum.
-- **NFR-4.3**: The crawler SHALL be safe for single-threaded async execution (no threading required for core operation).
-- **NFR-4.4**: The default Fetcher SHALL use `asyncio.get_event_loop().run_in_executor()` to wrap blocking urllib calls.
+- **NFR-4.2**: Bound task creation before semaphore-protected processing; recheck due hosts every 50 ms only with a free slot and remaining budget.
+- **NFR-4.3**: The frontier belongs to the event-loop thread; blocking downloads/durable I/O use threads and drain started work on cancellation.
+- **NFR-4.4**: The default fetcher wraps blocking HTTP with body/deadline/slot bounds; unresolved system DNS retains its bounded download slot.

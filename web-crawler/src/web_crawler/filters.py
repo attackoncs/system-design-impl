@@ -47,7 +47,15 @@ class URLFilter:
         Returns:
             True if the URL is accepted, False if rejected.
         """
-        parsed = urllib.parse.urlparse(url)
+        if not isinstance(url, str):
+            return False
+        try:
+            parsed = urllib.parse.urlparse(url)
+            if not parsed.hostname:
+                return False
+            _ = parsed.port  # Reject malformed or out-of-range ports before enqueue.
+        except ValueError:
+            return False
 
         # 1. Scheme check (http/https only)
         if parsed.scheme.lower() not in ("http", "https"):

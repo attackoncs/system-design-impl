@@ -1,0 +1,18 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows",
+  "processes": 4,
+  "links_per_process": 125,
+  "shorten_calls": 1000,
+  "unique_links": 501,
+  "deduplication_verified": true,
+  "all_mappings_resolved_after_restart": true,
+  "new_id_after_restart_verified": true,
+  "seconds_including_process_startup": 4.132490599999983,
+  "http": {
+    "create": 200,
+    "unicode_redirect": 302,
+    "invalid_url": 400,
+    "missing": 404
+  }
+}

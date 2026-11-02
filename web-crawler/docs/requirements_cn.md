@@ -33,7 +33,7 @@
 
 1.2 Crawler 应反复从 URL_Frontier 中出队 URL、下载其内容、解析、提取链接、过滤，并将新 URL 入队，直到 Frontier 为空或满足停止条件。
 
-1.3 Crawler 应支持可配置的最大爬取页数（max_pages），超过后爬取停止。
+1.3 max_pages限制本批处理尝试，包含失败、禁止和重复；未完成队列留待后续批次。
 
 1.4 Crawler 应支持可配置的距种子 URL 的最大爬取深度，超过深度的 URL 不再入队。
 
@@ -41,7 +41,7 @@
 
 1.6 当 URL_Frontier 为空且所有进行中的下载已完成时，Crawler 应优雅终止。
 
-1.7 Crawler 应提供一个异步的 `crawl()` 方法，返回所有成功爬取页面的 Crawl_Result 集合。
+1.7 crawl()返回本批所有已尝试结果；同一实例拒绝并发crawl。
 
 1.8 Crawler 应为每个成功下载并解析的页面调用已注册的 Content_Hook。
 
@@ -53,15 +53,15 @@
 
 2.1 URL_Frontier 应维护前置队列，将 URL 划分为 HIGH、MEDIUM、LOW 三个优先级。
 
-2.2 当出队 URL 时，URL_Frontier 应在较低优先级的前置队列之前从较高优先级的前置队列中选择。
+2.2 只在可用主机队首中按HIGH/MEDIUM/LOW选择，同优先级FIFO；活跃或延迟主机不阻塞其他主机。
 
 2.3 URL_Frontier 应维护后置队列，按主机（domain）对 URL 进行分组。
 
-2.4 URL_Frontier 应强制执行可配置的每主机延迟（默认：1 秒），对同一主机的连续请求之间保持间隔。
+2.4 同主机最多一个在途任务，完成后开始下一次礼貌间隔，默认1秒；首次请求不等待不存在的历史访问。
 
-2.5 当 URL 入队时，URL_Frontier 应根据其优先级分配到合适的前置队列，根据其主机分配到合适的后置队列。
+2.5 内存frontier使用每主机优先堆、就绪队首堆和延迟唤醒堆；轮询不扫描活跃主机的整个积压。
 
-2.6 当出队时，URL_Frontier 仅应返回距上次请求该主机的礼貌性延迟已过期的 URL。
+2.6 只领取间隔已到且未被保留的主机，完成后重新发布下一条任务。
 
 2.7 URL_Frontier 应提供方法检查是否为空以及获取当前大小（待处理 URL 数）。
 
@@ -97,15 +97,17 @@
 
 4.1 Robots_Checker 应在首次向某主机发起请求之前下载并解析该主机的 Robots.txt。
 
-4.2 Robots_Checker 应使用 Python 标准库中的 `urllib.robotparser.RobotFileParser` 来解析 Robots.txt 文件。
+4.2 复用RobotFileParser解析分组，扩展通配符、结束锚点与最长匹配。
 
-4.3 Robots_Checker 应按主机缓存已解析的 Robots.txt 结果，以避免重复下载。
+4.3 缓存按origin（scheme/host/port）区分，以条带锁合并并发缓存miss。
 
 4.4 当检查 URL 是否被允许时，Robots_Checker 应使用配置的 User-Agent 字符串来匹配规则。
 
-4.5 如果 Robots.txt 无法下载（404、超时、错误），则 Robots_Checker 应假定该主机的所有路径都被允许。
+4.5 保持网络异常放行政策：FetchError/OSError时缓存不可用结果并允许；不宣称完整RFC的HTTP失败状态策略。
 
 4.6 Robots_Checker 应支持可配置的 Robots.txt 条目缓存 TTL（time-to-live，默认：3600 秒）。
+
+4.7 支持*、结束锚点$、较具体规则优先与同长Allow优先；字面%2A/%24与操作符区分，转义分隔符不得在拆分URL前解码；保留标准库分组选择，未实现所有RFC分组合并。
 
 ### Requirement 5：内容解析与去重
 
@@ -119,9 +121,9 @@
 
 5.3 在下载页面之后，Crawler 应计算页面体的 Content_Fingerprint（SHA-256 哈希）。
 
-5.4 如果 Content_Fingerprint 之前已被见过（存在于内容已见存储中），则 Crawler 应跳过该页面的进一步处理，并将 Crawl_Result 标记为 "duplicate"。
+5.4 重复内容标记DUPLICATE，不重复归档或调用Hook，但仍按当前页面基准地址发现链接。
 
-5.5 如果 Content_Fingerprint 是新的，则 Crawler 应将其加入内容已见存储，并继续进行链接提取。
+5.5 新指纹先认领，确认保存成功后才发布为已提交；并发重复等待认领者，失败或取消后可重试。
 
 5.6 内容已见存储应默认使用内存中的 SHA-256 十六进制摘要集合作为实现。
 
@@ -135,11 +137,13 @@
 
 6.2 Link_Extractor 应使用 Python 标准库中的 `html.parser.HTMLParser`。
 
-6.3 Link_Extractor 应使用页面的基准 URL 将相对 URL 解析为绝对 URL。
+6.3 采用首个base href与页面地址解析相对URL；缺少或格式错误时回退文档地址，后续base不覆盖首个。
 
-6.4 Link_Extractor 应通过移除片段（#section）并将 scheme/host 规范化为小写来规范化所提取的 URL。
+6.4 移除片段、小写scheme/host，保留路径、查询串与大小写敏感userinfo。
 
 6.5 Link_Extractor 应返回绝对、已规范化 URL 字符串的列表。
+
+6.6 单个错误格式href被跳过，不丢弃同页可用链接；种子与发现链接使用同一过滤入口。
 
 ### Requirement 7：URL 过滤
 
@@ -159,7 +163,7 @@
 
 7.6 当白名单和黑名单都配置时，URL_Filter 应先应用白名单（URL 必须在白名单中且不在黑名单中）。
 
-7.7 URL_Filter 应拒绝 scheme 不是 http 和 https 的 URL。
+7.7 拒绝非HTTP(S)、缺主机、非法IPv6括号和错误/越界端口；错误格式返回False。
 
 ### Requirement 8：URL 去重
 
@@ -173,7 +177,7 @@
 
 8.3 如果该 URL 未被见过，则 Crawler 应将其加入 URL_Seen_Store 并入队。
 
-8.4 URL_Seen_Store 应默认使用内存中的 Python set 作为实现。
+8.4 默认内存set；state_path启用SQLite唯一任务/指纹，支持跨重启去重。
 
 8.5 URL_Seen_Store 应在规范化后（scheme/host 小写、移除片段）再比较 URL。
 
@@ -237,7 +241,15 @@
 
 12.3 配置应为带类型提示的 dataclass。
 
-12.4 配置应验证数值为正数，并在无效输入时抛出 ValueError。
+12.4 严格校验正整数预算；max_retries/max_redirects允许0；时间为有限正数，周期重爬要求state_path。
+
+### Requirement 13：持久调度、重爬与路由
+
+13.1 state_path启用SQLite；一个文件只允许一个活动owner，崩溃释放锁，启动恢复inflight。
+13.2 快照、指纹、完成确认和主机时间原子提交；失败按预算退避重试，取消归还未确认任务。
+13.3 外部批次调用激活到期重爬，未变内容延长间隔，变化恢复基础间隔并提高优先级。
+13.4 注入ConsistentHashPartition/route_url，先持久远端发现再投递；回调确认持久接收且支持幂等。
+13.5 集群成员发现、自动安全移交、复制/分片、五年保留清理、反垃圾模型和动态渲染属于部署扩展。
 
 ## 非功能性需求
 
@@ -264,12 +276,12 @@
 
 - **NFR-3.1**：URL 去重查找应使用哈希集合，平均时间复杂度为 O(1)。
 - **NFR-3.2**：内容指纹计算的时间复杂度应为 O(n)，其中 n 为内容长度。
-- **NFR-3.3**：URL Frontier 的出队操作的时间复杂度应为 O(log n) 或更好。
-- **NFR-3.4**：爬虫应支持至少 100 个页面的并发爬取而不降低性能。
+- **NFR-3.3**：内存堆操作按条目摊销为对数级；一次轮询可唤醒多个到期主机，不宣称严格单步O(log n)。
+- **NFR-3.4**：并发受max_concurrent、主机保留与下载槽限制；吞吐量按负载实测，不承诺任意100并发无性能变化。
 
 ### NFR-4：并发
 
 - **NFR-4.1**：爬虫应使用 asyncio 进行并发下载。
-- **NFR-4.2**：爬虫应使用 asyncio.Semaphore 将并发下载限制为配置的最大值。
-- **NFR-4.3**：爬虫应适合单线程异步执行（核心操作无需多线程）。
-- **NFR-4.4**：默认 Fetcher 应使用 `asyncio.get_event_loop().run_in_executor()` 包装阻塞的 urllib 调用。
+- **NFR-4.2**：先限制异步任务数量，再由Semaphore保护管线；有空闲槽和剩余预算时每50毫秒复查到期主机。
+- **NFR-4.3**：内存frontier属于事件循环线程；阻塞下载/数据库I/O在线程执行，取消需排空已开始操作。
+- **NFR-4.4**：默认Fetcher异步封装阻塞HTTP，限制响应体、总deadline和下载槽；未返回的系统DNS仍占用有限槽。

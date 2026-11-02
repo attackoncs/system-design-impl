@@ -2,6 +2,7 @@
 
 import json
 from .exceptions import ShortCodeNotFoundError, URLValidationError
+from .urls import redirect_uri
 
 
 def create_app(shortener):
@@ -27,13 +28,13 @@ def create_app(shortener):
                 )
                 location, redirect = shortener.resolve(code)
                 status = f"{int(redirect)} Redirect"
-                headers = [("Location", location)]
+                headers = [("Location", redirect_uri(location))]
                 if int(redirect) == 302:
                     headers.append(("Cache-Control", "no-store"))
                 payload = {}
         except ShortCodeNotFoundError:
             pass
-        except (ValueError, URLValidationError):
+        except (ValueError, URLValidationError, RecursionError):
             status, payload = "400 Bad Request", {"error": "invalid request"}
         body = json.dumps(payload).encode()
         start_response(

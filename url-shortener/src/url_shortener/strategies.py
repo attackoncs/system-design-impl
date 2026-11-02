@@ -4,6 +4,8 @@ Provides base-62 encoding/decoding utilities, the abstract HashStrategy
 interface, and the IDGenerator protocol for pluggable ID generation.
 """
 
+from __future__ import annotations
+
 import abc
 import threading
 import zlib
@@ -31,7 +33,7 @@ class HashStrategy(abc.ABC):
             storage: Storage backend for collision checking.
 
         Returns:
-            A 7-character short code from the base-62 alphabet.
+            A short code from the base-62 alphabet (strategy-dependent length).
         """
 
 
@@ -85,7 +87,7 @@ def decode_base62(encoded: str) -> int:
 
 
 def hash_crc32(text: str) -> int:
-    """Compute CRC32 hash of a string, returning a signed 32-bit integer."""
+    """Compute CRC32 of UTF-8 text, returning an unsigned 32-bit integer."""
     return zlib.crc32(text.encode("utf-8"))
 
 
@@ -137,11 +139,8 @@ class HashCollisionStrategy(HashStrategy):
 
     def _compute_code(self, text: str) -> str:
         """Compute a 7-character base-62 code from text using CRC32."""
-        # CRC32 hash; ensure unsigned 32-bit interpretation via struct
+        # Preserve an unsigned 32-bit result, including custom hash overrides.
         crc_value = hash_crc32(text)
-        # Convert to unsigned 32-bit: pack as signed, unpack as unsigned
-        # In Python 3, zlib.crc32 already returns unsigned, but we handle
-        # both cases for robustness using bitwise mask
         crc_unsigned = crc_value & 0xFFFFFFFF
         # Encode to base-62 and pad/truncate to 7 characters
         encoded = encode_base62(crc_unsigned)
@@ -169,8 +168,8 @@ class AutoIncrementIDGenerator:
 class Base62Strategy(HashStrategy):
     """Base-62 conversion strategy using unique numeric IDs.
 
-    Converts a unique ID to base-62, producing a guaranteed-unique short code
-    without collision handling.
+    Uniqueness requires an ID allocator shared by all writers. Codes are padded
+    to at least seven characters; larger IDs are never truncated.
     """
 
     def __init__(self, id_generator: IDGenerator | None = None) -> None:
@@ -186,7 +185,7 @@ class Base62Strategy(HashStrategy):
             storage: Storage backend (used for dedup check only).
 
         Returns:
-            A 7-character base-62 short code.
+            A base-62 short code with at least seven characters.
         """
         unique_id = self._id_generator.next_id()
         encoded = encode_base62(unique_id)

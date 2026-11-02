@@ -17,7 +17,7 @@ class MockFetcher(web_crawler.Fetcher):
 
     def __init__(self) -> None:
         self._pages: dict[str, str] = {
-            "http://example.com": (
+            "http://example.com/": (
                 '<html><body><a href="/about">About</a><a'
                 ' href="/blog">Blog</a></body></html>'
             ),
@@ -59,7 +59,7 @@ async def main() -> None:
         domain_whitelist=["example.com"],
     )
     crawler = web_crawler.Crawler(config=config, fetcher=MockFetcher())
-    results = await crawler.crawl(["http://example.com"])
+    results = await crawler.crawl(["http://example.com/"])
 
     print(f"Crawled {len(results)} pages:")
     for r in results:

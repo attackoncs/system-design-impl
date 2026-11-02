@@ -8,11 +8,11 @@ A Python URL shortener library implementing the design from System Design Interv
 
 - **URL_Shortener**: The core service that orchestrates URL shortening and redirecting operations
 - **Hash_Strategy**: An abstract base class defining the interface for short URL generation algorithms
-- **Hash_Collision_Strategy**: A hash strategy that applies CRC32/MD5/SHA-1 to the long URL, takes the first 7 characters of the base-62 encoded result, and resolves collisions by appending a predefined string and rehashing
-- **Base62_Strategy**: A hash strategy that converts a unique numeric ID into a base-62 encoded string of 7 characters using the character set [0-9, a-z, A-Z]
+- **Hash_Collision_Strategy**: The supplied CRC32 strategy encodes and pads a seven-character candidate, retrying with a predefined suffix on collision. MD5/SHA-1 are book alternatives, not supplied implementations.
+- **Base62_Strategy**: Fully encode a unique nonnegative integer, padding to at least 7 digits; uniqueness requires coordinated IDs.
 - **Storage_Backend**: An abstract base class defining the interface for persisting URL mappings
 - **In_Memory_Storage**: The default storage backend implementation using Python dictionaries
-- **Short_Code**: A 7-character string from the alphabet [0-9, a-z, A-Z] that uniquely identifies a shortened URL
+- **Short_Code**: A Base62-alphabet identifier whose length depends on the strategy and ID size.
 - **Redirect_Type**: An enumeration of HTTP redirect status codes (301 permanent, 302 temporary)
 - **Click_Record**: A data structure capturing analytics information for a single redirect event
 - **ID_Generator**: An abstract interface for generating unique numeric IDs, used by the Base62_Strategy
@@ -25,7 +25,7 @@ A Python URL shortener library implementing the design from System Design Interv
 
 #### Acceptance Criteria
 
-1.1 WHEN a valid long URL is submitted, THE URL_Shortener SHALL return a Short_Code of exactly 7 characters from the alphabet [0-9, a-z, A-Z].
+1.1 Codes use `[0-9a-zA-Z]`:7 characters for the hash strategy, at least 7 without truncation for Base62 IDs.
 
 1.2 WHEN a long URL is submitted with a custom domain specified, THE URL_Shortener SHALL construct the short URL by combining the custom domain with the generated Short_Code.
 
@@ -57,7 +57,7 @@ A Python URL shortener library implementing the design from System Design Interv
 
 #### Acceptance Criteria
 
-3.1 WHEN a long URL is provided, THE Hash_Collision_Strategy SHALL compute a hash of the URL using a well-known hash function (CRC32, MD5, or SHA-1).
+3.1 The supplied hash implementation is CRC32; MD5/SHA-1 are book alternatives, not additional supplied strategies.
 
 3.2 THE Hash_Collision_Strategy SHALL encode the hash output using base-62 encoding and take the first 7 characters as the candidate Short_Code.
 
@@ -77,7 +77,7 @@ A Python URL shortener library implementing the design from System Design Interv
 
 4.2 THE Base62_Strategy SHALL convert the numeric ID to a base-62 string using the character set [0-9, a-z, A-Z].
 
-4.3 THE Base62_Strategy SHALL pad or truncate the base-62 string to produce a Short_Code of exactly 7 characters.
+4.3 Left-pad Base62 codes to at least 7 characters; preserve all digits of larger IDs, never truncate.
 
 4.4 THE Base62_Strategy SHALL support any ID_Generator implementation that conforms to the ID_Generator interface.
 
@@ -143,21 +143,24 @@ A Python URL shortener library implementing the design from System Design Interv
 
 8.4 THE Hash_Strategy interface SHALL be independent of the Storage_Backend interface, receiving storage as a dependency for collision checking.
 
-### Requirement 9: HTTP Demo Server
+### Requirement 9: HTTP Adapter and Input Boundaries
 
-**User Story:** As a developer, I want a lightweight HTTP demo using stdlib, so that I can see the full shorten/redirect flow without adding runtime dependencies.
+9.1 The demo reuses `create_app`. POST `/api/v1/data/shorten` accepts `longUrl`, returning 200 with `shortURL`.
+9.2 GET `/<code>` or `/api/v1/<code>` returns the stored 301/302 and Location;302 includes `Cache-Control: no-store`.
+9.3 Bodies contain 1..16384 bytes. Invalid/deep JSON or invalid URLs return 400; unknown codes return 404.
+9.4 Preserve original URLs in storage/library resolution. Encode HTTP Location with IDNA/percent encoding without double-escaping. Reject missing hosts, invalid ports, whitespace, controls, backslashes and unencodable Unicode.
+9.5 Only 301/302 redirect configuration is accepted; invalid configuration raises ValueError before persistence. The demo server is single-threaded.
 
-#### Acceptance Criteria
+9.6 Preserve IPvFuture brackets and explicit empty query/fragment components. Reject Unicode hosts that fail an NFC IDNA round trip; require explicit ASCII ACE input instead of lossy conversion.
 
-9.1 THE HTTP demo SHALL use only Python standard library modules (http.server).
+### Requirement 10: Persistence and Concurrency
 
-9.2 THE HTTP demo SHALL expose an endpoint to shorten a long URL and return the short URL.
-
-9.3 THE HTTP demo SHALL expose an endpoint that accepts a Short_Code and performs an HTTP redirect to the original long URL.
-
-9.4 THE HTTP demo SHALL use the URL_Shortener library as its core logic without duplicating shortening or storage functionality.
-
-9.5 THE HTTP demo SHALL return appropriate HTTP status codes: 201 for successful creation, 301 or 302 for redirects (per stored configuration), and 404 for unknown short codes.
+10.1 SQLite code/url constraints are unique; immutable mappings cannot be overwritten on conflict.
+10.2 Existing URLs return through a read-only path. Misses recheck, generate and save under `BEGIN IMMEDIATE`.
+10.3 `SQLiteStorage.next_id` persists IDs. The same object used as storage and allocator shares the mapping transaction and rollback. Instances/processes coordinate through one file; this is not cross-database global allocation.
+10.4 Duplicates consume no ID. Exhaustion after `2**63-1` raises OverflowError without wrapping. Arbitrary existing external IDs need explicit sequence migration.
+10.5 The instance LRU defaults to 1024 entries; 0 disables it. Database reads occur outside its lock.
+10.6 Click details are unbounded, nonpersistent instance memory. Cluster analytics, replication, sharding, load balancing and rate-limiter deployment are outside the running implementation.
 
 ## Non-Functional Requirements
 
@@ -182,12 +185,14 @@ A Python URL shortener library implementing the design from System Design Interv
 
 ### NFR-3: Performance
 
+The following are local targets, not portable latency or capacity guarantees. This review validates concurrency correctness; see `benchmarks/REPORT.md`.
+
 - **NFR-3.1**: Single URL shortening SHALL complete in under 10 milliseconds for the in-memory storage backend.
 - **NFR-3.2**: URL redirect resolution SHALL complete in under 1 millisecond for the in-memory storage backend.
 - **NFR-3.3**: The Hash_Collision_Strategy SHALL resolve collisions within 10 retry attempts by default.
 
 ### NFR-4: Short Code Properties
 
-- **NFR-4.1**: Short codes SHALL be exactly 7 characters in length.
+- **NFR-4.1**: Hash codes have 7 characters; Base62 codes have at least 7 and grow to 8 at `62**7`.
 - **NFR-4.2**: Short codes SHALL use only characters from the set [0-9, a-z, A-Z] (62 characters total).
-- **NFR-4.3**: The 7-character base-62 space SHALL support approximately 3.5 trillion unique short codes (62^7).
+- **NFR-4.3**: `62**7` describes the seven-digit space; CRC32 still has only 32 bits and cannot fill that space.

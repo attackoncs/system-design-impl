@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 import pytest
 from web_crawler.frontier import URLFrontier
 from web_crawler.models import FrontierEntry, Priority
@@ -31,7 +32,7 @@ async def test_callable_async_archive_is_awaited_and_persists(tmp_path):
         CrawlResult("https://a.test", CrawlStatus.SUCCESS, http_status=200),
         "<html>saved</html>",
     )
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db:
         assert (
             db.execute("SELECT html FROM snapshots").fetchone()[0]
             == "<html>saved</html>"

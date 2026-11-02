@@ -6,35 +6,29 @@
 [Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
 <!-- LEARNING_GUIDE_END -->
 
-> 第 09 章已补充 SQLite 持久化、LRU 缓存及 WSGI HTTP 入口；保存映射改为拒绝覆盖。使用方法和运行边界见[章节核对记录](docs/chapter09-review.md)。
+> Reviewed against Chapter 9, GitHub source and CodeGraph. Durable IDs, concurrent duplicate reads and international URL redirects are covered in the [review and validation record (Chinese)](docs/open-source-review_cn.md).
 
 A Python URL shortener library implementing the design from *System Design Interview* Chapter 9 "Design A URL Shortener". Features pluggable hash strategies (hash+collision resolution and base-62 conversion), a storage abstraction with in-memory default, click tracking analytics, and a stdlib HTTP demo server. Zero runtime dependencies.
 
 ## Features
 
 - **Pluggable hash strategies** — choose between hash+collision resolution or base-62 conversion
-- **Storage abstraction** — swap between in-memory (default) and custom persistent backends
+- **Storage abstraction** — in-memory default or SQLite persistence with a transactional ID allocator
 - **Click tracking** — built-in analytics with per-URL click counts and timestamped records
 - **Zero runtime dependencies** — pure Python stdlib; dev tools (pytest, hypothesis) are optional
-- **Type-annotated** — full type hints on all public interfaces
-- **7-character short codes** — base-62 alphabet [0-9, a-z, A-Z] supporting ~3.5 trillion unique codes
+- **Type-annotated core API** — explicit mapping and redirect types
+- **Base62 codes** — hash codes have 7 characters; ID codes have at least 7 and grow without truncation. `62**7` is the seven-digit space, not CRC32 capacity
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────┐
-│           Public API                             │
-│   (URLShortener orchestrator)                   │
-├─────────────────────────────────────────────────┤
-│       Hash Strategy Layer                        │
-│   (HashCollisionStrategy, Base62Strategy)        │
-├─────────────────────────────────────────────────┤
-│       Storage Layer                              │
-│   (StorageBackend ABC + InMemoryStorage)         │
-├─────────────────────────────────────────────────┤
-│       Models & Exceptions                        │
-│   (URLMapping, ClickRecord, RedirectType, etc.)  │
-└─────────────────────────────────────────────────┘
+```text
+HTTP → create_app → URLShortener.shorten / resolve
+                        ├─ HashCollisionStrategy / Base62Strategy
+                        ├─ InMemoryStorage / SQLiteStorage
+                        │                     ├─ urls: unique code and URL
+                        │                     └─ id_sequence: durable IDs
+                        ├─ bounded instance LRU
+                        └─ instance click records
 ```
 
 ### Component Responsibilities
@@ -43,9 +37,10 @@ A Python URL shortener library implementing the design from *System Design Inter
 |-----------|------|
 | `URLShortener` | Orchestrates shortening, resolving, and click tracking |
 | `HashCollisionStrategy` | CRC32 hash + collision resolution via rehashing |
-| `Base62Strategy` | Unique ID → base-62 conversion, guaranteed collision-free |
+| `Base62Strategy` | Unique ID → Base62; uniqueness depends on the shared allocator |
 | `StorageBackend` | Abstract interface for URL mapping persistence |
 | `InMemoryStorage` | Default backend with O(1) bidirectional lookup |
+| `SQLiteStorage` | Immutable persistent mappings and `next_id()` for coordinated Base62 writers |
 
 ## Installation
 
@@ -74,16 +69,17 @@ shortener = URLShortener(domain="https://short.io")
 
 # Shorten a URL
 short_url = shortener.shorten("https://example.com/very/long/path")
-print(short_url)  # https://short.io/a3Bf92k
+print(short_url)
 
 # Resolve back to the original
-long_url, redirect_type = shortener.resolve("a3Bf92k")
+code = short_url.rsplit("/", 1)[1]
+long_url, redirect_type = shortener.resolve(code)
 print(long_url)        # https://example.com/very/long/path
 print(redirect_type)   # RedirectType.TEMPORARY (302)
 
 # Check click analytics
-count = shortener.get_click_count("a3Bf92k")
-records = shortener.get_click_records("a3Bf92k")
+count = shortener.get_click_count(code)
+records = shortener.get_click_records(code)
 print(f"Clicks: {count}")
 
 # Use base-62 strategy instead
@@ -118,7 +114,7 @@ short_url = shortener.shorten(
 )
 
 # Resolve returns the stored redirect type
-long_url, rtype = shortener.resolve("abc1234")
+long_url, rtype = shortener.resolve(short_url.rsplit("/", 1)[1])
 # rtype == RedirectType.PERMANENT (301)
 ```
 
@@ -143,11 +139,11 @@ shortener = URLShortener(
 
 **Trade-offs:**
 - Collision resolution adds retries under high load
-- Same URL always produces the same code (deterministic)
+- The same stored URL returns its existing code; occupied candidates can affect the final code
 
 ### Base-62 Conversion
 
-Converts a unique numeric ID to a 7-character base-62 string. Guarantees uniqueness without collision handling.
+Converts a unique numeric ID to Base62, padded to at least 7 characters. IDs beyond `62**7-1` produce longer codes. Uniqueness requires one coordinated allocator; the default counter is local to one process.
 
 ```python
 from url_shortener import URLShortener, Base62Strategy, AutoIncrementIDGenerator
@@ -181,6 +177,27 @@ class SnowflakeIDGenerator:
 shortener = URLShortener(strategy=Base62Strategy(id_generator=SnowflakeIDGenerator()))
 ```
 
+## SQLite persistence and durable IDs
+
+```python
+from url_shortener import URLShortener, SQLiteStorage, Base62Strategy
+
+storage = SQLiteStorage("urls.db")
+shortener = URLShortener(
+    storage=storage,
+    strategy=Base62Strategy(id_generator=storage),
+    domain="http://localhost:8000",
+)
+short_url = shortener.shorten("https://example.org/guide")
+assert shortener.resolve(short_url.rsplit("/", 1)[1])[0] == "https://example.org/guide"
+```
+
+Pass the **same storage object** as mapping store and ID generator within each instance. Separate processes may create their own objects pointing to one SQLite file. ID allocation and mapping creation share a transaction; duplicates consume no IDs. Existing mappings use a read-only fast path; misses recheck under the writer reservation. Do not mix uncoordinated generators; arbitrary external-ID databases require sequence migration first.
+
+The instance LRU defaults to 1024 entries; 0 disables it. Immutable mappings survive restart with SQLite; click records remain unbounded instance memory. Library resolution preserves the original URL; HTTP Location uses IDNA and percent encoding. Invalid hosts, ports, whitespace and controls are rejected.
+
+Redirects preserve explicit empty `?` / `#` components and IPvFuture brackets. If stdlib IDNA would fold a Unicode hostname (for example `faß.de`), supply its explicit ASCII ACE name (such as `xn--fa-hia.de`); lossy conversion is rejected. See the [review](docs/open-source-review_cn.md).
+
 ## API Reference
 
 ### URLShortener
@@ -191,6 +208,7 @@ URLShortener(
     storage: StorageBackend | None = None,        # Default: InMemoryStorage
     default_redirect_type: RedirectType = RedirectType.TEMPORARY,
     domain: str = "http://short.url",
+    cache_capacity: int = 1024,
 )
 ```
 
@@ -216,8 +234,9 @@ URLShortener(
 
 | Class | Description |
 |-------|-------------|
-| `StorageBackend` | ABC — implement `save`, `get_by_short_code`, `get_by_long_url`, `exists` |
+| `StorageBackend` | ABC — implement `save`, `get_by_short_code`, `get_by_long_url`, `exists`; override `get_or_create` atomically for concurrency |
 | `InMemoryStorage` | Default backend with dual-dict bidirectional lookup |
+| `SQLiteStorage(path)` | Persistent mappings; `next_id()` joins the same-object mapping transaction |
 
 ### Models
 
@@ -245,47 +264,21 @@ URLShortener(
 
 ## Demo Server
 
-A lightweight HTTP demo using only Python stdlib (`http.server`) that showcases the full shorten/redirect flow.
+The single-threaded stdlib WSGI demo reuses `create_app`; use a production WSGI server for concurrent HTTP. Without `--database` it uses in-memory/hash defaults; with it, it uses durable Base62 IDs.
 
-### Running the Server
-
-```bash
-python examples/demo_server.py --port 8000
-```
-
-### Endpoints
-
-| Method | Path | Description | Status |
-|--------|------|-------------|--------|
-| POST | `/shorten` | Shorten a URL | 201 Created |
-| GET | `/<short_code>` | Redirect to original URL | 301/302 Redirect |
-| GET | `/stats/<code>` | Click statistics | 200 OK |
-
-### Usage Examples
-
-**Shorten a URL:**
+The old demo-only `/shorten` and `/stats` endpoints have been removed. Use the chapter API below and the library click methods for statistics.
 
 ```bash
-curl -X POST http://localhost:8000/shorten \
-  -H "Content-Type: application/json" \
-  -d '{"url": "https://example.com/long/path", "redirect_type": 302}'
-
-# Response: {"short_url": "http://localhost:8000/a3Bf92k"}
+python -m examples.demo_server --port 8000 --database urls.db
+curl -X POST http://localhost:8000/api/v1/data/shorten -H "Content-Type: application/json" -d '{"longUrl":"https://example.com/long/path"}'
 ```
 
-**Redirect:**
+| Method | Path | Result |
+|---|---|---|
+| POST | `/api/v1/data/shorten` | 200, `{"shortURL":"http://localhost:8000/0000001"}` on a fresh Base62 database |
+| GET | `/<code>` or `/api/v1/<code>` | 301/302 + Location;302 includes `Cache-Control: no-store` |
 
-```bash
-curl -L http://localhost:8000/a3Bf92k
-# Follows redirect to https://example.com/long/path
-```
-
-**Check stats:**
-
-```bash
-curl http://localhost:8000/stats/a3Bf92k
-# Response: {"short_code": "a3Bf92k", "click_count": 5}
-```
+Request bodies are limited to 16 KiB. Invalid URL/JSON returns 400; unknown codes return 404. Set redirect type through the library constructor or `shorten`. Use the returned short URL rather than guessing its code.
 
 ## Testing
 
@@ -297,6 +290,7 @@ pytest tests/test_strategies.py     # Strategy tests
 pytest tests/test_storage.py        # Storage tests
 pytest tests/test_properties.py     # Property-based tests (Hypothesis)
 pytest --hypothesis-show-statistics # Detailed PBT stats
+python tools/verify_concurrency.py --output benchmarks/local.json
 ```
 
 ### Test Coverage
@@ -320,8 +314,13 @@ url-shortener/
 │       ├── exceptions.py        # Custom exception hierarchy
 │       ├── models.py            # Data models (ClickRecord, URLMapping, RedirectType)
 │       ├── storage.py           # Storage abstraction (ABC + InMemoryStorage)
+│       ├── sqlite_storage.py    # SQLite + durable IDs
+│       ├── urls.py              # URL validation / ASCII URI
+│       ├── http.py              # WSGI API
 │       ├── strategies.py        # Hash strategies (ABC + implementations)
 │       └── shortener.py         # Main URLShortener orchestrator
+├── tools/verify_concurrency.py  # Multiprocess + actual HTTP verification
+├── benchmarks/                 # Raw verification output
 ├── tests/
 │   ├── test_exceptions.py       # Unit tests for exceptions
 │   ├── test_models.py           # Unit tests for data models
@@ -330,7 +329,7 @@ url-shortener/
 │   ├── test_shortener.py        # Unit tests for orchestrator
 │   └── test_properties.py       # Property-based tests (Hypothesis)
 └── examples/
-    └── demo_server.py           # HTTP demo using stdlib http.server
+    └── demo_server.py           # WSGI demo using stdlib wsgiref
 ```
 
 ## License

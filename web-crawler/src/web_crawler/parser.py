@@ -12,23 +12,29 @@ from typing import List, Optional, Tuple
 
 
 class LinkExtractorParser(html_parser.HTMLParser):
-    """HTMLParser subclass that extracts href attributes from <a> tags."""
+    """Collect anchor hrefs and the first document base href."""
 
     def __init__(self) -> None:
         super().__init__()
         self.links: List[str] = []
+        self.base_href: Optional[str] = None
 
     def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
         if tag == "a":
             for name, value in attrs:
                 if name == "href" and value is not None:
                     self.links.append(value)
+        elif tag == "base" and self.base_href is None:
+            for name, value in attrs:
+                if name == "href" and value is not None:
+                    self.base_href = value
+                    break
 
 
 def normalize_url(url: str) -> str:
     """Normalize a URL by lowercasing scheme/host and removing fragments.
 
-    The path and query string are kept unchanged.
+    User information, path and query string are kept unchanged.
 
     Args:
         url: The URL to normalize.
@@ -37,9 +43,12 @@ def normalize_url(url: str) -> str:
         Normalized URL string.
     """
     parsed = urllib.parse.urlparse(url)
+    userinfo, separator, host = parsed.netloc.rpartition("@")
     normalized = parsed._replace(
         scheme=parsed.scheme.lower(),
-        netloc=parsed.netloc.lower(),
+        netloc=(userinfo + separator + host.lower())
+        if separator
+        else parsed.netloc.lower(),
         fragment="",
     )
     return urllib.parse.urlunparse(normalized)
@@ -79,8 +88,8 @@ class LinkExtractor:
         """Extract all links from HTML, resolving relative URLs.
 
         Uses LinkExtractorParser to find all href attributes in <a> tags,
-        resolves relative URLs using urljoin with the base_url, and
-        normalizes all results.
+        resolves relative URLs against the first base href (or document URL),
+        and normalizes results. Malformed individual links are skipped.
 
         Args:
             html: The HTML content string.
@@ -91,13 +100,19 @@ class LinkExtractor:
         """
         parser = LinkExtractorParser()
         parser.feed(html)
+        if parser.base_href is not None:
+            try:
+                base_url = urllib.parse.urljoin(base_url, parser.base_href)
+            except ValueError:
+                pass  # A malformed base must not discard otherwise usable links.
 
         results: List[str] = []
         for href in parser.links:
-            # Resolve relative URLs
-            absolute = urllib.parse.urljoin(base_url, href)
-            # Normalize
-            normalized = normalize_url(absolute)
+            try:
+                absolute = urllib.parse.urljoin(base_url, href)
+                normalized = normalize_url(absolute)
+            except ValueError:
+                continue  # Isolate one malformed link instead of failing the page.
             if normalized:
                 results.append(normalized)
         return results

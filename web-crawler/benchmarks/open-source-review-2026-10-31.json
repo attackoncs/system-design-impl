@@ -1,0 +1,25 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "backlog": 10000,
+  "hosts": 5000,
+  "polls": 100,
+  "repeats": 3,
+  "seconds": {
+    "reserved_host_backlog": [
+      0.0001717000050120987,
+      0.00016290000348817557,
+      0.00015810000331839547
+    ],
+    "distinct_ready_hosts": [
+      0.00930030000017723,
+      0.009892999994917773,
+      0.009586799998942297
+    ]
+  },
+  "median_seconds": {
+    "reserved_host_backlog": 0.00016290000348817557,
+    "distinct_ready_hosts": 0.009586799998942297
+  },
+  "scope": "In-memory scheduler only; excludes enqueue, HTTP, parsing, SQLite and disk."
+}

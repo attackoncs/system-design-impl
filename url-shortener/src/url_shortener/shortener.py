@@ -7,13 +7,13 @@ provide the full shorten/redirect flow.
 from collections import OrderedDict
 import datetime
 import threading
-import urllib.parse
 from typing import Optional
 
 import url_shortener.exceptions
 import url_shortener.storage
 import url_shortener.strategies
 from url_shortener import models
+from url_shortener.urls import redirect_uri
 
 
 class URLShortener:
@@ -49,7 +49,7 @@ class URLShortener:
         self._cache_lock = threading.Lock()
         self._strategy = strategy or url_shortener.strategies.HashCollisionStrategy()
         self._storage = storage or url_shortener.storage.InMemoryStorage()
-        self._default_redirect_type = default_redirect_type
+        self._default_redirect_type = self._validate_redirect_type(default_redirect_type)
         self._domain = domain.rstrip("/")
         self._click_lock = threading.Lock()
         self._clicks: dict[str, list[models.ClickRecord]] = {}
@@ -72,13 +72,16 @@ class URLShortener:
             URLValidationError: If the URL is invalid.
         """
         self._validate_url(long_url)
+        chosen_redirect = self._validate_redirect_type(
+            self._default_redirect_type if redirect_type is None else redirect_type
+        )
 
         def create_mapping():
             code = self._strategy.generate(long_url, self._storage)
             return models.URLMapping(
                 short_code=code,
                 long_url=long_url,
-                redirect_type=redirect_type or self._default_redirect_type,
+                redirect_type=chosen_redirect,
             )
 
         mapping = self._storage.get_or_create(long_url, create_mapping)
@@ -162,19 +165,10 @@ class URLShortener:
         Raises:
             URLValidationError: If the URL is invalid.
         """
-        if (
-            not isinstance(url, str)
-            or not url
-            or any(ord(c) < 32 or ord(c) == 127 for c in url)
-        ):
-            raise url_shortener.exceptions.URLValidationError("URL cannot be empty")
+        redirect_uri(url)
 
-        parsed = urllib.parse.urlparse(url)
-        if parsed.scheme not in ("http", "https"):
-            raise url_shortener.exceptions.URLValidationError(
-                f"URL missing scheme (http/https): '{url}'"
-            )
-        if not parsed.netloc:
-            raise url_shortener.exceptions.URLValidationError(
-                f"URL missing network location: '{url}'"
-            )
+    @staticmethod
+    def _validate_redirect_type(value) -> models.RedirectType:
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ValueError("redirect type must be 301 or 302")
+        return models.RedirectType(value)

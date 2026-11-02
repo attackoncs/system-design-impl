@@ -8,11 +8,11 @@
 
 - **URL_Shortener**：协调 URL 短链化与重定向操作的核心服务
 - **Hash_Strategy**：定义短链 URL 生成算法接口的抽象基类
-- **Hash_Collision_Strategy**：对长 URL 应用 CRC32/MD5/SHA-1，取 base-62 编码结果的前 7 个字符，若发生冲突则追加预定义字符串重新哈希的哈希策略
-- **Base62_Strategy**：使用字符集 `[0-9, a-z, A-Z]` 将唯一数值 ID 转换为 7 字符 base-62 编码字符串的哈希策略
+- **Hash_Collision_Strategy**：当前提供的 CRC32 策略编码并补足七位候选码，冲突时追加预定义后缀重试；MD5/SHA-1 是原书备选算法，未作为当前策略提供。
+- **Base62_Strategy**：把唯一非负整数完整编码，左侧补零至至少7位；唯一性取决于协调发号。
 - **Storage_Backend**：定义 URL 映射持久化接口的抽象基类
 - **In_Memory_Storage**：使用 Python 字典的默认存储后端实现
-- **Short_Code**：来自字母表 `[0-9, a-z, A-Z]` 的 7 字符字符串，唯一标识一个短链化后的 URL
+- **Short_Code**：Base62字符组成的标识；长度取决于策略与 ID 大小。
 - **Redirect_Type**：HTTP 重定向状态码的枚举（301 永久，302 临时）
 - **Click_Record**：捕获单次重定向事件统计信息的数据结构
 - **ID_Generator**：生成唯一数值 ID 的抽象接口，供 Base62_Strategy 使用
@@ -25,7 +25,7 @@
 
 #### 验收标准
 
-1.1 WHEN 提交一个合法的长 URL，THE URL_Shortener SHALL 返回一个恰好 7 个字符的 Short_Code，来自字母表 `[0-9, a-z, A-Z]`。
+1.1 短码仅使用 `[0-9a-zA-Z]`：哈希策略7位，Base62策略至少7位且不截断。
 
 1.2 WHEN 提交长 URL 时指定了自定义域名，THE URL_Shortener SHALL 通过将自定义域名与生成的 Short_Code 组合来构造短链 URL。
 
@@ -57,7 +57,7 @@
 
 #### 验收标准
 
-3.1 WHEN 提供长 URL，THE Hash_Collision_Strategy SHALL 使用知名哈希函数（CRC32、MD5 或 SHA-1）计算 URL 的哈希值。
+3.1 默认哈希实现为 CRC32；原书提到的 MD5/SHA-1 是其他可选算法，不是当前提供的策略。
 
 3.2 THE Hash_Collision_Strategy SHALL 使用 base-62 编码对哈希输出进行编码，并取前 7 个字符作为候选 Short_Code。
 
@@ -77,7 +77,7 @@
 
 4.2 THE Base62_Strategy SHALL 使用字符集 `[0-9, a-z, A-Z]` 将数值 ID 转换为 base-62 字符串。
 
-4.3 THE Base62_Strategy SHALL 对 base-62 字符串进行填充或截断，生成恰好 7 个字符的 Short_Code。
+4.3 Base62结果左侧补零至至少7位；大 ID 保留完整编码，禁止截断导致不同 ID 合并。
 
 4.4 THE Base62_Strategy SHALL 支持任何符合 ID_Generator 接口的 ID_Generator 实现。
 
@@ -143,21 +143,24 @@
 
 8.4 THE Hash_Strategy 接口 SHALL 独立于 Storage_Backend 接口，通过依赖注入接收存储后端用于冲突检查。
 
-### 需求 9：HTTP 演示服务器
+### 需求9：HTTP入口与输入边界
 
-**用户故事：** 作为一名开发者，我希望有一个使用 stdlib 的轻量 HTTP 演示，以便在不增加运行时依赖的情况下看到完整的短链化/重定向流程。
+9.1 演示服务器复用 `create_app`，POST `/api/v1/data/shorten` 输入 `longUrl`，成功200并返回 `shortURL`。
+9.2 GET `/<code>` 或 `/api/v1/<code>` 返回映射中的301/302及 Location；302包含 `Cache-Control: no-store`。
+9.3 请求体1..16384字节；非法 JSON、过深 JSON、非法 URL 返回400；未知码404。
+9.4 保存/库解析保留原 URL；HTTP头使用 IDNA/百分号编码，已有转义不重复编码。拒绝空主机、错误端口、控制字符、空白、反斜杠和不能编码的 Unicode。
+9.5 重定向类型只允许301/302，错误配置在写库前抛 ValueError。演示服务器只用于单线程本地演示。
 
-#### 验收标准
+9.6 保留IPvFuture方括号及显式空查询/片段；Unicode主机按NFC往返检查，拒绝标准库IDNA有损转换，要求显式ASCII ACE输入。
 
-9.1 THE HTTP 演示 SHALL 仅使用 Python 标准库模块（`http.server`）。
+### 需求10：持久化与并发
 
-9.2 THE HTTP 演示 SHALL 暴露一个端点，用于短链化长 URL 并返回短链 URL。
-
-9.3 THE HTTP 演示 SHALL 暴露一个端点，接受 Short_Code 并对原始长 URL 执行 HTTP 重定向。
-
-9.4 THE HTTP 演示 SHALL 将 URL_Shortener 库作为核心逻辑使用，不重复实现短链化或存储功能。
-
-9.5 THE HTTP 演示 SHALL 返回合适的 HTTP 状态码：成功创建返回 201，重定向返回 301 或 302（按存储配置），未知短码返回 404。
+10.1 SQLite 的 code、url 均唯一；映射不可变，冲突不得覆盖旧链接。
+10.2 已有 URL 只读返回；未命中在 `BEGIN IMMEDIATE` 内重查、生成和保存，防止并发去重竞态。
+10.3 `SQLiteStorage.next_id` 持久分配 ID；策略与存储使用同一对象时复用映射事务，失败回滚。跨实例/进程使用同一文件和协调分配器；不得宣称跨数据库全局唯一。
+10.4 重复创建不消耗 ID；`2**63-1` 后报 OverflowError，不回绕。旧自定义发号数据需显式迁移序列。
+10.5 实例 LRU 容量默认1024，0禁用；缓存锁不跨数据库读取持有。
+10.6 点击统计为未持久化、无保留上限的实例内记录；集群统计及数据库复制、分片、负载均衡、限流部署不在当前运行实现内。
 
 ## 非功能性需求
 
@@ -182,12 +185,14 @@
 
 ### NFR-3：性能
 
+下列耗时为本地目标，不是跨硬件或生产容量保证；本轮验证关注并发正确性，见 `benchmarks/REPORT.md`。
+
 - **NFR-3.1**：对内存存储后端，单次 URL 短链化 SHALL 在 10 毫秒内完成。
 - **NFR-3.2**：对内存存储后端，URL 重定向解析 SHALL 在 1 毫秒内完成。
 - **NFR-3.3**：Hash_Collision_Strategy SHALL 默认在 10 次重试尝试内解决冲突。
 
 ### NFR-4：短码属性
 
-- **NFR-4.1**：短码 SHALL 恰好 7 个字符长度。
+- **NFR-4.1**：哈希码7位；Base62码至少7位，达到 `62**7` 时增长为8位。
 - **NFR-4.2**：短码 SHALL 仅使用集合 `[0-9, a-z, A-Z]` 中的字符（共 62 个字符）。
-- **NFR-4.3**：7 字符 base-62 空间 SHALL 支持约 3.5 万亿种唯一短码（62^7）。
+- **NFR-4.3**：`62**7` 是七位编码空间；CRC32仍只有32位，不宣称能占满该空间。

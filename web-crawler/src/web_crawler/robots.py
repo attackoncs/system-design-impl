@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 import time
 import urllib.parse
 import urllib.robotparser
@@ -54,7 +55,42 @@ class RobotsChecker:
             parser = await self._get_parser(origin, robots_url)
         if parser is None:
             return True  # If robots.txt unavailable, allow all
-        return parser.can_fetch(self._user_agent, url)
+        return self._allows(parser, url)
+
+    def _allows(self, parser, url: str) -> bool:
+        """Extend stdlib groups with wildcard/end-anchor and longest-rule matching.
+
+        The book includes rules such as /rss/people/*/reviews. stdlib's plain
+        prefix matching cannot enforce them. Allow wins equal-length matches.
+        Other group selection and failure policies retain stdlib semantics.
+        """
+        entry = next(
+            (entry for entry in parser.entries if entry.applies_to(self._user_agent)),
+            parser.default_entry,
+        )
+        if entry is None:
+            return True
+        # Parse before normalizing escapes: %23 belongs to the path, not a fragment.
+        parsed = urllib.parse.urlparse(url)
+        path = (
+            _canonical_path(
+                urllib.parse.urlunparse(
+                    ("", "", parsed.path or "/", parsed.params, parsed.query, "")
+                )
+            )
+            or "/"
+        )
+        best = (-1, True)
+        for rule in entry.rulelines:
+            # Undo only RobotFileParser's quoting, retaining original %xx escapes.
+            pattern = urllib.parse.unquote(rule.path)
+            anchored = pattern.endswith("$")
+            if anchored:
+                pattern = pattern[:-1]
+            pattern = "*".join(_canonical_path(part) for part in pattern.split("*"))
+            if _matches_rule(pattern, path, anchored):
+                best = max(best, (len(pattern.replace("*", "")), rule.allowance))
+        return best[1]
 
     def crawl_delay(self, url: str) -> float:
         parsed = urllib.parse.urlparse(url)
@@ -92,7 +128,14 @@ class RobotsChecker:
         try:
             response = await self._fetcher.fetch(robots_url, timeout=10.0)
             parser = urllib.robotparser.RobotFileParser()
-            parser.parse(response.body.decode("utf-8", errors="replace").splitlines())
+            lines = response.body.decode("utf-8", errors="replace").splitlines()
+            for index, line in enumerate(lines):
+                key, separator, value = line.partition(":")
+                if separator and key.strip().lower() in ("allow", "disallow"):
+                    # Stdlib unquotes directives before storing them. Protect
+                    # literal escapes so %2A/%24 do not become rule operators.
+                    lines[index] = key + ":" + value.replace("%", "%25")
+            parser.parse(lines)
             # RobotFileParser strips the request's product version. Normalize
             # versioned directives too so their restrictions are not bypassed.
             for entry in parser.entries:
@@ -105,3 +148,34 @@ class RobotsChecker:
             # If robots.txt cannot be fetched, allow all paths
             self._cache[host] = (None, now)
             return None
+
+
+def _canonical_path(path: str) -> str:
+    """Normalize URI octets while retaining escaped reserved characters."""
+
+    def normalize_escape(match):
+        character = chr(int(match[1], 16))
+        if character.isascii() and (character.isalnum() or character in "-._~"):
+            return character
+        return "%" + match[1].upper()
+
+    encoded = urllib.parse.quote(path, safe="/%?=:;@!&'()+,-._~")
+    return re.sub(r"%([0-9a-fA-F]{2})", normalize_escape, encoded)
+
+
+def _matches_rule(pattern: str, path: str, anchored: bool) -> bool:
+    """Match robots '*' with ordered substring searches, without regex backtracking."""
+    parts = pattern.split("*")
+    if not path.startswith(parts[0]):
+        return False
+    if len(parts) == 1:
+        return not anchored or len(path) == len(pattern)
+    position = len(parts[0])
+    for part in parts[1:-1]:
+        found = path.find(part, position)
+        if found < 0:
+            return False
+        position = found + len(part)
+    if anchored:
+        return path.endswith(parts[-1]) and len(path) - len(parts[-1]) >= position
+    return path.find(parts[-1], position) >= 0

@@ -6,7 +6,7 @@
 [Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
 <!-- LEARNING_GUIDE_END -->
 
-> Chapter 10 now includes durable recovery, adaptive recrawling, host partition routing, DNS caching and bounded downloads. See the coverage and deployment limits in the [chapter review](docs/chapter10-review.md)。
+> Chapter 10 includes durable recovery, adaptive recrawling, host partition routing, DNS caching and bounded downloads. The latest [book/open-source review](docs/open-source-review_cn.md) records scheduler, robots and link-parser fixes with 256 passing tests and reproducible checks.
 
 An asyncio-based Python web crawler library implementing the design from System Design Interview Chapter 10 "Design A Web Crawler". Features a pipeline architecture with URL frontier (priority + politeness), robots.txt compliance, content deduplication, link extraction, and pluggable components — all with zero runtime dependencies (stdlib only).
 
@@ -14,9 +14,9 @@ An asyncio-based Python web crawler library implementing the design from System 
 
 - **Async crawl loop** with configurable concurrency via asyncio.Semaphore
 - **URL Frontier** with priority front queues (HIGH/MEDIUM/LOW) and per-host politeness back queues
-- **Robots.txt compliance** with per-host caching and configurable TTL
+- **Robots.txt checks** with origin caching, wildcard/end-anchor rules and longest-match precedence; stdlib group selection and the compatible network-error allow policy remain
 - **Content deduplication** using SHA-256 fingerprinting
-- **Link extraction** with relative URL resolution and normalization
+- **Link extraction** with first-base-href resolution, per-link error isolation and normalization that preserves userinfo case
 - **Configurable URL filtering** — extension blacklist, domain whitelist/blacklist, max length, custom filters
 - **URL deduplication** via normalized URL set (O(1) lookup)
 - **Pluggable Fetcher interface** — swap in custom HTTP clients or mock fetchers for testing
@@ -54,6 +54,10 @@ See the [chapter review](docs/chapter10-review.md),
 [DNS and downloader limits](docs/transport-review.md).
 
 ## Architecture
+
+The in-memory frontier publishes eligible host heads and keeps delayed hosts in a wake-up heap. It does not rescan a reserved host's entire backlog on every poll. When a slow download occupies one slot, the crawl loop rechecks due hosts every 50 ms while another slot and batch budget remain. Full batches wait for completion.
+
+See the [Chinese learning guide](docs/learning-guide_cn.md) for the state flow and annotated calls. [Benchmark results](benchmarks/REPORT.md) separate scheduler-only measurements from actual loopback HTTP validation. These checks do not demonstrate production-scale crawling.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -171,6 +175,12 @@ CrawlerConfig(
     max_url_length: int = 2048,
     custom_filters: list[Callable] = [],
     content_hooks: list[Callable] = [],
+    state_path: str | None = None,
+    recrawl_interval_seconds: float | None = None,
+    max_retries: int = 2,
+    retry_delay_seconds: float = 1.0,
+    max_response_bytes: int = 10 * 1024 * 1024,
+    max_redirects: int = 5,
 )
 ```
 
@@ -207,7 +217,8 @@ URLFrontier(per_host_delay: float = 1.0)
 | Method | Description |
 |--------|-------------|
 | `put(entry: FrontierEntry)` | Add a URL to the frontier |
-| `get() -> FrontierEntry \| None` | Dequeue next URL (respects politeness) |
+| `get(reserve=False) -> FrontierEntry \| None` | Dequeue next eligible host head; reserve=True holds its host |
+| `complete(entry)` | Release the reserved host and start its next eligibility delay |
 | `is_empty() -> bool` | Check if frontier has pending URLs |
 | `size -> int` | Number of pending URLs |
 
@@ -230,6 +241,8 @@ pytest tests/test_crawler.py        # Crawler orchestrator tests
 pytest tests/test_frontier.py       # URL frontier tests
 pytest tests/test_properties.py     # Property-based tests (Hypothesis)
 pytest --hypothesis-show-statistics # Detailed PBT stats
+python tools/benchmark.py --output benchmarks/local.json
+python -W error tools/verify_http.py --output benchmarks/http-local.json
 ```
 
 ### Test Coverage
@@ -259,6 +272,9 @@ web-crawler/
 │       ├── parser.py         # ContentParser + LinkExtractor
 │       ├── filters.py        # URLFilter with configurable rules
 │       ├── dedup.py          # ContentSeen (SHA-256) + URLSeen
+│       ├── state.py          # Durable scheduling, atomic completion and recovery
+│       ├── dns.py            # Bounded TTL/LRU DNS cache
+│       ├── partition.py      # Host ownership and explicit routing contract
 │       └── crawler.py        # Main Crawler orchestrator
 ├── tests/
 │   ├── test_config.py

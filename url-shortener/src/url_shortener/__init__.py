@@ -8,6 +8,7 @@ from url_shortener.exceptions import (
 )
 from url_shortener.models import ClickRecord, RedirectType, URLMapping
 from url_shortener.shortener import URLShortener
+from url_shortener.sqlite_storage import SQLiteStorage
 from url_shortener.storage import InMemoryStorage, StorageBackend
 from url_shortener.strategies import (
     AutoIncrementIDGenerator,
@@ -28,6 +29,7 @@ __all__ = [
     "URLMapping",
     # Storage
     "InMemoryStorage",
+    "SQLiteStorage",
     "StorageBackend",
     # Strategies
     "AutoIncrementIDGenerator",

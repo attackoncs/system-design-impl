@@ -141,8 +141,15 @@ class Crawler:
                 if not tasks:
                     await asyncio.sleep(0.05)
                     continue
+                # A delayed host may become ready before another host's slow
+                # request finishes. Recheck only while a batch slot is unused.
+                can_refill = len(tasks) < min(
+                    self._config.max_concurrent,
+                    self._config.max_pages - self._attempted,
+                )
                 done, pending = await asyncio.wait(
-                    tasks, return_when=asyncio.FIRST_COMPLETED
+                    tasks, return_when=asyncio.FIRST_COMPLETED,
+                    timeout=0.05 if can_refill else None,
                 )
                 await asyncio.gather(*done)
                 tasks = pending
