@@ -383,10 +383,12 @@ def test_actual_http_upload_hls_authorization_and_range(service):
             assert response.status == 206 and len(response.read()) == 4
         with pytest.raises(urllib.error.HTTPError) as error:
             request(segment, headers={"Range": "bytes=999999-"})
-        assert error.value.code == 416
+        with contextlib.closing(error.value):
+            assert error.value.code == 416
         with pytest.raises(urllib.error.HTTPError) as error:
             request(url + "/media?grant=invalid&resource=key.bin")
-        assert error.value.code == 403
+        with contextlib.closing(error.value):
+            assert error.value.code == 403
 
 
 def make_fixture(media, path):

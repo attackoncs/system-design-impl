@@ -103,17 +103,22 @@ class LocalObjects:
         return self.write(chunks())[0]
 
     def assemble(self, keys):
-        """Concatenate objects in keys order and return (new key, total byte
-        count).
+        """Concatenate checksum-verified objects and return (new key, byte count).
+
+        A damaged part must not become a different, apparently valid source.
         """
 
         def chunks():
             for key in keys:
+                digest = hashlib.sha256()
                 with self.file(key).open("rb") as stream:
                     while True:
                         chunk = stream.read(1024 * 1024)
                         if not chunk:
                             break
+                        digest.update(chunk)
                         yield chunk
+                if digest.hexdigest() != key:
+                    raise OSError("part checksum mismatch")
 
         return self.write(chunks())

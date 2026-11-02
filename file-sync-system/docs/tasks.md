@@ -2,9 +2,10 @@
 
 Source: root `System Design Interview.md`, Chapter 16, starting at line 5369.
 
-Status: Core reviewed on 2026-10-24, with 116 tests passing; independent
+Status: Core reviewed on 2026-11-02, with 122 tests passing and no skips; independent
 API/device processes, automatic scan synchronization and restart verified.
-See [chapter review](chapter16-review.md) and [validation](../benchmarks/results.md).
+See [source comparison](open-source-review_cn.md), [chapter review](chapter16-review.md)
+and [validation](../benchmarks/results.md).
 
 ## Scope
 
@@ -36,6 +37,12 @@ revisions, sharing and notifications; document co-editing is out of scope.
 - [x] T9. Provide runnable examples, English/Chinese READMEs, design trade-offs
   and actual test/stress reports; update the root status; unverified production
   scale stays explicit.
+- [x] T10. Read actual Syncthing/Seafile block validation, late-edit and conflict
+  replacement code, recording pinned versions and architecture differences.
+- [x] T11. Reject truncated fixed-length/chunked responses as retryable I/O errors
+  without advancing cursors; six real HTTP regressions cover recovery/compatibility.
+- [x] T12. Close caught error responses, run the strict full suite and independent
+  process delta/restart experiment, synchronize bilingual docs and four learning diagrams.
 
 ## Acceptance gates
 

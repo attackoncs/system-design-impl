@@ -29,8 +29,12 @@ real multi-host deployments need a replicated database and object storage adapte
 Owner credentials are provisioned out of band. Upload requests declare total bytes
 and fixed part size; an HMAC grant binds each part's video, index, expected length
 and expiration. Full parts can be retried idempotently; conflicting bytes fail.
-Finalization streams parts into a source object and checks total/full SHA256 before
-atomically scheduling the DAG. An interrupted finalization can leave an unreferenced
+Finalization verifies each part's SHA-256 while streaming it into the source, checks
+the total size and optional caller-supplied full-source checksum, then atomically
+schedules the DAG. A changed part raises `OSError` without publishing the source or
+creating jobs; retrying its original grant and bytes repairs the local object.
+The extra hash uses the existing 1 MiB read buffer outside the metadata lock.
+An interrupted finalization can leave an unreferenced
 object, but cannot expose a ready video. Owners cannot finalize other owners' uploads.
 
 Part writes and source assembly run outside the global metadata lock. Final write
@@ -122,8 +126,9 @@ accepted mutations may commit after the client disconnects.
 
 ## Operating boundaries and validation
 
-Leases exceed each media command's hard timeout and renew across the whole attempt;
-crashed processes recover after expiry. Resource allocation is bounded worker/codec
+Leases leave headroom for heartbeat intervals and backend latency, and renew across
+the whole attempt; media work may outlast the initial lease while renewal succeeds.
+Crashed processes recover after expiry. Resource allocation is bounded worker/codec
 concurrency, not a GPU cluster manager. Upload parts remain byte chunks; optional
 server preprocessing creates independently playable GOP inputs.
 Object/metadata writes are ordered rather than distributed transactions; unreferenced

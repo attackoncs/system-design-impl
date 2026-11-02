@@ -81,6 +81,10 @@ def request(
             data.extend(chunk)
         if len(data) > limit:
             raise OSError("response exceeded bound")
+        # read1() can return EOF with bytes still promised by Content-Length.
+        # A valid JSON prefix (or block) does not make the response complete.
+        if response.length not in (None, 0):
+            raise OSError("incomplete response body")
         if not 200 <= response.status < 300:
             raise HTTPError(
                 url + route,
@@ -92,6 +96,9 @@ def request(
         if time.monotonic() >= deadline:
             raise TimeoutError("request deadline exceeded")
         return bytes(data) if binary else json.loads(data)
+    except http.client.IncompleteRead as error:
+        # Keep malformed chunked responses on the watcher's I/O retry path.
+        raise OSError("incomplete response body") from error
     finally:
         timer.cancel()
         timer.join()

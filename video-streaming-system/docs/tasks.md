@@ -2,7 +2,9 @@
 
 Source: root `System Design Interview.md`, Chapter 15, section starting line 4765.
 
-Status: Reference implementation and PostgreSQL/S3 extensions completed, 40 tests fully passing; remaining production extensions are listed below.
+Status (2026-11-02): all 164 distinct tests exercised. Normal full suite: 158 passed,
+six PostgreSQL cases skipped; separate owned PostgreSQL 18 run: nine distributed
+tests passed, including those six. See [source comparison and evidence](open-source-review_cn.md).
 
 ## Scope
 
@@ -19,6 +21,10 @@ Upload and play videos up to 1 GB; multiple bitrate renditions across different 
 - [x] T7. Verify interrupted uploads, worker exit, duplicate tasks, source video checks, metadata rollback, missing object recovery and complete playback.
 - [x] T8. Compare CDN costs for hot videos, origin costs for cold videos, and encoding/storage costs; measure local upload/HTTP read latency and short-video transcoding time.
 - [x] T9. Provide runnable examples, English/Chinese READMEs, design trade-offs and actual tests/benchmark reports, update root-level status; unverified production scale remains explicit.
+- [x] T10. Compare actual PeerTube/MediaCMS upload and task source, with pinned references and explicit differences.
+- [x] T11. Verify each part while assembling the source; reject post-upload corruption without jobs/staging residue and support original-part repair/retry. Four regressions fail before the fix and pass after it.
+- [x] T12. Close caught HTTP error responses; run warnings-as-errors tests, actual FFmpeg/HLS playback, independent workers and PostgreSQL/S3 protocol integration.
+- [x] T13. Synchronize bilingual requirements/design/README/tasks, chapter review, benchmark and the three learning diagrams.
 
 ## Acceptance Thresholds
 
@@ -39,5 +45,5 @@ Upload and play videos up to 1 GB; multiple bitrate renditions across different 
 
 Acceptance records: benchmarks/results.md; media examples examples/media_demo.py. Completion of the reference implementation does not indicate completion of these production extensions.
 
-Distributed acceptance: benchmarks/ha-results.md; 40 passed; Patroni promotion 16.362 s,
+Historical distributed acceptance (2026-10-02): benchmarks/ha-results.md; 40 passed; Patroni promotion 16.362 s,
 original API recovery 16.582 s. Cross-physical-host network partition, object storage replication and production capacity not verified.

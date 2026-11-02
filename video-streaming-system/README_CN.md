@@ -9,6 +9,11 @@
 第 15 章参考实现：签名分片上传、断点续传、持久化转码 DAG、独立工作进程、
 真实 FFmpeg 转码、多清晰度加密 HLS、授权 HTTP 播放和故障恢复。
 
+2026-11-02 [开源源码对照与章节核对](docs/open-source-review_cn.md)：参考 PeerTube、
+MediaCMS，补上组装源文件时的逐片 SHA-256 校验及损坏修复重试。本轮覆盖全部
+**164 个不同测试**：常规完整套件 158 通过、6 个 PostgreSQL 用例跳过；随后新建
+独占 PostgreSQL 18，9 个分布式测试全部通过，补齐其中6项。
+
 在本目录的 PowerShell 中运行：
 
 ```powershell
@@ -104,7 +109,7 @@ playback、remove 请求不带正文，上传创建与元数据更新使用 JSON
 的 GOP 中间块经过宽限后可回收，源与播放资源继续保留。宽限不是持久 pin，暂停的
 未提交工作可能需要重试。离线迁移保留任务尝试策略，兼容没有新表的旧源数据库。
 
-本轮最终 **160 项测试通过，无跳过**：全新独占 PostgreSQL 18 UTF8、Moto S3、
+2026-10-24 核对时 **160 项测试通过，无跳过**：全新独占 PostgreSQL 18 UTF8、Moto S3、
 真实 FFmpeg 及独立 Worker 均实际执行，结束后清理自有服务。未配置 PostgreSQL
 时正常跳过六项集成测试。[新实测](benchmarks/review-2026-10-24.json)仅为三秒素材、
 一个 Worker 和十次顺序回环读取，不证明并发容量。本轮未重跑 Patroni 主库提升、

@@ -76,6 +76,14 @@ framing/JSON, applies absolute socket deadlines and drains handlers/timers on cl
 Service close wakes polls and waits accepted operations. SQLite/filesystem operations
 can outlive socket deadlines. Metadata writes and conservative GC remain serialized.
 
+Device transport uses bounded `read1` calls under one absolute socket deadline.
+At EOF it verifies that no declared Content-Length bytes remain, even if the received
+prefix is valid JSON or block data. Truncated fixed-length or chunked bodies raise
+`OSError`, so automatic sync uses the existing capped I/O retry path. A failed
+changes response cannot advance the local cursor or acknowledgement. Complete
+close-delimited responses without Content-Length remain supported. Connections,
+responses and deadline timers close on both success and failure.
+
 ## Limits and validation
 
 Fixed-size chunks reuse unchanged aligned blocks, not rsync-style byte shifting.

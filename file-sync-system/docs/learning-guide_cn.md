@@ -35,7 +35,7 @@ flowchart TB
 | 设备进度 | cursor与ack | 哪些变更已被设备应用 |
 | 冲突文件 | 独立文件路径与身份 | 保存另一份并发修改 |
 
-## 六站阅读路线
+## 七站阅读路线
 
 1. [DeviceClient.push](../src/file_sync/client.py#L434)：输入space与相对路径，读取本地基线，形成待提交内容；先寻找本地pending恢复分支。
 2. [Drive.begin](../src/file_sync/service.py#L194)：服务器为目标路径、基线和内容申请上传会话，预留所需资源。
@@ -43,6 +43,7 @@ flowchart TB
 4. [Drive.commit](../src/file_sync/service.py#L374)：最关键一站；先校验内容，再在事务内复核会话、权限与基线，决定原文件还是冲突文件。
 5. [DeviceClient.pull](../src/file_sync/client.py#L642)：读取变更页；失败不能直接推进本地游标。
 6. [DeviceClient.apply](../src/file_sync/client.py#L558)：下载、校验并替换文件前，检查本地是否又被修改。最后看 [EventLog.ack](../src/file_sync/notifications.py#L108)。
+7. [request](../src/file_sync/client_transport.py#L13)：网络读取是提交本地状态之前的一道边界；有效JSON前缀仍可能来自不完整响应。
 
 ## 微观一：为什么commit有两次会话读取
 
@@ -124,11 +125,46 @@ flowchart TD
 
 客户端需要记住已经被接受的revision，而不是重试时临时查询到的最新远端头。否则其他设备恰好又提交时，本地会错误地宣称自己已经同步了不曾接受的版本。
 
+## 微观三：JSON能解析，响应也可能没收齐
+
+[client_transport.py:81](../src/file_sync/client_transport.py#L81)
+
+```python
+    data.extend(chunk)
+if len(data) > limit:
+    raise OSError("response exceeded bound")
+# read1() can return EOF with bytes still promised by Content-Length.
+# A valid JSON prefix (or block) does not make the response complete.
+if response.length not in (None, 0):
+    raise OSError("incomplete response body")
+if not 200 <= response.status < 300:
+    raise HTTPError(
+```
+
+read1遇到EOF时可能不报告尚未收齐的Content-Length。客户端必须检查剩余长度，
+再允许JSON解析或返回块字节。否则一页形式正确但提前结束的通知，也可能让设备
+推进游标。截断统一作为OSError交给现有Watcher退避；合法关闭定界响应没有声明
+长度，仍可接受。连接、响应和定时器由finally释放。
+
+```mermaid
+flowchart TD
+  R["读取有上限和期限的响应"] --> I{"HTTP正文完整？"}
+  I -->|"声明长度未收齐或chunked截断"| E["OSError；释放连接；保留游标"]
+  E --> W["现有有上限退避后重试"]
+  W --> R
+  I -->|"完整或合法关闭定界"| P["解析并应用整页"]
+  P --> A["持久游标并确认"]
+```
+
 ## 用测试追踪数据变化
 
 - [test_concurrent_edits_create_exactly_one_conflict](../tests/test_sync.py#L168)：对同一base并发提交；观察两个结果的conflict集合为False、True，文件列表长度为2。
 - [test_lost_upload_response_reuses_session_and_publishes_once](../tests/test_client_faults.py#L49)：第一次commit完成后人为抛OSError，第二次push应恢复同一结果，不增加冲突。
 - [test_edit_arriving_during_download_is_preserved](../tests/test_device_reliability.py#L82)：pull下载期间用户又编辑文件，预期新本地修改仍被保留。
+- [test_truncated_changes_do_not_advance_cursor_and_complete_retry_succeeds](../tests/test_client_review.py#L83)：完整JSON但声明长度多一个字节，pull必须失败、游标仍为0；完整重试后推进到5。
+
+[open-source-review_cn.md](../docs/open-source-review_cn.md) 对照 Syncthing、Seafile 的块校验、晚编辑和
+冲突恢复；注意设备间同步与中心网盘在版本、权限和部署上的差异。
 
 ## 自查与练习
 

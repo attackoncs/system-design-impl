@@ -7,7 +7,9 @@ Source: root System Design Interview.md, Chapter 15, Design YouTube.
 - R2: Issue authenticated, expiring, part-specific upload grants. Accept resumable
   parts, verify lengths/checksums and reject conflicting retries or another owner.
 - R3: Persist upload state, source objects, job dependencies, leases and retries.
-  Finalization requires every part and the declared total size; optional full SHA256
+  Finalization requires every part and the declared total size. Verify each part's
+  SHA-256 while assembling; post-upload corruption must not enqueue a different source.
+  Reject without jobs or staging residue, allowing original-part repair/retry. Optional full SHA256
   validates the assembled source. Metadata must not become ready before all assets exist.
 - R4: Execute an offline DAG: inspect -> parallel renditions/thumbnail -> publish.
   Workers claim jobs atomically; stale lease owners cannot complete a reclaimed job.

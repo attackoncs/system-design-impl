@@ -10,6 +10,11 @@ Chapter 16, Design Google Drive: encrypted block storage, resumable uploads,
 immutable revisions, delta sync, conflict copies, sharing and durable notifications.
 [中文说明](README_CN.md).
 
+2026-11-02 [source comparison and chapter review](docs/open-source-review_cn.md):
+read actual Syncthing/Seafile implementations, reject truncated client responses
+without advancing sync progress, and verify the existing conflict/retry boundaries.
+The complete warnings-as-errors suite passes **122 tests**, with no skips.
+
 ## Run
 
 From this directory in PowerShell:
@@ -138,7 +143,7 @@ HTTP capacity, do not repeatedly write while idle and are cancelled during close
 Socket deadlines do not forcibly cancel filesystem/SQLite work.
 
 See [chapter audit](docs/chapter16-review.md) for executed regressions, graph review
-and remaining deployment boundaries. [Latest process report](benchmarks/review-2026-10-24.json)
+and remaining deployment boundaries. [Latest process report](benchmarks/review-2026-11-02.json)
 again verified 4,096 delta bytes downloaded and 8,192 unchanged bytes reused, with
 durable device progress after an API restart; these tiny local fixtures are not a
 production capacity claim.

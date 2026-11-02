@@ -22,6 +22,10 @@ Source: root System Design Interview.md, Chapter 16, Design Google Drive.
   explicit cold-tier archive/restore behavior without claiming actual Glacier integration.
 - R9. Repeatable correctness/fault tests plus independent network/process demos.
   Measure synchronization latency, block reuse and bytes transferred.
+- R10. Reject incomplete Content-Length and truncated chunked responses, even if
+  their prefix is valid JSON. Treat them as retryable I/O failures without advancing
+  cursor/ack; retain legal close-delimited responses. Release connections/timers
+  on failures and explicitly close caught HTTP error responses in tests.
 
 Reference persistence is local SQLite WAL and encrypted filesystem objects. No
 claim of metadata HA, cross-region replication, ten-million-user scale, commercial

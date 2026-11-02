@@ -10,6 +10,12 @@ Chapter 15's executable reference: resumable signed uploads, durable transcoding
 DAGs, independent workers, real FFmpeg, encrypted multi-rendition HLS and authorized
 HTTP playback. [中文说明](README_CN.md).
 
+Latest [source comparison and chapter review](docs/open-source-review_cn.md)
+(2026-11-02): PeerTube/MediaCMS references, checksum-verified source assembly,
+and repair/retry coverage. All **164 distinct tests** were exercised: 158 passed
+in the normal suite (six PostgreSQL cases skipped), then nine distributed tests
+passed against a fresh owned PostgreSQL 18 instance, covering those six cases.
+
 ## Run
 
 From this directory, in PowerShell:
@@ -159,7 +165,7 @@ after the grace period. Sources/playback assets remain referenced; grace is not 
 durable pin for paused, uncommitted work. Offline migration also preserves per-job
 attempt limits and accepts legacy sources without that table.
 
-Final validation: **160 passed, no skips**, using a fresh owned PostgreSQL 18 UTF8
+2026-10-24 validation: **160 passed, no skips**, using a fresh owned PostgreSQL 18 UTF8
 instance, Moto S3, real FFmpeg and independent workers; owned services were cleaned
 up. Normal runs without a PostgreSQL DSN skip six integration cases. The
 [new fixture report](benchmarks/review-2026-10-24.json) measures a three-second video,

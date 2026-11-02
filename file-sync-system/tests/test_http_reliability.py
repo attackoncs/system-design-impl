@@ -1,7 +1,7 @@
 """Framing, overload isolation, long-poll ownership and small upload protocol."""
 
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from http.client import HTTPResponse
 import json
 import socket
@@ -178,7 +178,8 @@ def test_simple_upload_real_protocol_and_idempotent_retry(drive):
         )
         with pytest.raises(HTTPError) as error:
             request(url, route, drive.token, "PUT", b"abcde")
-        assert error.value.code == 400
+        with closing(error.value):
+            assert error.value.code == 400
 
 
 def test_reserved_foreground_capacity_when_long_poll_slots_full(drive, monkeypatch):
@@ -199,7 +200,8 @@ def test_reserved_foreground_capacity_when_long_poll_slots_full(drive, monkeypat
             assert entered.wait(1)
             with pytest.raises(HTTPError) as error:
                 request(url, "/changes?device=e&wait=1", drive.token)
-            assert error.value.code == 503
+            with closing(error.value):
+                assert error.value.code == 503
             with request(url, token=drive.token) as response:
                 assert json.load(response)["block_size"] == 4
         finally:
@@ -230,7 +232,8 @@ def test_revision_limit_returns_latest_and_rejects_invalid_bounds(drive):
                     "/revisions?" + urlencode({"file": first["file"], "limit": limit}),
                     drive.token,
                 )
-            assert error.value.code == 400
+            with closing(error.value):
+                assert error.value.code == 400
 
 
 def test_total_overload_preserves_503_and_recovers_slot(drive):
