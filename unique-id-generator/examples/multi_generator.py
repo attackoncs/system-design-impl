@@ -206,10 +206,11 @@ def main():
     print()
     print("  Key takeaways for distributed deployments:")
     print("  • Each node gets a unique (datacenter_id, machine_id) pair")
-    print("  • No coordination between nodes is needed for uniqueness")
+    print("  • Allocate distinct identities and share one layout/epoch before generating")
     print("  • IDs can be parsed to trace back to their origin node")
     print("  • Custom bit layouts let you tune for your scale requirements")
-    print("  • MonotonicClock prevents issues from NTP clock adjustments")
+    print("  • MonotonicClock avoids local rollback; it does not synchronize nodes")
+    print("  • Reusing an identity after restart requires passing its last used time")
 
 
 if __name__ == "__main__":

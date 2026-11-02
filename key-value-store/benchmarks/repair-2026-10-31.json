@@ -1,0 +1,25 @@
+{
+  "nodes": 2,
+  "message_limit_bytes": 65536,
+  "application_bytes": 196608,
+  "first_repair": {
+    "metadata_rpcs": 1,
+    "compared_nodes": 1,
+    "differing_buckets": 1,
+    "pages": 5,
+    "received_records": 24,
+    "pulled_records": 24,
+    "pushed_records": 25
+  },
+  "second_repair": {
+    "metadata_rpcs": 1,
+    "compared_nodes": 1,
+    "differing_buckets": 0,
+    "pages": 0,
+    "received_records": 0,
+    "pulled_records": 0,
+    "pushed_records": 0
+  },
+  "roots_equal": true,
+  "tombstone_preserved": true
+}

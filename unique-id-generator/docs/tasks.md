@@ -142,6 +142,7 @@ Task 1 (Project Scaffolding)
   - File: `unique-id-generator/src/unique_id/snowflake.py`
   - Accept optional `config` (default `SnowflakeConfig()`) and `clock` (default `SystemClock()`)
   - Initialize: `_sequence = 0`, `_last_timestamp = -1`, `_lock = threading.Lock()`
+  - Precompute frozen configuration limits, timestamp shift and node prefix
 
 - [x] 4.2 Implement `SnowflakeGenerator.generate()`
   - Acquire lock
@@ -159,7 +160,7 @@ Task 1 (Project Scaffolding)
   - Return list of IDs
 
 - [x] 4.4 Implement `SnowflakeGenerator._wait_next_millis(last_timestamp)`
-  - Spin-wait: call `_current_millis()` until result > `last_timestamp`
+  - Sleep while waiting for clock progress; reject rollback or monotonic deadline exhaustion
   - Return the new timestamp
 
 - [x] 4.5 Write Snowflake generator tests
@@ -186,13 +187,13 @@ Task 1 (Project Scaffolding)
 
 - [x] 5.2 Implement `IDParser.parse(id_value)`
   - File: `unique-id-generator/src/unique_id/parser.py`
-  - Validate: id_value >= 0 and fits in 63 bits
+  - Validate: actual integer (not bool), id_value >= 0 and fits in 63 bits
   - Extract sequence: `id_value & sequence_mask`
   - Extract machine_id: `(id_value >> machine_shift) & machine_mask`
   - Extract datacenter_id: `(id_value >> datacenter_shift) & datacenter_mask`
   - Extract timestamp offset: `(id_value >> timestamp_shift) & timestamp_mask`
   - Convert timestamp: `offset + epoch_ms`
-  - Convert to datetime: `datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)`
+  - Convert UTC with integer millisecond timedelta; map unrepresentable dates to ValueError
   - Return `ParsedID` instance
 
 - [x] 5.3 Write parser tests
@@ -329,7 +330,16 @@ Task 1 (Project Scaffolding)
   - Thread safety notes
   - Clock handling and NTP considerations
 
-- [ ] 9.4 Copy documentation to docs/ directory
-  - File: `unique-id-generator/docs/requirements.md` — copy from `.kiro/specs/unique-id-generator/requirements.md`
-  - File: `unique-id-generator/docs/design.md` — copy from `.kiro/specs/unique-id-generator/design.md`
-  - File: `unique-id-generator/docs/tasks.md` — copy from `.kiro/specs/unique-id-generator/tasks.md`
+- [x] 9.4 Synchronize requirements/design/tasks with the running implementation
+  - Keep bilingual docs and source-linked learning guides current
+
+## 2026-10-31 open-source review
+
+- [x] Read chapter 8 (lines2214–2425), compare bwmarrin/snowflake and Sonyflake source, trace state/parsing with CodeGraph.
+- [x] Precompute immutable generation fields without changing rollback/overflow state transitions.
+- [x] Preserve exact UTC milliseconds, reject invalid parser types and give a consistent datetime-range error.
+- [x] Validate timestamp-random epoch/time width and require positive integer counts for alternative batches.
+- [x] Add 28 boundary cases: 26 fail on the old implementation; final suite passes 122 tests with warnings as errors.
+- [x] Run both examples, three-sample single/batch/shared-thread measurements and four distinct processes; retain raw JSON.
+- [x] Replace duplicated stale design code with source links; update README, requirements, tasks and learning guide.
+- [ ] Deployment identity leases, persistent restart high-water marks, clock synchronization and automatic failover remain unimplemented; see [coverage](open-source-review_cn.md).

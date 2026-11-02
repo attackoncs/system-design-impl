@@ -1,0 +1,33 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "tree": {
+    "updates": 2000,
+    "buckets": 4096,
+    "seconds": 0.038388799999665935,
+    "updates_per_second": 52098.52873800182,
+    "p50_ms": 0.01840000186348334,
+    "p95_ms": 0.021399995603132993,
+    "root": "b71f0a0f70c734d02250bec3fb84977b066718456297c99f78623698da72f9d6"
+  },
+  "runtime": {
+    "write": {
+      "operations": 120,
+      "clients": 8,
+      "replicas": 3,
+      "consistency": "all",
+      "ops_per_second": 135.26261405594494,
+      "p50_ms": 47.96209999767598,
+      "p95_ms": 108.01749999518506
+    },
+    "read": {
+      "operations": 120,
+      "clients": 8,
+      "replicas": 3,
+      "consistency": "all",
+      "ops_per_second": 312.87439005865224,
+      "p50_ms": 25.44435000163503,
+      "p95_ms": 30.28460000496125
+    }
+  }
+}

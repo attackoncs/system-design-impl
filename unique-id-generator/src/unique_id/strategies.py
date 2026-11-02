@@ -59,6 +59,8 @@ class UUIDGenerator(IDGenerator):
 
     def generate_batch(self, count: int) -> list[str]:
         """Generate multiple UUID v4 strings."""
+        if type(count) is not int or count <= 0:
+            raise ValueError("count must be a positive integer")
         return [str(uuid.uuid4()) for _ in range(count)]
 
 
@@ -82,17 +84,26 @@ class TimestampRandomGenerator(IDGenerator):
         """Initialize with a custom epoch.
 
         Args:
-            epoch_ms: Custom epoch in milliseconds (default: 2024-01-01).
+            epoch_ms: Positive integer epoch in milliseconds (default: 2024-01-01).
         """
+        if type(epoch_ms) is not int or epoch_ms <= 0:
+            raise ValueError("epoch_ms must be a positive integer")
         self._epoch_ms = epoch_ms
         self._random = random.SystemRandom()
 
     def generate(self) -> int:
-        """Generate a 64-bit timestamp-random ID."""
+        """Generate an unsigned 64-bit ID; reject time outside the 42-bit range.
+
+        This probabilistic strategy is neither collision-free nor monotonic.
+        """
         ts = int(time.time() * 1000) - self._epoch_ms
+        if not 0 <= ts < 1 << 42:
+            raise ValueError("timestamp outside the 42-bit timestamp-random range")
         random_bits = self._random.getrandbits(22)
         return (ts << 22) | random_bits
 
     def generate_batch(self, count: int) -> list[int]:
         """Generate multiple timestamp-random IDs."""
+        if type(count) is not int or count <= 0:
+            raise ValueError("count must be a positive integer")
         return [self.generate() for _ in range(count)]

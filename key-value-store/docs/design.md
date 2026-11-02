@@ -46,6 +46,15 @@ tombstones are not automatically GC'd. Stop closes WAL even when flushing fails.
 Corrupt final SSTables fail startup instead of silently removing accepted data.
 Windows directory durability and physical power-loss behavior are not proven.
 
+WAL replay now holds the same lock as append/truncate/close and drains its disk
+thread before cancellation escapes. It truncates only an incomplete suffix to
+the last complete frame boundary, then fsyncs it before allowing future appends.
+Complete checksum-invalid frames retain the existing skip policy. Any OSError
+from WAL disk I/O fences append/truncate until successful replay; close alone
+does not clear it. A storage-engine restart applies recovered entries before
+serving traffic. An uncertain failed append may be recovered as a complete entry.
+See the [source comparison and failure sequence](open-source-review_cn.md).
+
 ## Incremental Merkle tree
 
 The bucket digest still hashes sorted length-delimited key/value-hash components.

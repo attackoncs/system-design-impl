@@ -28,11 +28,10 @@ class ClockMovedBackwardsError(UniqueIDError):
 
 
 class SequenceOverflowError(UniqueIDError):
-    """Raised when sequence number overflows within a millisecond.
+    """Raised when sequence exhaustion outlasts the configured wait deadline.
 
-    This should not normally be raised externally — the generator handles
-    overflow by waiting for the next millisecond. This is used internally
-    or when wait behavior is disabled.
+    The generator normally waits for the next millisecond. A stalled clock or
+    zero timeout can expose this error to callers without resetting used state.
 
     Covers: FR-4.3
     """

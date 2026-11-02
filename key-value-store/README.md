@@ -10,8 +10,9 @@ A Dynamo-inspired learning implementation with real asynchronous gRPC replicatio
 causal siblings/tombstones, quorum responses, gossip, durable hinted handoff,
 Merkle repair and WAL/MemTable/SSTable storage. [中文](README_CN.md).
 
-The latest review passes **417 tests**, including actual loopback RPC, fault and
-restart cases. [Chapter coverage and remaining work](docs/chapter07-review.md),
+The latest review passes **428 tests**, including actual loopback RPC, fault and
+restart cases. [Open-source comparison and latest coverage (Chinese)](docs/open-source-review_cn.md),
+[earlier review](docs/chapter07-review.md),
 [design](docs/design.md), [raw measurements](benchmarks/REPORT.md).
 Automatic load-based provisioning and full multi-datacenter operation remain
 unfinished; this is not a claim that every deployment requirement is complete.
@@ -101,6 +102,11 @@ lock waiters; its admission budget is256 replica-task units.
 
 ## Repair and durability changes
 
+- WAL replay repairs and fsyncs an incomplete suffix before accepting new writes.
+  Replay owns the writer lock and drains disk work on cancellation. An I/O error
+  fences subsequent append/truncate until successful recovery; close alone does
+  not reset this state. Restart the storage engine to apply recovered records
+  before serving traffic. Failed writes may still appear after recovery.
 - Merkle roots keep the old hash format, updating only one path of O(log B)
   internal nodes. Bucket digest work still depends on the bucket's keys.
 - MerkleInspect compares at most64 heap nodes per RPC. Differing buckets use

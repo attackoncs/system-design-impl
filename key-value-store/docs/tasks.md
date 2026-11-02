@@ -43,7 +43,7 @@ Task 1 (Project Scaffolding)
 
 - [x] 1.1 Create `pyproject.toml` with hatchling build system
   - File: `key-value-store/pyproject.toml`
-  - Python >= 3.9
+  - Python >= 3.10
   - Dependencies: `grpcio`, `grpcio-tools`, `protobuf`, `consistent-hashing` (local path: `../consistent-hashing`)
   - Dev dependencies: `pytest`, `pytest-asyncio`, `hypothesis`, `grpcio-testing`
   - Build target: `packages = ["src/kv_store"]`
@@ -105,6 +105,8 @@ Task 1 (Project Scaffolding)
   - Methods: `append(entry)`, `replay()`, `truncate()`
   - Async file I/O with fsync for durability
   - CRC32 checksum for corruption detection
+  - Repair/fsync incomplete suffixes before append; serialize replay and drain cancellation
+  - Fence append/truncate after I/O failures until successful recovery
 
 - [x] 2.4 Write WAL tests
   - File: `key-value-store/tests/test_storage/test_wal.py`
@@ -227,7 +229,7 @@ Task 1 (Project Scaffolding)
 
 - [x] 3.4 Write Quorum Logic tests
   - File: `key-value-store/tests/test_replication/test_quorum.py`
-  - Test: strong consistency check (W + R > N)
+  - Test: stable-set quorum intersection check (W + R > N); not a linearizability proof
   - Test: consistency level factory produces correct W/R
   - Test: write quorum succeeds with W acks
   - Test: write quorum fails with fewer than W acks
@@ -481,7 +483,7 @@ Task 1 (Project Scaffolding)
     - Property: put then get returns same value (roundtrip)
     - Property: delete then get returns tombstone or not found
   - **Quorum properties:**
-    - Property: W + R > N implies strong consistency
+    - Property: W + R > N expresses intersection on a stable replica set
     - Property: write succeeds iff >= W acks received
   - Use Hypothesis strategies for generating random keys, values, and operations
 
@@ -538,3 +540,12 @@ Task 1 (Project Scaffolding)
 - [x] 双语README/设计/需求、本章覆盖与兼容性、性能回归同步更新。
 - [ ] 负载驱动资源供给/安全缩容屏障、拓扑共识与真正跨机房运行保障。
 - [ ] 流式压缩/有界SSTable缓存/海量数据恢复、共有职责树分片与持久修复续传。
+
+## 2026-10-31 open-source review
+
+- [x] Read chapter 7 and compare Voldemort/LevelDB source with the CodeGraph runtime path.
+- [x] Reproduce all 11 WAL regression cases on the old implementation; repair torn-tail recovery and fence I/O failures.
+- [x] Verify serialized recovery, repeated cancellation, queued write rejection and restart/write/restart durability.
+- [x] Pass 428 tests with warnings as errors; run both examples, real gRPC benchmark and three independent ungraceful processes.
+- [x] Correct example storage paths, quorum wording, clean-restart labeling and bilingual requirements/design/README; update the source-linked guide.
+- [ ] Automatic provisioning, safe drain, topology consensus and bounded-memory large-data storage remain unfinished; see [coverage](open-source-review_cn.md).

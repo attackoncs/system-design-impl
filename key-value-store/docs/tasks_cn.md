@@ -43,7 +43,7 @@ Task 1 (项目脚手架)
 
 - [x] 1.1 创建 `pyproject.toml`，使用 hatchling 构建系统
   - 文件：`key-value-store/pyproject.toml`
-  - Python >= 3.9
+  - Python >= 3.10
   - 依赖：`grpcio`, `grpcio-tools`, `protobuf`, `consistent-hashing`（本地路径：`../consistent-hashing`）
   - 开发依赖：`pytest`, `pytest-asyncio`, `hypothesis`, `grpcio-testing`
   - 构建目标：`packages = ["src/kv_store"]`
@@ -105,6 +105,8 @@ Task 1 (项目脚手架)
   - 方法：`append(entry)`, `replay()`, `truncate()`
   - 异步文件 I/O， durability 保证使用 fsync
   - 使用 CRC32 校验和检测损坏
+  - 新追加前清理不完整末尾并fsync；恢复串行且取消等待线程结束
+  - I/O失败后停止追加/截断，成功恢复才解除限制
 
 - [x] 2.4 编写 WAL 测试
   - 文件：`key-value-store/tests/test_storage/test_wal.py`
@@ -227,7 +229,7 @@ Task 1 (项目脚手架)
 
 - [x] 3.4 编写 Quorum 逻辑测试
   - 文件：`key-value-store/tests/test_replication/test_quorum.py`
-  - 测试：强一致性检查（W + R > N）
+  - 测试：稳定副本集合上的仲裁交集检查（W + R > N），不作为线性一致性证明
   - 测试：一致性级别工厂方法产生正确的 W/R
   - 测试：写入 Quorum 在 W 个确认时成功
   - 测试：写入 Quorum 在少于 W 个确认时失败
@@ -481,7 +483,7 @@ Task 1 (项目脚手架)
     - 属性：put 然后 get 返回相同值（往返）
     - 属性：delete 然后 get 返回 Tombstone 或 not found
   - **Quorum 属性：**
-    - 属性：W + R > N 意味着强一致性
+    - 属性：W + R > N 表达稳定副本集合上的仲裁交集
     - 属性：写入成功当且仅当接收到 >= W 个确认
   - 使用 Hypothesis strategies 生成随机键、值和操作
 
@@ -538,3 +540,12 @@ Task 1 (项目脚手架)
 - [x] 双语README/设计/需求、本章覆盖与兼容性、性能回归同步更新。
 - [ ] 负载驱动资源供给/安全缩容屏障、拓扑共识与真正跨机房运行保障。
 - [ ] 流式压缩/有界SSTable缓存/海量数据恢复、共有职责树分片与持久修复续传。
+
+## 2026-10-31开源复审
+
+- [x] 阅读第7章，对照Voldemort/LevelDB源码，用CodeGraph核对实际运行路径。
+- [x] 11项WAL新增用例在旧实现全部失败；修复残尾恢复及I/O失败后的写入准入。
+- [x] 验证恢复串行、重复取消、待写请求拒绝及恢复后再次写入/重启。
+- [x] 428项测试、两个示例、真实gRPC基准、三个独立进程异常退出验证通过。
+- [x] 修正示例独立路径、仲裁措辞、正常重启标签；同步双语需求/设计/README及源码学习指南。
+- [ ] 自动供给、安全下线、拓扑共识和大数据有界内存存储仍未完成，见[覆盖说明](open-source-review_cn.md)。

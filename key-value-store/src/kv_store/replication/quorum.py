@@ -27,8 +27,8 @@ class ConsistencyLevel(enum.Enum):
     """Predefined consistency levels for read/write operations."""
 
     ONE = "one"  # W=1, R=1 (eventual consistency)
-    QUORUM = "quorum"  # W=⌊N/2⌋+1, R=⌊N/2⌋+1 (strong consistency for N=3)
-    ALL = "all"  # W=N, R=N (strongest, lowest availability)
+    QUORUM = "quorum"  # W=⌊N/2⌋+1, R=⌊N/2⌋+1 (intersecting quorums)
+    ALL = "all"  # W=N, R=N (all replicas required, lowest availability)
 
 
 @dataclasses.dataclass
@@ -46,10 +46,13 @@ class QuorumConfig:
     r: int
 
     def is_strongly_consistent(self) -> bool:
-        """Check if W + R > N (guarantees read/write quorum overlap).
+        """Check W + R > N; the legacy name denotes quorum intersection only.
+
+        A stable replica set is required for overlap. Causal conflicts, sloppy
+        quorum and membership changes prevent a linearizability guarantee.
 
         Returns:
-            True if the configuration guarantees strong consistency.
+            True if W + R > N.
         """
         return self.w + self.r > self.n
 
@@ -179,8 +182,9 @@ class QuorumManager:
         """Execute a write with quorum consensus.
 
         Sends write requests to all replica nodes concurrently using
-        asyncio.gather with return_exceptions=True. Returns success once
-        W acknowledgments are received.
+        asyncio.gather with return_exceptions=True, waiting for all results.
+        Success requires W acknowledgments. The node runtime instead uses
+        ReplicaCoordinator, which can return before slow replicas complete.
 
         Args:
             key: The key being written.
@@ -232,9 +236,9 @@ class QuorumManager:
     ) -> QuorumResult:
         """Execute a read with quorum consensus.
 
-        Queries all replica nodes concurrently and collects responses.
-        Returns success once R responses are received, along with the
-        collected values for conflict resolution upstream.
+        Queries all replica nodes concurrently and waits for all results.
+        Success requires R responses; values are reconciled upstream. The
+        node runtime uses ReplicaCoordinator for early quorum responses.
 
         Args:
             key: The key to read.

@@ -123,15 +123,15 @@ async def demo_single_node_operations() -> None:
         if result and result.is_tombstone:
             print("    GET user:1002 = <tombstone - deleted>")
 
-        # --- Demonstrate persistence (WAL replay) ---
-        print("\n  Demonstrating crash recovery (WAL replay):")
+        # --- Demonstrate persistence after a graceful flush ---
+        print("\n  Demonstrating persistence after a clean restart:")
         await engine.stop()
-        print("    Engine stopped (simulating crash)")
+        print("    Engine stopped and flushed MemTable to SSTable")
 
-        # Restart engine — WAL replay restores MemTable state
+        # A clean stop flushes MemTable and truncates WAL; recovery loads SSTables.
         engine2 = StorageEngine(config)
         await engine2.start()
-        print("    Engine restarted — WAL replayed")
+        print("    Engine restarted — SSTables loaded and remaining WAL replayed")
 
         result = await engine2.get("user:1001")
         if result and result.found:
@@ -217,7 +217,7 @@ async def demo_quorum_configuration() -> None:
     print("  Default configuration: N=3, W=2, R=2")
     default_qc = qm.get_quorum_config()
     print(
-        "    Strongly consistent (W+R > N)?"
+        "    Intersecting read/write quorums (W+R > N)?"
         f" {default_qc.is_strongly_consistent()}"
     )
     print(f"    W + R = {default_qc.w + default_qc.r} > N = {default_qc.n}")
@@ -225,10 +225,10 @@ async def demo_quorum_configuration() -> None:
     print("\n  Consistency levels:")
     for level in ConsistencyLevel:
         qc = QuorumConfig.from_consistency_level(level, n=3)
-        strong = "yes" if qc.is_strongly_consistent() else "no"
+        overlap = "yes" if qc.is_strongly_consistent() else "no"
         print(
             f"    {level.value:>8}: W={qc.w}, R={qc.r}, N={qc.n} "
-            f"(strong consistency: {strong})"
+            f"(quorum intersection: {overlap})"
         )
 
     print("\n  Trade-offs:")
@@ -236,11 +236,9 @@ async def demo_quorum_configuration() -> None:
         "    ONE (W=1, R=1):    Fastest, eventual consistency, risk of stale"
         " reads"
     )
-    print("    QUORUM (W=2, R=2): Balanced, strong consistency with N=3")
-    print(
-        "    ALL (W=3, R=3):    Slowest, highest consistency, lowest"
-        " availability"
-    )
+    print("    QUORUM (W=2, R=2): Intersecting quorums on a stable replica set")
+    print("    ALL (W=3, R=3):    Requires all replicas, lowest availability")
+    print("    Quorum intersection alone does not guarantee linearizability.")
 
 
 async def demo_multi_node_cluster() -> None:
@@ -272,7 +270,9 @@ async def demo_multi_node_cluster() -> None:
     print("    node1_config = NodeConfig(")
     print('        node_id="node-1",')
     print("        network=NetworkConfig(port=50051),")
-    print('        storage=StorageConfig(data_dir="./data/node1"),')
+    print('        storage=StorageConfig(data_dir="./data/node1",')
+    print('            wal_dir="./data/node1/wal",')
+    print('            sstable_dir="./data/node1/sstables"),')
     print("        cluster=ClusterConfig(seed_nodes=[]),")
     print("    )")
     print("    node1 = KVNode(node1_config)")
@@ -282,7 +282,9 @@ async def demo_multi_node_cluster() -> None:
     print("    node2_config = NodeConfig(")
     print('        node_id="node-2",')
     print("        network=NetworkConfig(port=50052),")
-    print('        storage=StorageConfig(data_dir="./data/node2"),')
+    print('        storage=StorageConfig(data_dir="./data/node2",')
+    print('            wal_dir="./data/node2/wal",')
+    print('            sstable_dir="./data/node2/sstables"),')
     print('        cluster=ClusterConfig(seed_nodes=["localhost:50051"]),')
     print("    )")
     print("    node2 = KVNode(node2_config)")
@@ -292,7 +294,9 @@ async def demo_multi_node_cluster() -> None:
     print("    node3_config = NodeConfig(")
     print('        node_id="node-3",')
     print("        network=NetworkConfig(port=50053),")
-    print('        storage=StorageConfig(data_dir="./data/node3"),')
+    print('        storage=StorageConfig(data_dir="./data/node3",')
+    print('            wal_dir="./data/node3/wal",')
+    print('            sstable_dir="./data/node3/sstables"),')
     print('        cluster=ClusterConfig(seed_nodes=["localhost:50051"]),')
     print("    )")
     print("    node3 = KVNode(node3_config)")

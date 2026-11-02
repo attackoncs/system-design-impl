@@ -29,20 +29,21 @@ flowchart LR
 | `epoch_ms` | 时间字段的起点 | 不可变配置 |
 | `machine_id/datacenter_id` | 区分不同发号身份 | 配置；由部署方保证分配 |
 | `max_sequence` | 2位对应3，是位掩码 | 根据配置推导 |
+| `_node_prefix/_timestamp_shift` | 已移位的节点字段及时间位移 | 构造时由冻结配置预计算，逐ID复用 |
 | 返回ID | 时间偏移、节点和序列的组合 | 输出结果，可由解析器还原 |
 
 ## 六站源码阅读路线
 
 1. [SnowflakeConfig.__post_init__](../src/unique_id/config.py#L33)：检查位布局和节点编号范围。先确认案例的2位序列配置合法。
 2. [SnowflakeGenerator.__init__](../src/unique_id/snowflake.py#L23)：定位初始状态与锁。输入配置和Clock，输出一个带独立状态的实例。
-3. [SnowflakeGenerator.generate](../src/unique_id/snowflake.py#L55)：看锁覆盖的范围；入口本身不负责算法，下一站才是状态机。
-4. [SnowflakeGenerator._generate_locked](../src/unique_id/snowflake.py#L70)：输入当前毫秒和旧状态，决定新序列并生成ID。重点找“状态何时正式写回”。
-5. [SnowflakeGenerator._wait_next_millis](../src/unique_id/snowflake.py#L115)：只在序列耗尽时进入；等待的是业务时钟推进，截止时间使用单调时钟。
-6. [IDParser.parse](../src/unique_id/parser.py#L47)：拿到ID后用相同布局反解。把输出字段对回案例，证明理解了按位组合。
+3. [SnowflakeGenerator.generate](../src/unique_id/snowflake.py#L64)：看锁覆盖的范围；入口本身不负责算法，下一站才是状态机。
+4. [SnowflakeGenerator._generate_locked](../src/unique_id/snowflake.py#L81)：输入当前毫秒和旧状态，决定新序列并生成ID。重点找“状态何时正式写回”。
+5. [SnowflakeGenerator._wait_next_millis](../src/unique_id/snowflake.py#L121)：只在序列耗尽时进入；等待的是业务时钟推进，截止时间使用单调时钟。
+6. [IDParser.parse](../src/unique_id/parser.py#L49)：拿到ID后用相同布局反解。把输出字段对回案例，证明理解了按位组合。
 
 ## 微观一：异常之前不提交状态
 
-[snowflake.py:72](../src/unique_id/snowflake.py#L72)
+[snowflake.py:83](../src/unique_id/snowflake.py#L83)
 
 ```python
 timestamp = self._current_millis()
@@ -52,11 +53,11 @@ if timestamp < self._last_timestamp:
     )
 sequence = 0
 if timestamp == self._last_timestamp:
-    sequence = (self._sequence + 1) & self._config.max_sequence
+    sequence = (self._sequence + 1) & self._max_sequence
     if sequence == 0:
         timestamp = self._wait_next_millis(self._last_timestamp)
 offset = timestamp - self._config.epoch_ms
-if not 0 <= offset <= self._config.max_timestamp:
+if not 0 <= offset <= self._max_timestamp:
     raise ValueError("timestamp outside configured Snowflake bit range")
 self._last_timestamp, self._sequence = timestamp, sequence
 ```
@@ -82,7 +83,7 @@ flowchart TD
 
 ## 微观二：等待不会占满CPU，但仍持有生成器锁
 
-[snowflake.py:126](../src/unique_id/snowflake.py#L126)
+[snowflake.py:132](../src/unique_id/snowflake.py#L132)
 
 ```python
 deadline = time.monotonic() + self._overflow_timeout
@@ -96,7 +97,7 @@ while True:
         return timestamp
     if time.monotonic() >= deadline:
         raise unique_id.exceptions.SequenceOverflowError(
-            last_timestamp, self._config.max_sequence
+            last_timestamp, self._max_sequence
         )
     # Yield the CPU while retaining exclusive ownership of generator state.
     time.sleep(0.0001)
@@ -104,7 +105,7 @@ while True:
 
 循环每次重新读业务时钟，发现推进便返回；回拨立即报错，截止则抛 `SequenceOverflowError`。`sleep` 让出CPU，但外层 `generate` 的实例锁仍被持有，其他线程不能同时修改序列。等待上限限制了这段串行等待的时间，不能把它描述成无等待的无限吞吐。
 
-[SnowflakeGenerator.generate_batch](../src/unique_id/snowflake.py#L93) 一次持锁生成多个ID。如果中途失败，之前已经生成的内部状态不会回滚；调用者不能把批量方法当成事务。
+[SnowflakeGenerator.generate_batch](../src/unique_id/snowflake.py#L99) 一次持锁生成多个ID。如果中途失败，之前已经生成的内部状态不会回滚；调用者不能把批量方法当成事务。
 
 ## 失败案例与两项测试
 
@@ -113,6 +114,19 @@ while True:
 - [test_overflow_timeout_does_not_reuse_ids](../tests/test_review.py#L22)：观察超时前后生成的ID和时钟推进；断言重点是恢复后没有复用旧ID。
 - [test_threads_share_sequence_without_duplicates](../tests/test_review.py#L49)：多个线程共享一个实例，输出应无重复；它证明的是共享实例的并发序列保护。
 - [TestSnowflakeGenerate.test_sequence_increments_same_millisecond](../tests/test_snowflake.py#L45)：从解析出的序列字段理解正常路径。
+
+## 微观三：整数毫秒不能绕道浮点秒
+
+自定义时间位足够宽时，3000年的`.123000`曾被解析为`.123001`；部分平台还无法
+通过系统timestamp函数转换9999年日期。沿
+[IDParser.parse](../src/unique_id/parser.py#L49) 看UTC Unix起点加整数毫秒
+timedelta的转换，先保证数值字段精确，再检查日期是否能被Python表示。
+
+- [test_custom_layout_preserves_exact_datetime_milliseconds](../tests/test_open_source_review.py#L21)：从合法自定义布局生成ID，逐一对照3000年和9999年边界的UTC与整数毫秒。
+- [test_datetime_overflow_has_a_consistent_public_error](../tests/test_open_source_review.py#L32)：数值ID仍合法，但日期到10000年，预期明确ValueError，不能混淆两种范围。
+
+发号路径预计算的是不变配置，时间和序列仍逐次校验并提交。它减少重复计算，
+不放松唯一性条件。开源取舍、完整覆盖与实测见 [open-source-review_cn.md](../docs/open-source-review_cn.md)。
 
 ## 三个自查问题
 

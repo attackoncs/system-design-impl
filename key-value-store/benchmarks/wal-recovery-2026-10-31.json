@@ -1,0 +1,33 @@
+{
+  "date": "2026-10-31",
+  "python": "3.13.9",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "scenario": "fsynced prefix + torn length; restart/write; restart/read",
+  "physical_power_loss": false,
+  "processes": [
+    {
+      "phase": "first",
+      "pid": 8252,
+      "wal_bytes": 62,
+      "sstable_files": 0,
+      "verified_keys": 0,
+      "exit": "os._exit(0), no engine.stop/MemTable flush"
+    },
+    {
+      "phase": "second",
+      "pid": 29024,
+      "wal_bytes": 121,
+      "sstable_files": 0,
+      "verified_keys": 1,
+      "exit": "os._exit(0), no engine.stop/MemTable flush"
+    },
+    {
+      "phase": "verify",
+      "pid": 30160,
+      "wal_bytes": 121,
+      "sstable_files": 0,
+      "verified_keys": 2,
+      "exit": "os._exit(0), no engine.stop/MemTable flush"
+    }
+  ]
+}

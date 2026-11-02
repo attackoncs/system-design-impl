@@ -6,19 +6,19 @@
 [Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
 <!-- LEARNING_GUIDE_END -->
 
-> 第 08 章核对与本轮变更见[审查记录](docs/chapter08-review.md)：新增有界序列等待和配置类型校验；说明节点身份、重启及吞吐边界。
+> [Latest chapter/open-source review (Chinese)](docs/open-source-review_cn.md): **122 tests**, precise UTC parsing, bounded alternatives and measured generation. [Earlier review](docs/chapter08-review.md).
 
-A Python implementation of the Twitter Snowflake algorithm for generating 64-bit unique, time-sortable IDs suitable for distributed systems. Designed for high-throughput scenarios requiring guaranteed uniqueness, strict monotonicity, and embedded machine identity.
+A Python implementation of the Twitter Snowflake algorithm for numeric, time-sortable IDs. Uniqueness requires a shared layout/epoch, distinct active node identities and no reuse of old time/sequence state after restart. The library does not allocate identities or persist a restart high-water mark.
 
 ## Features
 
 - **64-bit unique IDs** — compact integers usable as database primary keys
-- **Time-sortable** — IDs generated later always have higher numeric values
+- **Time-sortable** — increasing within one instance; cross-machine order depends on clock agreement
 - **Strictly monotonic** — no duplicates, no out-of-order IDs within a generator
 - **Configurable bit layout** — tune timestamp range, datacenter/machine capacity, and throughput
 - **Thread-safe** — concurrent generation via `threading.Lock`
 - **Clock abstraction** — SystemClock or MonotonicClock for drift-prone environments
-- **ID parsing** — decompose any ID back into timestamp, datacenter, machine, and sequence
+- **ID parsing** — decompose an ID with the matching layout/epoch; integer UTC conversion preserves milliseconds
 - **Alternative strategies** — UUID v4 and timestamp-random generators for comparison
 - **Zero runtime dependencies** — stdlib only
 
@@ -208,7 +208,8 @@ The core ID generator. Thread-safe.
 
 ```python
 class SnowflakeGenerator:
-    def __init__(self, config: SnowflakeConfig = None, clock: Clock = None): ...
+    def __init__(self, config: SnowflakeConfig = None, clock: Clock = None,
+                 *, overflow_timeout_seconds: float = 1.0): ...
     def generate(self) -> int: ...
     def generate_batch(self, count: int) -> list[int]: ...
     @property
@@ -223,7 +224,8 @@ class SnowflakeGenerator:
 
 **Raises:**
 - `ClockMovedBackwardsError` — if the clock moves backwards (drift detected)
-- `ValueError` — if `count <= 0` in `generate_batch`
+- `SequenceOverflowError` — if waiting for the next millisecond reaches the deadline
+- `ValueError` — if the timestamp is outside its configured range, or batch count is not a positive integer
 
 ### IDParser
 
@@ -236,6 +238,10 @@ class IDParser:
 ```
 
 **ParsedID fields:**
+
+`parse()` requires an actual integer in `0..2**63-1` (not bool), and raises
+`ValueError` if its UTC date cannot fit Python's datetime range. Large custom
+layouts can generate valid numeric IDs outside that date range.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -288,14 +294,18 @@ gen = SnowflakeGenerator(clock=clock)
 | **Size** | 64-bit int | 128-bit string (36 chars) | 64-bit int |
 | **Time-sortable** | ✓ | ✗ | Partially (same ms unordered) |
 | **Strictly monotonic** | ✓ | ✗ | ✗ |
-| **Uniqueness** | Guaranteed (per config) | Probabilistic (2^122 space) | Probabilistic (2^22 random) |
+| **Uniqueness** | Conditional on layout/epoch/identity/restart discipline | Probabilistic (2^122 space) | Probabilistic (2^22 random) |
 | **Coordination** | Per machine (dc+machine ID) | None needed | None needed |
 | **Configuration** | Required (dc/machine ID) | None | Optional (epoch) |
-| **DB index performance** | Excellent (sequential) | Poor (random) | Good (time-prefix) |
+| **Key insertion pattern** | Usually time-local | Random | Time-prefix |
 | **Machine identity** | Embedded in ID | None | None |
 | **Clock dependency** | Yes (millisecond) | No | Yes (millisecond) |
-| **Collision risk** | Zero (within config) | ~2^-61 per pair | ~2^-22 per ms |
-| **Max throughput/machine** | 4.096M IDs/sec | Unlimited | Unlimited |
+| **Collision risk** | No reuse within the stated assumptions | 2^-122 per independent pair | 2^-22 per independent pair in the same ms |
+| **Capacity / throughput** | 4096 IDs/ms layout capacity; runtime-dependent throughput | Runtime-dependent | Runtime-dependent |
+
+UUID v4 has 122 random bits; see [RFC 9562 section 5.4](https://www.rfc-editor.org/rfc/rfc9562.html#section-5.4).
+Pairwise probabilities assume independent uniform randomness and are not the
+collision probability of an entire workload.
 
 **When to use each:**
 - **Snowflake**: High-throughput systems needing sortable IDs with machine traceability
@@ -308,7 +318,7 @@ gen = SnowflakeGenerator(clock=clock)
 
 **Implementation details:**
 - A `threading.Lock` protects the mutable state (`_sequence` and `_last_timestamp`)
-- The lock is held only during state mutation (minimal critical section)
+- The lock covers clock reads, overflow waiting and state publication; batch calls hold it for the entire batch
 - `generate_batch(count)` acquires the lock once for the entire batch, reducing contention compared to calling `generate()` in a loop
 
 **Multi-threaded usage:**
@@ -357,18 +367,22 @@ In distributed systems, NTP (Network Time Protocol) can adjust the system clock 
 | Well-configured NTP (< 1ms drift) | `SystemClock` (default) is fine |
 | Frequent NTP adjustments | Use `MonotonicClock` |
 | VM migration / clock jumps | Use `MonotonicClock` |
-| Long-running processes | `MonotonicClock` avoids accumulated drift |
+| Long-running processes | Monitor wall-clock drift; MonotonicClock does not resynchronize its initial anchor |
 | Short-lived processes | `SystemClock` is simpler |
 
 ### Sequence Overflow Handling
 
-When more than 4,096 IDs (default config) are generated within a single millisecond, the sequence counter overflows. The generator handles this by spin-waiting until the next millisecond:
+When all 4,096 sequence values are used within one millisecond, the generator waits with sleep and a monotonic deadline (default 1 second):
 
 ```
-generate() called → sequence at max → spin-wait → next ms → reset sequence → generate
+generate() → sequence exhausted → bounded wait → next ms or public timeout error
 ```
 
-This ensures no ID loss at the cost of a brief latency spike (< 1ms). In practice, overflow only occurs at sustained rates above 4 million IDs/second per machine.
+Set `overflow_timeout_seconds=0` to reject immediately if the clock remains unchanged.
+Rollback raises `ClockMovedBackwardsError`; deadline exhaustion raises
+`SequenceOverflowError`. Failure does not reset used state. Short bursts can
+exhaust the sequence; there is no sub-millisecond latency guarantee. A failed
+batch can consume earlier IDs and has no transaction rollback.
 
 ## Error Handling
 
@@ -376,8 +390,8 @@ This ensures no ID loss at the cost of a brief latency spike (< 1ms). In practic
 |-------|-------------|-------------------|
 | `ClockMovedBackwardsError` | Clock drift detected | Wait for drift duration, or use `MonotonicClock` |
 | `InvalidConfigError` | Bad configuration at construction | Fix config parameters |
-| `SequenceOverflowError` | Internal (handled automatically) | Generator waits for next ms |
-| `ValueError` | Invalid parse input or batch count | Check input values |
+| `SequenceOverflowError` | Clock fails to advance before the configured deadline | Retry after clock progress; used state is retained |
+| `ValueError` | Invalid parse/batch/epoch input, out-of-range time or UTC date | Check the argument and matching layout |
 
 ```python
 from unique_id import SnowflakeGenerator, ClockMovedBackwardsError
@@ -401,13 +415,23 @@ except ClockMovedBackwardsError as e:
 | ID type | Plain `int` | No string conversion overhead; directly usable as DB primary key |
 | Thread safety | `threading.Lock` | Simple, correct; GIL provides some safety but lock ensures correctness |
 | Clock drift | Raise exception (fail-fast) | Prevents duplicate IDs; caller decides recovery strategy |
-| Sequence overflow | Spin-wait for next ms | Ensures no ID loss; < 1ms latency acceptable for rare event |
+| Sequence overflow | Sleep with a monotonic deadline | Bounded overflow waiting; other threads still wait for the instance lock |
 | Configuration | Frozen dataclass | Immutable after creation; validated at construction time |
 | Bit layout | Configurable with sensible defaults | Default matches Twitter Snowflake; tunable for different scale needs |
 | Custom epoch | 2024-01-01T00:00:00Z | Recent epoch maximizes usable timestamp range (~69 years) |
 | Clock abstraction | ABC with injection | Enables deterministic testing; supports monotonic clock |
 | Batch generation | Single lock acquisition | Reduces overhead for bulk generation; maintains ordering |
 | Parser | Separate class | Single responsibility; usable independently for forensic analysis |
+
+Timestamp-random is a comparison strategy: positive integer epoch, a time offset
+in `0..2**42-1`, and unsigned 64-bit output with possible collisions. All batch
+strategies require a positive integer count. MonotonicClock only prevents local
+rollback during its lifetime; it does not synchronize machines or make identity
+reuse after restart safe. Different layouts/epochs are separate ID namespaces.
+
+Run `python tools/benchmark.py --output benchmarks/local.json` for real-clock
+single, batch, shared-thread and independent-process measurements.
+[Recorded conditions and results](benchmarks/REPORT.md).
 | No runtime deps | stdlib only | Minimal footprint; no supply chain risk |
 
 ## Running Tests

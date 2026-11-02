@@ -142,6 +142,7 @@
   - 文件：`unique-id-generator/src/unique_id/snowflake.py`
   - 接受可选 `config` (默认 `SnowflakeConfig()`) 和 `clock` (默认 `SystemClock()`)
   - 初始化：`_sequence = 0`、`_last_timestamp = -1`、`_lock = threading.Lock()`
+  - 预计算不可变配置的范围掩码、时间位移与节点前缀
 
 - [x] 4.2 实现 `SnowflakeGenerator.generate()`
   - 获取锁
@@ -159,7 +160,7 @@
   - 返回 ID 列表
 
 - [x] 4.4 实现 `SnowflakeGenerator._wait_next_millis(last_timestamp)`
-  - 自旋等待：循环调用 `_current_millis()` 直到结果 > `last_timestamp`
+  - sleep等待时钟推进；检测回拨和单调截止期限，超时明确报错
   - 返回新的时间戳
 
 - [x] 4.5 编写 Snowflake 生成器测试
@@ -186,13 +187,13 @@
 
 - [x] 5.2 实现 `IDParser.parse(id_value)`
   - 文件：`unique-id-generator/src/unique_id/parser.py`
-  - 校验：id_value >= 0 且不超过 63 位
+  - 校验：真正整数而非bool，id_value >= 0 且不超过63位
   - 提取序列号：`id_value & sequence_mask`
   - 提取 machine_id：`(id_value >> machine_shift) & machine_mask`
   - 提取 datacenter_id：`(id_value >> datacenter_shift) & datacenter_mask`
   - 提取时间戳偏移：`(id_value >> timestamp_shift) & timestamp_mask`
   - 转换时间戳：`offset + epoch_ms`
-  - 转换为 datetime：`datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)`
+  - 通过整数毫秒timedelta转换UTC，日期不可表示时抛ValueError
   - 返回 `ParsedID` 实例
 
 - [x] 5.3 编写解析器测试
@@ -329,7 +330,16 @@
   - 线程安全说明
   - 时钟处理和 NTP 注意事项
 
-- [ ] 9.4 将文档复制到 docs/ 目录
-  - 文件：`unique-id-generator/docs/requirements.md` — 从 `.kiro/specs/unique-id-generator/requirements.md` 复制
-  - 文件：`unique-id-generator/docs/design.md` — 从 `.kiro/specs/unique-id-generator/design.md` 复制
-  - 文件：`unique-id-generator/docs/tasks.md` — 从 `.kiro/specs/unique-id-generator/tasks.md` 复制
+- [x] 9.4 同步维护需求、设计和任务清单
+  - 双语文档与关联源码的学习指南保持一致
+
+## 2026-10-31开源复审
+
+- [x] 阅读原书第8章2214–2425行，对照bwmarrin/snowflake与Sonyflake源码，用CodeGraph核对状态与解析路径。
+- [x] 预计算不可变发号字段，保留回拨/溢出校验及状态提交顺序。
+- [x] 精确UTC毫秒解析、严格输入类型、日期越界统一异常。
+- [x] 时间戳-随机epoch/位宽校验，备用批量接口统一正整数count契约。
+- [x] 新增28项边界用例，旧实现26项失败；最终122项测试通过，警告按错误处理。
+- [x] 两个示例通过；单线程/批量/共享线程各3次测量，4个不同PID的进程验证；保留原始JSON。
+- [x] 设计文档删除重复过期代码，改为源码链接；同步README、需求、任务与学习指南。
+- [ ] 部署身份租约、持久化重启高水位、时钟同步与自动故障切换未实现，见[覆盖说明](open-source-review_cn.md)。

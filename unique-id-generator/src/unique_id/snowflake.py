@@ -26,12 +26,14 @@ class SnowflakeGenerator:
         clock: Optional[unique_id.clock.Clock] = None,
         *,
         overflow_timeout_seconds: float = 1.0,
-    ):
+    ) -> None:
         """Initialize the Snowflake generator.
 
         Args:
             config: Generator configuration. Uses defaults if None.
             clock: Clock implementation. Uses SystemClock if None.
+            overflow_timeout_seconds: Maximum wait after sequence exhaustion;
+                zero rejects immediately if the clock has not advanced.
         """
         if (
             isinstance(overflow_timeout_seconds, bool)
@@ -43,6 +45,13 @@ class SnowflakeGenerator:
         self._overflow_timeout = overflow_timeout_seconds
         self._config = config or unique_id.config.SnowflakeConfig()
         self._clock = clock or unique_id.clock.SystemClock()
+        # The configuration is frozen: derive these once, outside the hot path.
+        self._max_sequence = self._config.max_sequence
+        self._max_timestamp = self._config.max_timestamp
+        self._timestamp_shift = self._config.timestamp_shift
+        self._node_prefix = (
+            self._config.datacenter_id << self._config.datacenter_shift
+        ) | (self._config.machine_id << self._config.machine_shift)
         self._sequence = 0
         self._last_timestamp = -1
         self._lock = threading.Lock()
@@ -63,6 +72,8 @@ class SnowflakeGenerator:
 
         Raises:
             ClockMovedBackwardsError: If system clock moved backwards.
+            SequenceOverflowError: If sequence exhaustion outlasts the deadline.
+            ValueError: If the timestamp does not fit the configured layout.
         """
         with self._lock:
             return self._generate_locked()
@@ -76,19 +87,14 @@ class SnowflakeGenerator:
             )
         sequence = 0
         if timestamp == self._last_timestamp:
-            sequence = (self._sequence + 1) & self._config.max_sequence
+            sequence = (self._sequence + 1) & self._max_sequence
             if sequence == 0:
                 timestamp = self._wait_next_millis(self._last_timestamp)
         offset = timestamp - self._config.epoch_ms
-        if not 0 <= offset <= self._config.max_timestamp:
+        if not 0 <= offset <= self._max_timestamp:
             raise ValueError("timestamp outside configured Snowflake bit range")
         self._last_timestamp, self._sequence = timestamp, sequence
-        return (
-            (offset << self._config.timestamp_shift)
-            | (self._config.datacenter_id << self._config.datacenter_shift)
-            | (self._config.machine_id << self._config.machine_shift)
-            | sequence
-        )
+        return (offset << self._timestamp_shift) | self._node_prefix | sequence
 
     def generate_batch(self, count: int) -> list[int]:
         """Generate multiple unique IDs efficiently.
@@ -134,7 +140,7 @@ class SnowflakeGenerator:
                 return timestamp
             if time.monotonic() >= deadline:
                 raise unique_id.exceptions.SequenceOverflowError(
-                    last_timestamp, self._config.max_sequence
+                    last_timestamp, self._max_sequence
                 )
             # Yield the CPU while retaining exclusive ownership of generator state.
             time.sleep(0.0001)

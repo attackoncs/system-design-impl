@@ -6,6 +6,8 @@ from typing import Optional
 
 import unique_id.config
 
+_UNIX_EPOCH = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
+
 
 @dataclasses.dataclass(frozen=True)
 class ParsedID:
@@ -57,8 +59,11 @@ class IDParser:
             ParsedID with all extracted fields.
 
         Raises:
-            ValueError: If id_value is negative or exceeds 64 bits.
+            ValueError: If id_value is not an integer in 0..2**63-1, or its
+                timestamp is outside Python's datetime range.
         """
+        if type(id_value) is not int:
+            raise ValueError("ID must be an integer")
         if id_value < 0:
             raise ValueError(f"ID must be non-negative, got {id_value}")
         if id_value.bit_length() > 63:
@@ -85,10 +90,11 @@ class IDParser:
         # Convert to absolute timestamp
         timestamp_ms = ts_offset + config.epoch_ms
 
-        # Convert to datetime
-        datetime_utc = datetime.datetime.fromtimestamp(
-            timestamp_ms / 1000.0, tz=datetime.timezone.utc
-        )
+        # Integer arithmetic preserves milliseconds without platform time_t limits.
+        try:
+            datetime_utc = _UNIX_EPOCH + datetime.timedelta(milliseconds=timestamp_ms)
+        except OverflowError as error:
+            raise ValueError("timestamp outside Python datetime range") from error
 
         return ParsedID(
             id_value=id_value,

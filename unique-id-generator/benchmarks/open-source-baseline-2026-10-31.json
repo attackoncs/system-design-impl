@@ -1,0 +1,106 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "clock": "SystemClock",
+  "clients": 4,
+  "repeats": 3,
+  "batch_size": 1000,
+  "scenarios": {
+    "single": {
+      "samples": [
+        {
+          "ids": 100000,
+          "seconds": 0.19661880000057863,
+          "ids_per_second": 508598.3639392861
+        },
+        {
+          "ids": 100000,
+          "seconds": 0.1911545999973896,
+          "ids_per_second": 523136.7699305463
+        },
+        {
+          "ids": 100000,
+          "seconds": 0.18625730000348995,
+          "ids_per_second": 536891.7083954631
+        }
+      ],
+      "median_ids_per_second": 523136.7699305463
+    },
+    "batch": {
+      "samples": [
+        {
+          "ids": 100000,
+          "seconds": 0.15500900000188267,
+          "ids_per_second": 645123.8315116247
+        },
+        {
+          "ids": 100000,
+          "seconds": 0.16048330000194255,
+          "ids_per_second": 623117.7948035065
+        },
+        {
+          "ids": 100000,
+          "seconds": 0.15716400000383146,
+          "ids_per_second": 636278.0280316238
+        }
+      ],
+      "median_ids_per_second": 636278.0280316238
+    },
+    "shared_threads": {
+      "samples": [
+        {
+          "ids": 100000,
+          "seconds": 0.18800940000073751,
+          "ids_per_second": 531888.2991999747
+        },
+        {
+          "ids": 100000,
+          "seconds": 0.1886305000007269,
+          "ids_per_second": 530136.9608818014
+        },
+        {
+          "ids": 100000,
+          "seconds": 0.2099625000046217,
+          "ids_per_second": 476275.5253809552
+        }
+      ],
+      "median_ids_per_second": 530136.9608818014
+    },
+    "independent_processes": {
+      "ids": 100000,
+      "seconds_including_startup": 0.38598629999614786,
+      "ids_per_second_including_startup": 259076.55271961205,
+      "workers": [
+        {
+          "pid": 30600,
+          "machine_id": 0,
+          "ids": 25000,
+          "seconds": 0.07452349999948638,
+          "ids_per_second": 335464.65209192137
+        },
+        {
+          "pid": 29400,
+          "machine_id": 1,
+          "ids": 25000,
+          "seconds": 0.06789869999920484,
+          "ids_per_second": 368195.5619222868
+        },
+        {
+          "pid": 30588,
+          "machine_id": 2,
+          "ids": 25000,
+          "seconds": 0.07492379999894183,
+          "ids_per_second": 333672.3444399921
+        },
+        {
+          "pid": 29052,
+          "machine_id": 3,
+          "ids": 25000,
+          "seconds": 0.06899730000441195,
+          "ids_per_second": 362333.018805104
+        }
+      ],
+      "distinct_pids": 4
+    }
+  }
+}

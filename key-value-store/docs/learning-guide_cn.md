@@ -125,6 +125,34 @@ def reconcile(versions: list[Version]) -> list[Version]:
 - [test_conflicts_and_tombstones_survive_restart](../tests/test_runtime_cluster.py#L89)：并发值与删除版本重启后仍保留，后续显式合并可以解决冲突。
 - [test_cancelled_record_commit_finishes_wal_memtable_and_merkle](../tests/test_durability_review.py#L63)：取消不能让WAL已提交但内存和修复索引永久落后。
 
+## 微观三：恢复后能读到旧值，还不够
+
+假设磁盘是`完整A | 半条B`。如果重放只停在B而不移除残尾，随后确认的C会
+追加到B后面，下次重启仍停在B，C便丢失。恢复必须先让日志重新可追加。
+
+[wal.py:157](../src/kv_store/storage/wal.py#L157)
+
+```python
+async with self._lock:
+    entries = await self._disk_io(self._read_all_entries)
+    # Update sequence number to the highest seen.
+    if entries:
+        self._sequence_number = max(e.sequence_number for e in entries)
+    self._io_error = None
+    return entries
+```
+
+从 [WriteAheadLog._read_all_entries](../src/kv_store/storage/wal.py#L265) 的
+`complete_end`跟到截断与fsync，再看
+[WriteAheadLog._require_healthy](../src/kv_store/storage/wal.py#L176)：I/O失败后
+后续写入被拒绝，成功恢复才解除。重放与追加共用锁；取消恢复不能提前释放锁。
+
+[test_append_after_torn_tail_survives_another_replay](../tests/test_wal_failure_review.py#L19)
+连续经历“损坏末尾→恢复→写新值→再次恢复”，检查新旧记录都在；
+[test_io_failure_fences_queued_appends_and_truncate](../tests/test_wal_failure_review.py#L46)
+检查部分写入/fsync失败后16个待写操作都被拒绝。开源参考、覆盖边界与独立进程
+验证见 [open-source-review_cn.md](../docs/open-source-review_cn.md)。
+
 ## 自查与练习
 
 - **`b""`和删除相同吗？** 不同，空bytes是合法值，删除使用版本中的None墓碑。

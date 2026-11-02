@@ -104,6 +104,7 @@ class WriteAheadLog:
         self._sequence_number = 0
         self._lock = asyncio.Lock()
         self._fd: Optional[int] = None
+        self._io_error: Optional[OSError] = None
 
         # Ensure the WAL directory exists
         self._wal_dir.mkdir(parents=True, exist_ok=True)
@@ -128,6 +129,7 @@ class WriteAheadLog:
         """
 
         async with self._lock:
+            self._require_healthy()
             self._sequence_number += 1
             entry.sequence_number = self._sequence_number
 
@@ -137,27 +139,28 @@ class WriteAheadLog:
             # loop.
             # The lock ensures serialization so concurrent appends don't
             # interleave.
-            await asyncio.to_thread(self._write_and_sync, data)
+            await self._disk_io(self._write_and_sync, data)
 
+    @finish_on_cancel
     async def replay(self) -> list[WALEntry]:
         """Replay all entries from the current WAL segment.
 
         Used during node startup to recover MemTable state.
-        Entries with invalid checksums are skipped with a warning.
+        Complete entries with invalid checksums are skipped with a warning.
+        Incomplete trailing frames are truncated and fsynced before new writes.
+        Successful replay clears the I/O failure fence; callers must apply all
+        recovered entries before serving traffic. Cancellation drains disk work.
 
         Returns:
             List of WAL entries in sequence order.
         """
-        if not self._wal_path.exists():
-            return []
-
-        entries = await asyncio.to_thread(self._read_all_entries)
-
-        # Update sequence number to the highest seen
-        if entries:
-            self._sequence_number = max(e.sequence_number for e in entries)
-
-        return entries
+        async with self._lock:
+            entries = await self._disk_io(self._read_all_entries)
+            # Update sequence number to the highest seen.
+            if entries:
+                self._sequence_number = max(e.sequence_number for e in entries)
+            self._io_error = None
+            return entries
 
     @finish_on_cancel
     async def truncate(self) -> None:
@@ -167,7 +170,22 @@ class WriteAheadLog:
         """
 
         async with self._lock:
-            await asyncio.to_thread(self._truncate_file)
+            self._require_healthy()
+            await self._disk_io(self._truncate_file)
+
+    def _require_healthy(self) -> None:
+        if self._io_error is not None:
+            raise RuntimeError(
+                "WAL requires recovery after I/O failure"
+            ) from self._io_error
+
+    async def _disk_io(self, operation, *args):
+        """Run under the WAL lock; indeterminate I/O fences later mutations."""
+        try:
+            return await asyncio.to_thread(operation, *args)
+        except OSError as error:
+            self._io_error = error
+            raise
 
     @finish_on_cancel
     async def close(self) -> None:
@@ -247,7 +265,8 @@ class WriteAheadLog:
     def _read_all_entries(self) -> list[WALEntry]:
         """Read and deserialize all valid entries from the WAL file.
 
-        Entries with invalid checksums or incomplete data are skipped.
+        Keep complete frame boundaries, even for skipped checksum failures.
+        Remove only an incomplete suffix so future appends remain replayable.
         """
         entries: list[WALEntry] = []
 
@@ -258,6 +277,7 @@ class WriteAheadLog:
             return entries
 
         offset = 0
+        complete_end = 0
         total_size = len(data)
 
         while offset < total_size:
@@ -287,12 +307,18 @@ class WriteAheadLog:
 
             entry_data = data[offset : offset + entry_length]
             offset += entry_length
+            complete_end = offset
 
             # Parse the entry
             entry = self._deserialize_entry(entry_data)
             if entry is not None:
                 entries.append(entry)
 
+        if complete_end < total_size:
+            with open(self._wal_path, "r+b") as stream:
+                stream.truncate(complete_end)
+                stream.flush()
+                os.fsync(stream.fileno())
         return entries
 
     def _deserialize_entry(self, entry_data: bytes) -> Optional[WALEntry]:

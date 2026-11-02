@@ -18,7 +18,7 @@ A distributed key-value store implemented in Python, based on the design princip
 
 - **FR-2.1**: The system shall use the existing `consistent-hashing` library (`ConsistentHashRing`) for data partitioning.
 - **FR-2.2**: Each key shall be mapped to a primary node via clockwise traversal on the hash ring.
-- **FR-2.3**: The system shall support adding and removing nodes with automatic data redistribution.
+- **FR-2.3**: Support member discovery and anti-entropy repair to current replica owners. Safe removal and automatic resource provisioning remain unfinished deployment targets.
 - **FR-2.4**: Virtual nodes shall be used for balanced distribution (configurable count per physical node).
 
 ### FR-3: Data Replication
@@ -77,13 +77,13 @@ A distributed key-value store implemented in Python, based on the design princip
 - **FR-9.2**: Data shall then be written to an in-memory MemTable (sorted by key).
 - **FR-9.3**: When the MemTable reaches a configurable size threshold (default 4 MB), it shall be flushed to disk as an immutable SSTable.
 - **FR-9.4**: SSTables shall store sorted key-value pairs with an index for efficient lookups.
-- **FR-9.5**: The system shall support SSTable compaction to merge multiple SSTables and remove deleted entries.
+- **FR-9.5**: Merge SSTables during compaction, retaining tombstones until safe distributed garbage collection is available.
 
 ### FR-10: Read Path
 
 - **FR-10.1**: Read operations shall first check the MemTable.
-- **FR-10.2**: If not found in MemTable, the system shall consult a Bloom filter to determine which SSTables may contain the key.
-- **FR-10.3**: The system shall search candidate SSTables from newest to oldest.
+- **FR-10.2**: Consult Bloom filters to exclude SSTables that cannot contain the key, including when memory has a candidate.
+- **FR-10.3**: Choose the greatest per-key physical timestamp across memory and candidate SSTables; file creation order is insufficient.
 - **FR-10.4**: Bloom filters shall have a configurable false positive rate (default 1%).
 
 ### FR-11: Node Communication (gRPC)
@@ -104,6 +104,8 @@ A distributed key-value store implemented in Python, based on the design princip
 
 ### NFR-1: Performance
 
+These latency values are targets, not verified service-level guarantees; see the recorded workload in `../benchmarks/REPORT.md`.
+
 - **NFR-1.1**: In-memory reads (MemTable hit) shall complete in under 1ms.
 - **NFR-1.2**: Disk reads (SSTable with Bloom filter) shall complete in under 10ms for single-node operations.
 - **NFR-1.3**: Write operations shall complete in under 5ms for local persistence (commit log + MemTable).
@@ -113,11 +115,13 @@ A distributed key-value store implemented in Python, based on the design princip
 - **NFR-2.1**: All writes shall be persisted to the commit log before acknowledgment.
 - **NFR-2.2**: Data shall survive node restarts by replaying the commit log and loading SSTables.
 - **NFR-2.3**: The commit log shall be truncated after successful MemTable flush to SSTable.
+- **NFR-2.4**: Repair and fsync incomplete WAL suffixes before new appends. Serialize recovery with mutations and drain disk work on cancellation.
+- **NFR-2.5**: WAL I/O failures shall reject later append/truncate until successful recovery; apply recovered entries before serving traffic. Closing alone shall not reset the failure state.
 
 ### NFR-3: Scalability
 
-- **NFR-3.1**: The system shall support horizontal scaling by adding nodes without downtime.
-- **NFR-3.2**: Data redistribution on node addition/removal shall be proportional to 1/N of total data.
+- **NFR-3.1**: Member addition and repair are supported; load-driven provisioning and a safe drain barrier remain unfinished.
+- **NFR-3.2**: Redistribution depends on affected ring ranges and replica placement. A finite weighted ring does not guarantee exactly 1/N of data moves.
 
 ### NFR-4: Fault Tolerance
 
@@ -131,7 +135,7 @@ A distributed key-value store implemented in Python, based on the design princip
 - **NFR-5.2**: The project shall include type hints throughout.
 - **NFR-5.3**: The project shall include unit tests and property-based tests using pytest + hypothesis.
 - **NFR-5.4**: The project shall provide usage examples and a demo script.
-- **NFR-5.5**: Python >= 3.9 shall be required.
+- **NFR-5.5**: Python >= 3.10 shall be required.
 
 
 ## 2026-10-27 review acceptance

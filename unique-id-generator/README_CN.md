@@ -6,7 +6,7 @@
 [跟着一个案例读懂系统：架构、状态变化与关键代码详解](docs/learning-guide_cn.md)。
 <!-- LEARNING_GUIDE_END -->
 
-> 第 08 章核对与本轮变更见[审查记录](docs/chapter08-review.md)：新增有界序列等待和配置类型校验；说明节点身份、重启及吞吐边界。
+> [最新章节与开源对照](docs/open-source-review_cn.md)：**122项测试**，精确UTC解析、备用策略边界校验与实测发号性能。[历史审查](docs/chapter08-review.md)。
 
 基于 Twitter Snowflake 算法的 Python 实现，生成 64 位唯一、时间可排序的 ID，适用于分布式系统。
 
@@ -14,7 +14,8 @@
 
 ## 概述
 
-本库使用以下组合生成全局唯一的 64 位整数 ID：
+本库使用以下组合生成64位范围整数ID。全局唯一性要求统一布局/epoch、分配不同活跃身份，并避免重启后复用旧时间/序列；库不分配身份、不持久化重启高水位。
+
 - **时间戳**（自定义纪元以来的毫秒数）
 - **数据中心 ID**（标识数据中心）
 - **机器 ID**（标识数据中心内的机器）
@@ -31,7 +32,7 @@
 
 | 字段 | 位数 | 说明 |
 |------|------|------|
-| 符号位 | 1 | 始终为 0（正整数） |
+| 符号位 | 1 | 始终为0，结果范围0..2**63-1 |
 | 时间戳 | 41 | 自纪元起约 69 年 |
 | 数据中心 | 5 | 最多 32 个数据中心 |
 | 机器 | 5 | 每个数据中心最多 32 台机器 |
@@ -116,7 +117,7 @@ config = SnowflakeConfig(
 
 ```python
 class SnowflakeGenerator:
-    def __init__(self, config=None, clock=None): ...
+    def __init__(self, config=None, clock=None, *, overflow_timeout_seconds=1.0): ...
     def generate(self) -> int: ...
     def generate_batch(self, count: int) -> list[int]: ...
 ```
@@ -135,6 +136,11 @@ class IDParser:
 ```
 
 `ParsedID` 包含以下字段：
+
+`parse()`只接受0..2**63-1范围内的真正整数，拒绝bool等类型。UTC转换保持
+毫秒精度，日期超出Python datetime范围时抛ValueError；很宽的时间位布局
+可能生成数值合法、但日期不可表示的ID。
+
 - `id_value` — 原始 ID 值
 - `timestamp_ms` — 绝对时间戳（毫秒）
 - `datacenter_id` — 数据中心 ID
@@ -175,9 +181,9 @@ gen = SnowflakeGenerator(clock=MonotonicClock())
 | 大小 | 64 位整数 | 128 位字符串 | 64 位整数 |
 | 时间可排序 | ✓ | ✗ | 部分 |
 | 单调递增 | ✓ | ✗ | ✗ |
-| 无需协调 | 每台机器独立 | 全局 | 全局 |
-| 唯一性保证 | 确定性 | 概率性 | 概率性 |
-| 数据库索引性能 | 优秀 | 差 | 良好 |
+| 身份分配 | 需预先分配不同节点身份 | 无节点身份配置 | 无节点身份配置 |
+| 唯一性保证 | 依赖布局/epoch/身份/重启条件 | 概率性 | 概率性 |
+| 插入键的分布 | 通常按时间聚集 | 随机 | 时间前缀 |
 | 机器身份 | 嵌入 ID 中 | 无 | 无 |
 
 ## 线程安全
@@ -186,10 +192,13 @@ gen = SnowflakeGenerator(clock=MonotonicClock())
 
 `generate_batch()` 对整个批次只获取一次锁，相比循环调用 `generate()` 减少了锁开销。
 
+锁同时覆盖读时钟、有界序列等待及状态发布；长批量会阻塞其他线程。批量中途
+失败时，之前产生的ID已被消耗，不提供事务回滚。线程安全仅覆盖同一个实例。
+
 ## 时钟处理
 
 - **SystemClock**：使用 `time.time()`。受 NTP 调整影响。如果时钟回退，抛出 `ClockMovedBackwardsError`。
-- **MonotonicClock**：使用 `time.monotonic()`，初始化时锚定到系统时间。不会回退。推荐在时钟漂移环境中使用。
+- **MonotonicClock**：使用 `time.monotonic()`，初始化时锚定到系统时间，生命周期内不回拨；不持续校准墙钟、不同步机器，也不解决身份重用。
 
 ## 错误处理
 
@@ -197,19 +206,26 @@ gen = SnowflakeGenerator(clock=MonotonicClock())
 |------|----------|----------|
 | `ClockMovedBackwardsError` | 检测到时钟回退 | 等待，或使用 MonotonicClock |
 | `InvalidConfigError` | 配置无效 | 修正配置参数 |
-| `SequenceOverflowError` | 内部序列溢出 | 自动处理（等待下一毫秒） |
-| `ValueError` | 解析输入无效 | 检查 ID 值 |
+| `SequenceOverflowError` | 序列耗尽且等待下一毫秒超时 | 等时钟推进后重试；已用状态保留 |
+| `ValueError` | 参数类型、时间位宽或UTC日期范围无效 | 检查参数及匹配布局 |
 
 ## 设计决策
 
 | 决策 | 理由 | 权衡 |
 |------|------|------|
 | **时钟回退时快速失败** | 抛异常防止重复 ID | 调用方需实现重试或切换 MonotonicClock |
-| **序列溢出时自旋等待** | 确保不丢失 ID | 延迟峰值可接受（仅在 >4096 ID/ms 时触发） |
+| **序列耗尽时有界等待并sleep** | 默认1秒单调截止期限；0表示当前时钟未推进即拒绝 | 超时对外抛错，等待期间仍持有实例锁，不保证固定延迟 |
 | **可配置位布局** | 适应不同规模需求 | 需要理解位分配的含义 |
 | **自定义纪元 2024-01-01** | 最大化可用时间戳范围 | 约 69 年后需要新纪元 |
 | **冻结 dataclass 配置** | 防止构造后意外修改 | 需要创建新实例来更改配置 |
 | **纯标准库实现** | 零依赖，部署简单 | 无外部优化（如 C 扩展） |
+
+时间戳-随机策略要求正整数epoch和0..2**42-1的时间偏移，输出为无符号64位，
+仍可能碰撞；不是Snowflake的严格唯一性替代。所有批量接口要求正整数count。
+不同布局/epoch不能混作统一全局唯一空间；跨机器时间排序依赖时钟一致程度。
+
+运行`python tools/benchmark.py --output benchmarks/local.json`可复测单线程、
+批量、共享线程和独立进程；条件及原始结果见[实测报告](benchmarks/REPORT.md)。
 
 ## 运行测试
 
