@@ -82,3 +82,15 @@
 - [x] 14.2 创建 `examples/fastapi_example.py`，演示带限流中间件和多条规则的 FastAPI 应用
 - [x] 14.3 创建 `examples/flask_example.py`，演示带限流扩展的 Flask 应用
 - [x] 14.4 创建 `README.md`，包含安装说明、快速入门、配置参考、算法说明和集成指南
+
+## 2026-10-31开源对照复核
+
+- [x] 阅读第5章，使用CodeGraph追踪调用，并检查图索引的影响范围与局限。
+- [x] 查询并阅读Uber、Envoy、go-redis及redis-py的对应开源代码，记录取舍与章节覆盖。
+- [x] 先复现字符串键校验缺失与深层JSON异常，再修正并验证恢复路径。
+- [x] 使用有界的每实例脚本缓存，验证冷缓存并发、NOSCRIPT恢复与超时不重试。
+- [x] 全量265项测试通过，另跑真实Redis的四进程共享配额、双HTTP与缓存恢复检查。
+- [x] 同步中英文README、需求、设计、任务、案例导读与实测记录。
+
+详见[本轮复核](open-source-review_cn.md)。多地域配额、Redis HA/Cluster、
+逐规则指标与外部监控仍未实现；没有将部署扩展标记为完成。

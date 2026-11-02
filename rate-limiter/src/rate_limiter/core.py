@@ -284,6 +284,8 @@ class RateLimiter:
         """
         # If request_context is a plain string, use it directly as the key
         if isinstance(request_context, str):
+            if not 1 <= len(request_context) <= 8192:
+                raise ValueError("key must have 1..8192 characters")
             return request_context
 
         # Use rule's custom key function if provided

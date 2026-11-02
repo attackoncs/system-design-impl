@@ -12,7 +12,9 @@
 
 本轮修复路径/键类型未生效、时钟回退绕过配额、跨进程身份哈希不稳定、
 漏桶小数占用越界、HTTP响应不一致，并补充文件规则更新和监控计数。
-249项测试通过，另有真实Redis多进程及实际HTTP实验。
+最新开源对照复核后265项测试通过；修正字符串键校验和深层JSON恢复，
+复用Redis脚本缓存。见[本轮章节覆盖、开源参考和验证](docs/open-source-review_cn.md)。
+既有真实Redis多进程及实际HTTP实验见实测报告。
 
 ## 运行
 
@@ -106,8 +108,11 @@ checks/allowed/denied/storage_errors，按**规则检查次数**计数，不包�
 
 ## 分布式、HTTP与资源边界
 
-Redis配置使用storage_backend="redis"和redis_url；每条规则一次EVAL，
+Redis配置使用storage_backend="redis"和redis_url；稳态每条规则一次EVALSHA，
 Redis TIME和检查/扣额在同一脚本内完成，不采用客户端时钟。
+每实例最多缓存16个脚本对象；首次使用或服务端缓存丢失时额外执行SCRIPT LOAD
+后重新EVALSHA。仅NOSCRIPT会触发这种安全恢复，超时和连接错误不重试。
+Redis权限需允许EVALSHA、SCRIPT LOAD及脚本内部命令，详见本轮复核。
 内存时钟在锁内采样，TTL使用monotonic；保留期间的高水位避免回退重置配额。
 服务端大幅跳时、TTL/状态丢失、重启和管理员改写不在此保证范围内。
 

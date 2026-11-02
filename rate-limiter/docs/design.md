@@ -13,7 +13,7 @@ flowchart LR
   Reload --> Core
   Core --> Algorithm[Five algorithms]
   Algorithm --> Memory[RLock and monotonic expiry]
-  Algorithm --> Redis[One EVAL and server TIME]
+  Algorithm --> Redis[Cached Lua and server TIME]
   Core --> Metrics[Fixed counters]
 ```
 
@@ -44,7 +44,7 @@ start independent quotas.
 ## Atomic adapters and clocks
 
 Each algorithm has a Lua implementation and a Python callback. RedisStorage adds
-a declared clock key, reads TIME inside EVAL, clamps against a retained watermark,
+a declared clock key, reads TIME inside Lua, clamps against a retained watermark,
 then runs the algorithm and publishes the clock. MemoryStorage samples inside
 the algorithm lock and uses the same watermark policy. Clock regression adds its
 offset to retry/reset delays. A failed callback/script does not advance the clock,
@@ -77,6 +77,18 @@ explicit policies, and storage_errors remains visible in fixed metrics. Redis
 script state and arbitrary custom callbacks are not rollback transactions.
 Close storage after draining users; use a standalone Redis primary. Sliding
 counter derives window keys in Lua, so Cluster/HA are not implemented.
+
+RedisStorage keeps a per-instance, 16-entry LRU of redis-py registered scripts.
+Registration computes the digest locally; steady-state execution sends only
+EVALSHA. NOSCRIPT guarantees no execution, so redis-py loads then executes once.
+Cold use/cache loss needs extra round trips; network errors still propagate
+without replay. This cache stores script objects, not quota results or identities.
+ACLs must allow EVALSHA, SCRIPT LOAD and the scripts' commands.
+
+String subjects use the same 1..8192-character bound in both check APIs before
+charging applicable rules. Excessively nested JSON is normalized to ValueError,
+so polling retains old rules, counts the error and accepts later valid updates.
+See [current review and references](open-source-review_cn.md).
 
 RuleReloader and LeakyBucketQueue are non-daemon, explicitly owned context
 managers. Reload close interrupts interval waiting and joins. Queue close cancels

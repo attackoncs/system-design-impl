@@ -94,3 +94,15 @@
 - [x] Run249 tests, real4-process Redis /2HTTP experiments and both demos.
 - [x] Keep baseline/final/raw measurements and document throughput regression.
 - [x] Update bilingual README/design/requirements, chapter mapping and root status.
+
+## 2026-10-31 open-source comparison
+
+- [x] Read chapter 5; use CodeGraph and inspect graph impact/freshness limitations.
+- [x] Inspect relevant Uber, Envoy, go-redis and redis-py code; record scope and tradeoffs.
+- [x] Reproduce and fix unvalidated string subjects and deep-JSON reload failures.
+- [x] Bound per-instance script caching; check cold-cache races, NOSCRIPT recovery and no timeout replay.
+- [x] Pass all 265 tests, plus real Redis four-process, two-HTTP-instance and cache-loss checks.
+- [x] Update bilingual documentation, learning-guide source/publication and measurement records.
+
+See [the current review](open-source-review_cn.md). Multi-region quotas, Redis
+HA/Cluster and per-rule/external monitoring remain explicit gaps.

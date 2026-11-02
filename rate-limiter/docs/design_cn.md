@@ -23,7 +23,7 @@ URL路径先去除查询参数，再做大小写敏感fnmatch。纯字符串只�
 
 ## 原子存储与时钟
 
-算法各有Lua及Python回调。RedisStorage在EVAL内采样TIME、读取并钳制
+算法各有Lua及Python回调。RedisStorage在Lua内采样TIME、读取并钳制
 时钟高水位，执行算法后保存高水位；内存实现锁内采样，TTL用monotonic。
 回退偏差计入reset/retry延时。时钟元数据保留至少两倍窗口/排空时长；
 Redis服务端时间大幅跳变、状态过期/丢失或重启会破坏保留前提，不作任意
@@ -48,6 +48,15 @@ Redis连接池有上限、连接/读取有超时；关闭非幂等扣额命令�
 丢响应可能留下不确定扣额，通过fail_open/fail_closed显式处理并记录错误
 计数。请求与后台任务排空后关闭owned storage。当前使用单Redis主节点，
 滑动计数的窗口键在Lua内派生，因此未支持Cluster/自动故障切换。
+
+每个RedisStorage使用最多16项的LRU复用redis-py脚本对象，注册仅在本地
+计算摘要，稳态发送EVALSHA。NOSCRIPT明确表示没有执行，才加载脚本并执行；
+首次调用/缓存丢失有额外往返，网络超时仍不重放。缓存不保存主体或额度结果。
+Redis权限需要允许EVALSHA、SCRIPT LOAD及脚本内部命令。
+
+两个检查入口对适用规则的字符串主体统一校验1–8192字符，校验失败不扣额。
+过深JSON在解析层转为ValueError，使轮询保留旧规则、记录错误并继续接收
+后续合法更新。详见[本轮开源对照与验证](open-source-review_cn.md)。
 
 RuleReloader和LeakyBucketQueue均为非daemon线程及显式上下文管理器。
 前者停止等待并join；后者关闭时取消等待Future并等待当前任务结束。

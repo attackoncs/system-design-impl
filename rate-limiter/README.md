@@ -11,7 +11,9 @@ request policy selection and Flask/FastAPI integration. [中文](README_CN.md).
 
 The chapter review found missing policy selection and file reloads, clock
 regression bugs, unstable cross-process identity hashes and inconsistent HTTP
-responses. These are now covered by 249 tests and a separate real Redis probe.
+responses. The latest review passes 265 tests, fixes string-key validation and
+deep-JSON reload recovery, and reuses Redis script objects.
+See [open-source comparison and current coverage (Chinese)](docs/open-source-review_cn.md).
 See [coverage and migration](docs/chapter05-review.md), [design](docs/design.md)
 and [measurements](benchmarks/REPORT.md).
 
@@ -121,7 +123,11 @@ external collector for dashboards and alerts.
 ## Distributed and HTTP adapters
 
 `RateLimiterConfig(storage_backend="redis", redis_url=...)` shares counters.
-Redis uses one EVAL per rule: server TIME and check/update run atomically.
+Redis uses one EVALSHA per rule in steady state: server TIME and check/update
+run atomically. Each storage instance caches at most 16 script objects. A cold
+or lost server script cache adds SCRIPT LOAD and another EVALSHA; only NOSCRIPT
+triggers this recovery. Timeouts and connection errors are not retried. Redis ACLs
+must permit EVALSHA, SCRIPT LOAD and the commands used inside the scripts.
 The clock watermark prevents backwards movement while retained. Memory samples
 its clock under the storage lock; expiry uses monotonic time. Redis client
 clock skew cannot refill quotas. Server time jumps beyond retained state/TTL,

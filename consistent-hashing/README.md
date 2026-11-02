@@ -11,11 +11,11 @@ changes and streaming migration selection. Runtime dependencies: standard librar
 only. [中文](README_CN.md) · [chapter review](docs/chapter06-review.md) ·
 [design](docs/design.md) · [measurements](benchmarks/REPORT.md).
 
-The chapter's core algorithms were already implemented. This review adds missing
-key filtering, one-pass batch APIs, safe weight updates, resource validation and
-faster bulk construction/range planning. **154 tests pass**, including the
-existing Hypothesis properties; an independent four-process probe verifies
-deterministic primary/replica selection.
+The chapter's core algorithms are covered. The 2026-10-31
+[GitHub source comparison](docs/open-source-review_cn.md) adds an O(1) return for
+unchanged topology plans and replaces statistical assumptions in property tests
+with exact locality/accounting checks. **163 tests pass**; an independent
+four-process probe verifies deterministic primary/replica candidate selection.
 
 ## Run
 
@@ -31,7 +31,7 @@ python tools/benchmark.py --output benchmarks/local.json
 Python3.9+ source syntax, executed on Python3.13.9. Optional dev dependencies are
 pytest and Hypothesis. In the review environment, inaccessible existing pytest
 cache/temp directories require `-p no:cacheprovider` and a fresh `--basetemp`
-inside `.test-tmp`; unrelated plugin autoload is disabled. All154 tests run with
+inside `.test-tmp`; unrelated plugin autoload is disabled. All163 tests run with
 `-W error`, without skips or warning filters.
 
 ## Routing and snapshots
@@ -108,7 +108,9 @@ Both inputs must be explicit snapshots using the same hash callable instance.
 Intervals are disjoint **[start,end)** under strict-clockwise routing; start>end
 wraps, equal bounds mean the full ring, and None owners represent an empty ring.
 Adjacent intervals are retained. Planning merges position boundaries and walks
-both ordered topologies; it performs no key scan or hash calls.
+both ordered topologies; it performs no key scan or hash calls. After checking
+types and hash compatibility, views sharing the same immutable state return an
+empty plan in O(1). Independently rebuilt equal topologies still use the sweep.
 
 `iter_migrations` plans immediately, then hashes each supplied candidate once and
 binary-searches affected intervals. It streams records without building two full

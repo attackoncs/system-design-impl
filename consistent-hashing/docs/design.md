@@ -51,6 +51,8 @@ signed; built-ins use their complete digest widths.
 ## Migration protocol
 
 affected_ranges requires explicit snapshots with the same callable identity.
+After validating both contracts, views sharing one immutable state return []
+in O(1). Separate states with equal contents still follow the full comparison.
 It merges position boundaries, then walks both ordered topologies once using
 monotonic cursors. Equal positions are skipped together, matching historical
 strict-clockwise bisect_right. Results are disjoint [start,end) ranges; wrap and
@@ -80,7 +82,8 @@ Planning merges boundaries and sweeps in O(V_before+V_after+B) on CPython for B
 boundaries. Conservatively sorting costs O(V log V) on other implementations.
 All costs additionally include application hash time. Published state is O(V).
 
-154 tests include previous Hypothesis properties and46 added regressions. A
+163 tests include nine new source-comparison cases and revised Hypothesis
+properties for exact locality and statistics rather than probabilistic caps. A
 separate four-process probe compares three built-in hashes at initial/weighted/
 expanded/reduced phases with different membership insertion orders. This proves
 same-input placement for those cases, not distributed membership coordination.

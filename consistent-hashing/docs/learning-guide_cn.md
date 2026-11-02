@@ -37,7 +37,7 @@ flowchart LR
 3. [ConsistentHashRing.snapshot](../src/consistent_hashing/ring.py#L265)：取得一份拓扑与哈希函数；后续批量路由应保留这个对象。
 4. [RingSnapshot._start](../src/consistent_hashing/ring.py#L66)：把k的20变成entries下标1；理解 `bisect_right` 与取模后再看返回节点。
 5. [ConsistentHashRing.add_node](../src/consistent_hashing/ring.py#L200)：生成C的30，构造新状态后发布。下一步比较保存的旧快照与当前环。
-6. [affected_ranges](../src/consistent_hashing/migration.py#L43)：输入前后明确快照，输出受影响区间；[iter_migrations](../src/consistent_hashing/migration.py#L91) 再消费调用方提供的键流。
+6. [affected_ranges](../src/consistent_hashing/migration.py#L43)：输入前后明确快照，输出受影响区间；[iter_migrations](../src/consistent_hashing/migration.py#L94) 再消费调用方提供的键流。
 
 ## 微观一：为什么查的是“右边第一个”
 
@@ -90,6 +90,44 @@ return [position for position, _, _ in added]
 [ConsistentHashRing._publish](../src/consistent_hashing/ring.py#L196) 只在短状态锁内替换引用。耗时哈希和排序没有拿着状态锁进行；已经取得旧快照的读者仍可使用旧元组。
 
 权重调整同样要读 [ConsistentHashRing.set_virtual_nodes](../src/consistent_hashing/ring.py#L237)：增加权重只追加新索引，减小则删除较大索引，不先删除整台机器再重新加入。
+
+## 微观三：未变拓扑为什么不必扫描
+
+[migration.py:51](../src/consistent_hashing/migration.py#L51)
+
+```python
+if not isinstance(before, RingSnapshot) or not isinstance(after, RingSnapshot):
+    raise TypeError("affected_ranges requires RingSnapshot inputs")
+if before._hash_function is not after._hash_function:
+    raise ValueError("snapshots must use the same hash function instance")
+if before._state is after._state:
+    return []
+```
+
+连续捕获的两个快照可能共享同一份不可变状态。完成类型与哈希兼容校验后，
+状态身份相同即可O(1)确认没有迁移；分别构造但内容相同的环仍要比较。
+[iter_migrations](../src/consistent_hashing/migration.py#L94) 复用该结果，无变化时
+连调用方候选键也不读取，没有增加全局缓存或键注册表。
+
+```mermaid
+flowchart TD
+  A[前后快照] --> B[校验类型与哈希函数身份]
+  B --> C{共享同一不可变状态?}
+  C -->|是| D[直接返回空计划]
+  C -->|否| E[合并边界并扫描主owner变化]
+  E --> F{存在变化区间?}
+  F -->|否| D
+  F -->|是| G[每候选一次哈希 二分筛选迁移键]
+```
+
+[test_unchanged_plans_do_not_consume_candidates](../tests/test_open_source_review.py#L104)
+用一旦消费便报错的输入验证无变化路径；
+[test_routes_and_migrations_match_linear_oracle](../tests/test_open_source_review.py#L23)
+用线性顺时针参照核对主节点、副本候选和迁移结果，覆盖碰撞及权重变化。
+
+键数量的均衡是样本指标，不是无条件保证。若所有候选都落在新增节点接管的
+区间，100%的候选都可能迁移；碰撞也可能使某成员分不到主键。详见
+[open-source-review_cn.md](../docs/open-source-review_cn.md)中的反例和GitHub源码对照。
 
 ## 用测试看“旧视图还能用”
 

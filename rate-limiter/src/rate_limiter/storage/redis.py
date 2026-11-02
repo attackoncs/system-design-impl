@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 import math
+from functools import lru_cache
 
 import redis
 from redis.backoff import NoBackoff
@@ -45,6 +46,9 @@ class RedisStorage(storage_base.BaseStorage):
             retry=Retry(NoBackoff(), 0),
             retry_on_error=[],
         )
+        # Registration computes a digest locally; network I/O happens on use.
+        # Keep the cache per storage instance and bounded for custom scripts.
+        self._scripts = lru_cache(maxsize=16)(self._client.register_script)
 
     def get(self, key: str) -> str | None:
         """Get a value by key.
@@ -98,7 +102,10 @@ class RedisStorage(storage_base.BaseStorage):
         return int(results[0])
 
     def execute_atomic(self, script: str, keys: list[str], args: list[str]) -> Any:
-        """Execute a Lua script atomically on Redis.
+        """Execute cached Lua atomically, loading it only on NOSCRIPT.
+
+        redis-py retries only the known-not-executed NOSCRIPT response here.
+        Timeouts/connection errors propagate without another quota mutation.
 
         Args:
             script: The Lua script string to execute.
@@ -108,7 +115,7 @@ class RedisStorage(storage_base.BaseStorage):
         Returns:
             The result of the Lua script execution.
         """
-        return self._client.eval(script, len(keys), *keys, *args)
+        return self._scripts(script)(keys=keys, args=args)
 
     def execute_algorithm(self, lua_script, memory_script, keys, args):
         return self.execute_atomic(
@@ -117,4 +124,5 @@ class RedisStorage(storage_base.BaseStorage):
 
     def close(self) -> None:
         """Release this instance's connection pool."""
+        self._scripts.cache_clear()
         self._client.close()

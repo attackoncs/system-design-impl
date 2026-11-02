@@ -24,9 +24,9 @@
 ## Task 4: Property-Based Tests
 
 - [x] 4.1 Write property test: determinism -- for any stable ring and any key, `get_node(key)` always returns the same server (PBT)
-- [x] 4.2 Write property test for minimal redistribution on server addition (PBT)
-- [x] 4.3 Write property test: complete coverage -- every key maps to exactly one server, and all servers with virtual nodes receive at least some keys from a large random key set (PBT)
-- [x] 4.4 Write property test: balanced distribution -- with >=100 virtual nodes per server and >=1000 keys, no server holds more than 2x the mean number of keys (PBT)
+- [x] 4.2 Verify addition only moves keys to the joining node and removal restores unaffected assignments (PBT).
+- [x] 4.3 Verify one owner per key and distribution counts including zero-count members (PBT).
+- [x] 4.4 Compare sampled balance metrics with independently counted assignments and population statistics (PBT); no universal balance cap.
 
 ## Task 5: Demonstration and Documentation
 
@@ -44,3 +44,10 @@
 - [x] Run154 tests, four-process/three-hash/four-phase probe and both examples.
 - [x] Retain baseline/first/final measurements, including lookup/add regressions.
 - [x] Synchronize bilingual docs, review, report and root progress.
+
+## 2026-10-31 GitHub source comparison
+
+- [x] Compare uhashring, stathat/consistent and buraksezer/consistent source with chapter 6 and CodeGraph.
+- [x] Return immediately for shared-state migration plans; measure unchanged and changed plans separately.
+- [x] Replace three statistical assumptions with exact properties; add nine linear-oracle, collision and no-change cases.
+- [x] Pass163 tests, the four-process probe and both examples; update bilingual docs and the reading guide.

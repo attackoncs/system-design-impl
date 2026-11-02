@@ -1,5 +1,8 @@
 # 第5章复审记录 — 2026-10-27
 
+后续的2026-10-31复核见[章节覆盖与开源代码对照](open-source-review_cn.md)，
+包含最新265项测试、字符串键/深层JSON修复及Redis脚本缓存；以下保留历史记录。
+
 原书《System Design Interview.md》923–1507行，Design A Rate Limiter。
 先读章节，再用code-review-graph定位core/config/storage到算法、装饰器和
 两个HTTP适配器的依赖，逐项检查源码并执行测试。

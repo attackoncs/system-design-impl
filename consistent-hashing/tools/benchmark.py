@@ -38,6 +38,7 @@ def main():
         "source": str(args.source),
         "construction": [],
         "planning": [],
+        "unchanged_planning": [],
         "lookup": [],
     }
     for count in (10, 100, 400):
@@ -54,6 +55,14 @@ def main():
             [f"server-{number}" for number in range(100)], size // 100
         )
         before = ring.snapshot()
+        unchanged = ring.snapshot()
+        assert affected_ranges(before, unchanged) == []
+        report["unchanged_planning"].append(
+            {
+                "entries": size,
+                **timed(lambda: affected_ranges(before, unchanged)),
+            }
+        )
         ring.add_node("new", size // 100)
         after = ring.snapshot()
         report["planning"].append(

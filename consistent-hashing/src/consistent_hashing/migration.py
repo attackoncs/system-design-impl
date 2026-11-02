@@ -46,11 +46,14 @@ def affected_ranges(before: RingSnapshot, after: RingSnapshot) -> list[AffectedR
     Both views must use the same hash callable. Custom callable equivalence
     cannot be established safely. Intervals may be adjacent; they are not merged.
     The planner compares primary owners, not replica sets or physical data.
+    Views sharing one immutable topology return immediately in O(1).
     """
     if not isinstance(before, RingSnapshot) or not isinstance(after, RingSnapshot):
         raise TypeError("affected_ranges requires RingSnapshot inputs")
     if before._hash_function is not after._hash_function:
         raise ValueError("snapshots must use the same hash function instance")
+    if before._state is after._state:
+        return []
     # Both inputs are sorted runs; CPython's built-in sort merges these in C.
     # This avoids Python heap iteration while keeping collisions adjacent.
     boundaries = [

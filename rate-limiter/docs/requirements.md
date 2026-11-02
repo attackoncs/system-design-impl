@@ -71,7 +71,7 @@ The system shall support the following rate limiting algorithms, selectable per 
 ### NFR-2: Performance
 
 - **NFR-2.1**: In-memory rate limit checks target sub-1ms single-operation latency; report measured tails without a universal latency guarantee.
-- **NFR-2.2**: Redis checks use one EVAL per applicable rule; requests matching multiple rules can require multiple round-trips.
+- **NFR-2.2**: Steady-state Redis checks use one EVALSHA per applicable rule; cold/cache-loss recovery adds SCRIPT LOAD and another EVALSHA. Requests may match multiple rules.
 - **NFR-2.3**: Redis connections shall use configurable timeouts to prevent blocking on connection failures.
 
 ### NFR-3: Extensibility
@@ -99,3 +99,15 @@ header flags and configurable status. Trust forwarded IP only explicitly.
 Expose fixed metrics and owned poller/FIFO workers; include real multiprocess
 Redis evidence, measured performance regressions and migration notes. Logging
 counts accepted requests; HA/global quotas/durable queues remain out of scope.
+
+## 2026-10-31 acceptance additions
+
+- String subjects of applicable rules must obey the same 1..8192-character bound
+  in both check APIs; invalid inputs must not charge quota.
+- Excessively nested rule JSON must preserve the active rules, record an error,
+  and allow later valid reloads without restarting the worker.
+- Script objects must be bounded per storage instance. NOSCRIPT recovery must
+  preserve quota and atomic admission; timeouts/connection errors must not replay
+  the mutation. Redis ACL requirements and cold-cache round trips must be documented.
+- GitHub references, chapter coverage and outstanding deployment/monitoring
+  boundaries must be recorded in the [review](open-source-review_cn.md).

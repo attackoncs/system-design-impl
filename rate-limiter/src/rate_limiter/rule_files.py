@@ -30,7 +30,10 @@ def read_rules(path) -> list[RateLimitRule]:
 
 
 def parse_rules(payload: bytes) -> list[RateLimitRule]:
-    data = json.loads(payload, object_pairs_hook=_unique_fields)
+    try:
+        data = json.loads(payload, object_pairs_hook=_unique_fields)
+    except RecursionError as error:
+        raise ValueError("rule JSON nesting is too deep") from error
     if not isinstance(data, dict) or set(data) != {"rules"}:
         raise ValueError("rule file must contain only rules")
     if not isinstance(data["rules"], list) or len(data["rules"]) > 100:
