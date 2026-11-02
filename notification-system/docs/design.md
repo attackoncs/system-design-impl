@@ -25,15 +25,21 @@ Local recipient locks protect same-user checks across channels in one service. D
 
 ## Worker lifecycle and retries
 
+Memory claims return separate task objects with distinct receipt snapshots. Rescheduling and reclaiming a job cannot change the token held by its previous owner. SQLite claim and renew acquire `BEGIN IMMEDIATE` before sampling time; lock waiting therefore cannot turn a new claim into an already-expired lease or allow renewal based on an obsolete timestamp.
+
 Workers atomically claim ready rows using random receipt tokens. A claimed SQLite row remains until terminal acknowledgement. A heartbeat extends the lease; claims with expired leases can be taken by another worker. Renew, reschedule and acknowledgement require the current token and a still-live lease, fencing stale owners. Database claim cancellation waits for the transaction result and returns a completed claim. Worker cancellation also returns a claim that completed just before its awaiting parent was cancelled.
 
 The pool serializes start/stop, rejects duplicate start, and cleans up a partially started pool. Graceful stop completes current deliveries, without draining all queued/delayed jobs. Immediate stop cancels and awaits workers, which return their jobs. Provider timeouts/exceptions become delivery failures; queue-claim exceptions use interruptible bounded backoff rather than killing a worker or busy-looping.
+
+A direct Worker clears its readiness event in the running loop's `finally`, after both normal stop and cancellation. Reusing it waits for the next start instead of observing a previous run's signal.
 
 Retries increase the attempt counter and atomically replace the owned row with a future availability timestamp. Workers pass `defer=True` to `RetryHandler`, so another ready notification can use the released worker. The public direct handler retains its legacy await-the-delay behavior for component callers. Configuration rejects invalid numeric types and non-finite values; backoff exponentiation is capped before large integers grow.
 
 Per-device successes and permanent rejections are separate task fields. A normal retry sends only remaining temporary failures. Mixed permanent/transient failure continues the transient work, but final aggregate status stays FAILED if any endpoint was rejected. Progress is persisted at rescheduling; a crash before that checkpoint can replay a previously contacted endpoint.
 
 ## Auditing, scheduling and APIs
+
+`send_batch(requests, concurrency=16)` runs a fixed number of consumers over one input iterator. It allocates at most `min(concurrency, len(requests))` tasks and fills results at their original indices; isolated failures keep an empty-string result. Recipient locks and queue event uniqueness remain unchanged. Cancellation cancels and awaits all children; accepted notifications remain in the queue. `concurrency=1` keeps sequential admission. This does not change per-channel delivery worker counts. The [controlled comparison](../benchmarks/REPORT.md) distinguishes asynchronous waiting from serialized SQLite writes.
 
 SQLite terminal acknowledgement deletes the pending job and writes the terminal audit row in one transaction. `SQLiteNotificationLog` supports filtered audit queries and retention cleanup; attempts are audit facts and may include FAILED attempts before a later success, while `EventTracker` models the live notification lifecycle (`SENDING -> QUEUED` for retry).
 

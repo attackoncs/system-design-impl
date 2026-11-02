@@ -188,6 +188,10 @@ class NewsFeedService:
         self, user_id: str, following: set[str], candidates: _Candidates
     ) -> None:
         async def load(entry: FeedEntry) -> None:
+            # Cache IDs are newest first. Drain already-started reads, but avoid
+            # older content I/O once the visible page and sentinel are complete.
+            if len(candidates) >= candidates.limit:
+                return
             if entry.author_id in following and (
                 candidates.before is None
                 or (entry.timestamp, entry.post_id) < candidates.before
@@ -196,9 +200,9 @@ class NewsFeedService:
                 if post is not None:
                     candidates.merge([post])
 
-        await self._read_each(
-            self._feeds.get_entries(user_id, page_size=self._feeds.max_entries), load
-        )
+        entries = self._feeds.get_entries(user_id, page_size=self._feeds.max_entries)
+        # One fixed reader set owns this stage, including private/missing entries.
+        await self._read_each(entries, load)
 
     async def _celebrity_authors(self, authors: set[str]) -> set[str]:
         celebrities = set()

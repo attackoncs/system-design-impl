@@ -1,0 +1,40 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows",
+  "posts": 500,
+  "cache_ids": 500,
+  "page_size": 20,
+  "requests_per_sample": 20,
+  "clients": 4,
+  "read_concurrency_per_request": 16,
+  "repeats": 3,
+  "seconds": {
+    "sequential": [
+      0.11082129999704193,
+      0.11217449999821838,
+      0.11737739999807673
+    ],
+    "concurrent": [
+      0.0983669999986887,
+      0.09436229999846546,
+      0.08742329999950016
+    ]
+  },
+  "median_seconds": {
+    "sequential": 0.11217449999821838,
+    "concurrent": 0.09436229999846546
+  },
+  "content_lookups": {
+    "sequential": [
+      720,
+      720,
+      720
+    ],
+    "concurrent": [
+      720,
+      720,
+      720
+    ]
+  },
+  "scope": "Warm in-memory API reads; excludes seeding, initial repair, HTTP, SQLite and external services."
+}

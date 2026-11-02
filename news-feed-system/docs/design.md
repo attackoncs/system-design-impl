@@ -2,6 +2,8 @@
 
 The application has separate publication and read paths. `NewsFeedAPI` composes storage, policies, caches, the queue and owned background tasks. See [requirements](requirements.md), [tasks](tasks.md) and the [chapter audit](chapter12-review.md) for acceptance criteria, book coverage and verification evidence.
 
+The [2026-11-01 source comparison](open-source-review_cn.md) and [benchmark record](../benchmarks/REPORT.md) cover the latest read-window and input-validation fixes.
+
 ```mermaid
 flowchart LR
     HTTP[Authenticated HTTP] --> Publish[PostService]
@@ -34,6 +36,8 @@ Ordinary authors push batched IDs. Celebrities are queried by `(author_id, creat
 
 Sort and cursor keys include timestamp and post ID. New posts cannot shift the cursor to repeat an earlier page. Follow/mute/sharing rules are checked again before return. Hydration reads content and author caches with source fallback, plus the local action/counter caches. Media remains a client-loadable URL.
 
+Fixed readers consume cached IDs newest first. Once a visible page and its extra continuation candidate are complete, stop starting older content I/O and drain already-started reads before selecting the final sorted page. Private/missing entries require continued scanning. Without filtering, content lookups are bounded by page size + 1 + read concurrency - 1, or 36 with defaults. The ID snapshot/traversal remains; this is not an overall O(page_size) claim. Celebrity pulls, repair, cursor fallback and cancellation ownership are preserved.
+
 The outbox confirms local dispatch rather than durable worker completion. Restart reconstructs feed content from indexed source; proactive notification delivery is not durable. Caches, engagement state and quotas are process-local. SQLite mute snapshots and graph caches require explicit refresh or TTL for external writes. Normal feed updates are eventually consistent.
 
 ## Read concurrency and request observations
@@ -45,6 +49,8 @@ A fixed array of 64 async profile locks coalesces concurrent misses for the same
 `metrics.py` owns short thread-safe counter updates around public API operations. `api.metrics()` returns aggregate request/outcome/in-flight counts, lifetime latency count/total/mean/max in seconds, and request starts across 60 one-second buckets divided by 60 for approximate recent QPS. Labels are fixed to publish/retrieve; no per-request samples or identity/payload labels are retained. Measurement holds no lock across the operation. Publish success is source acceptance; HTTP pre-API rejection and asynchronous fanout completion are outside these counters. External aggregation/export/alerts remain integrations.
 
 ## Defaults and extension points
+
+Before acceptance, validate text as UTF-8 and media addresses for UTF-8, HTTP(S) host/port, length, whitespace, controls and backslashes. Invalid input raises field-specific ValidationError before writing either source or outbox. International and IPv6 media addresses retain their original strings; validation does not fetch them.
 
 Queue capacity 10000 counts pending, delayed and claimed jobs; worker concurrency 4, batch size 100, retry count 3, dead-letter retention 100. Per-reader feed capacity 500; first-page repair interval 30 seconds; page size 20, maximum100; maximum following 5000. Most limits are configured via immutable validated config classes; worker retry and queue diagnostic limits are constructor options.
 

@@ -8,6 +8,20 @@
 
 Chapter 12 of *System Design Interview*: an executable Python reference for publishing and reading a reverse chronological feed. See [requirements](docs/requirements.md), [tasks](docs/tasks.md), [the chapter audit](docs/chapter12-review.md) and [design](docs/design.md) for acceptance evidence and deployment limits.
 
+## 2026-11-01 source review
+
+The chapter was rechecked against the book, CodeGraph and Stream-Framework source. [The comparison and fixes](docs/open-source-review_cn.md) cover bounded warm-window I/O and validation before source acceptance.
+
+Warm IDs still use one fixed reader set. Stop older content I/O once a visible page and continuation candidate are complete, then drain started reads. With default page size 20, concurrency 16 and 500 retained IDs, unfiltered reads perform at most 36 content lookups instead of 500; private/missing entries require further scanning, and ID metadata is still traversed. Celebrity/source repair and cursor semantics remain intact.
+
+Validate UTF-8 text and media host/port, length, whitespace/controls, backslashes and UTF-8 before persistence. Valid international/IPv6 media URLs retain their original strings; validation does not fetch media.
+
+Verification: **310 passed, 0 failed/skipped, 17.24 seconds**, warnings as errors on Python 3.13.9. This includes 28 new regressions. See the [identical-workload benchmark](benchmarks/REPORT.md) and raw samples; the measurement is local warm in-memory reading, not production capacity.
+
+```sh
+python tools/benchmark.py --output benchmarks/local.json
+```
+
 ## Features
 
 - Authenticated POST/GET `/v1/me/feed`, hydrated author/content/media/actions/counters, validated keyset pagination.
@@ -95,6 +109,6 @@ python -m pip install -e ".[dev]"
 python -m pytest tests -q -p no:cacheprovider
 ```
 
-The 2026-10-29 review passed **282 tests** with warnings treated as errors, including subprocess exit recovery, SQLite contention, privacy changes, overlapping bounded content/profile reads, cancellation draining, request observations, worker retry and real local HTTP flows. Delayed queue timeouts use `asyncio.TimeoutError` for the declared Python 3.9/3.10 support; a regression simulates their separate exception hierarchy. Python 3.13 was executed here; a full runtime-version matrix was not run.
+The 2026-11-01 review passed **310 tests** with warnings treated as errors, including subprocess exit recovery, SQLite contention, privacy changes, overlapping bounded content/profile reads, cancellation draining, request observations, worker retry and real local HTTP flows. Delayed queue timeouts use `asyncio.TimeoutError` for the declared Python 3.9/3.10 support; a regression simulates their separate exception hierarchy. Python 3.13 was executed here; a full runtime-version matrix was not run.
 
 If using an uninstalled source checkout, set `PYTHONPATH` to this project's absolute `src` directory before testing so subprocesses inherit it. Restricted Windows environments also need a writable `TEMP`/`TMP` and permission for local loopback sockets.

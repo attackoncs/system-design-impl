@@ -189,9 +189,10 @@ class SQLiteMessageQueue(MessageQueue):
         return await self._run(self._lookup_event, recipient_id, channel, event_id)
 
     def _claim(self, channel):
-        now = time.time()
         with self._db.connection() as db:
             db.execute("BEGIN IMMEDIATE")
+            # A contending writer may have consumed an entire lease interval.
+            now = time.time()
             row = db.execute(
                 "SELECT * FROM notification_jobs WHERE channel=? AND available<=? "
                 "AND (receipt IS NULL OR lease_until<=?) ORDER BY available,rowid LIMIT 1",
@@ -248,6 +249,7 @@ class SQLiteMessageQueue(MessageQueue):
 
     def _renew(self, task):
         with self._db.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
             now = time.time()
             return bool(
                 db.execute(

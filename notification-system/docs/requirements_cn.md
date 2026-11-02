@@ -2,7 +2,18 @@
 
 ## 引言
 
-一个 Python 通知系统库，实现了《System Design Interview》第 11 章「Design A Notification System」中的设计。该库提供了一个完整的进程内事件驱动通知管道，支持 iOS 推送（APNs）、Android 推送（FCM）、短信（SMS）和邮件（Email）通道。其特性包括：带各通道独立队列的内部消息队列、可配置的 Worker 池、通知模板、用户偏好管理（opt-in/opt-out）、限流（rate limiting）、去重（deduplication）、带指数退避的重试机制以及事件追踪与分析。核心库运行时零依赖；真实第三方服务提供商集成（SMTP 等）作为可选 extras 提供。一个轻量级的 stdlib HTTP 演示服务器暴露了 REST 端点，用于发送通知、查询投递状态和查看分析数据。
+依据《System Design Interview》第11章的Python asyncio参考实现，提供iOS、Android、SMS、Email通道契约和模拟投递，以及受理、按通道排队、Worker、模板、偏好、限流、去重、重试和跟踪。内存后端用于进程内演示，可选SQLite保存待处理任务、事件ID账本和审计。核心运行时零依赖，真实APNs/FCM/SMS/SMTP适配与对应extras未提供。标准库HTTP示例调用实际服务和后台Worker。
+
+## 实现状态与验收范围
+
+保留原需求编号。未特别标注的条目描述当前参考实现的契约；标注“部分实现”或“部署目标”的条目不能视为已完成。完整运行结果和边界见[第11章审查记录](chapter11-review.md)。性能数值是待按环境测量的目标，不是默认模拟Provider配置下的容量保证。
+
+| 范围 | 当前状态 |
+|---|---|
+| 批量受理、四通道模拟、可调度队列、Worker和重试 | 已实现；批量与投递分别限制并发 |
+| SQLite任务/事件账本/审计、receipt隔离和租约恢复 | 可选已实现；单机文件数据库，不是复制型消息代理 |
+| 用户偏好、联系人、模板、实时tracker和内容TTL去重 | 当前进程内存，启动/恢复时需要重载元数据 |
+| 真实渠道适配及extras、共享偏好、厂商签名回调、集群限额和容灾 | 部署目标，未实现 |
 
 ## 术语表
 
@@ -44,9 +55,15 @@
 
 1.6 如果 Notification_Request 指定的通道是收件人已选择不接收的，则 Notification_Service 必须拒绝该请求并记录一条状态为 UNSUBSCRIBED 的 Event_Tracker 条目。
 
-1.7 Notification_Service 必须支持在单次批量请求中向多个收件人发送通知。
+1.7 Notification_Service 必须提供 `await send_batch(requests, *, concurrency=16)`，按输入顺序返回每一项的通知ID或失败空字符串。
 
 1.8 当通知成功入队时，Notification_Service 必须返回一个唯一的通知标识符用于状态追踪。
+
+1.9 `send_batch` 必须使用至多 `concurrency` 个固定受理协程，而不是为每条输入创建任务；`concurrency=1` 保留串行受理。结果保序不等于整个批次原子提交或跨收件人投递保序。
+
+1.10 单项受理失败保留该位置的空字符串，其他项继续受理；成功项返回其通知ID。
+
+1.11 批量调用取消时，必须取消并等待内部受理协程退出，然后传播取消；已经成功受理的任务不会被回滚或撤销。
 
 ### 需求 2：消息队列系统
 
@@ -64,7 +81,11 @@
 
 2.5 Message_Queue 必须提供方法来查询每个通道队列的当前深度和待处理数量。
 
-2.6 Message_Queue 必须保证每个通道队列内的 FIFO（先进先出）顺序。
+2.6 Message_Queue 必须按任务可用时刻调度，未来计划通知和延迟重试不能阻塞已就绪工作。内存堆对相同可用时刻的任务按入队顺序排序，不保证多个并发Worker的完成顺序。
+
+2.7 内存 `claim` 必须为每次领取返回独立任务对象和receipt；重新领取不得改写旧领取者所持的凭据，旧receipt不得确认、续租或重新调度新领取。
+
+2.8 SQLite的 `claim` / `renew` 必须在取得 `BEGIN IMMEDIATE` 写事务后再采样租约时钟，避免把等待写锁的时间算入新租期。`renew` 必须同时验证receipt与未过期租约；过期领取不得复活。
 
 ### 需求 3：Worker 池与投递
 
@@ -82,7 +103,7 @@
 
 3.5 Worker_Pool 必须支持优雅关闭，允许正在进行的投递在停止前完成。
 
-3.6 Worker_Pool 必须支持在运行时动态启动和停止 Worker。
+3.6 Worker 和 Worker_Pool 支持在生命周期中启动和停止。复用同一个Worker时，退出或取消必须清理就绪信号，防止 `wait_started()` 读取上一轮启动状态；当前不提供运行中热调整Worker池大小。
 
 ### 需求 4：第三方 Provider 抽象
 
@@ -94,11 +115,11 @@
 
 4.2 Simulated_Provider 必须实现 Provider 接口，带有可配置的模拟延迟和失败率。
 
-4.3 Provider 接口必须支持四种通道类型：iOS 推送（APNs）、Android 推送（FCM）、SMS 和 Email。
+4.3 Provider 接口区分iOS推送、Android推送、SMS和Email四种通道。当前内置实现为模拟投递，通道名称不表示已连通APNs、FCM或其他外部服务。
 
-4.4 Notification_Service 必须在构造时接受任何符合 Provider 接口的 Provider 实现。
+4.4 通过 `create_worker_pool(providers, ...)` 注入Provider映射并连接Worker_Pool，而不是在NotificationService构造函数中传入Provider。
 
-4.5 当真实 Provider 集成作为可选 extras 安装时，Notification_Service 必须支持基于 SMTP 的 Email 投递、APNs HTTP/2 推送、FCM HTTP 推送和 SMS 网关投递。
+4.5 **部署目标，未实现：** 真实SMTP、APNs HTTP/2、FCM和SMS网关适配器可实现Provider契约；当前包未提供这些适配器，也未声明 `[smtp]` 等真实渠道extras。
 
 4.6 Provider 必须返回结构化的投递结果，包含成功状态、Provider 消息 ID 以及可选的错误详情。
 
@@ -164,7 +185,7 @@
 
 8.2 当新用户注册时，Notification_Settings 必须默认所有通道均为已选择（opted-in）。
 
-8.3 当用户选择不接收某个通道的通知时，Notification_Settings 必须持久化该偏好并立即阻止该通道上的进一步通知。
+8.3 用户退订后，Notification_Settings 在当前进程保存偏好，并在新通知受理及每次后续Provider调用前阻止该通道投递。跨重启持久化、共享偏好存储属于部署目标；已经开始的外部调用无法撤回。
 
 8.4 当用户重新选择接收某个通道的通知时，Notification_Settings 必须恢复该通道的通知投递。
 
@@ -204,9 +225,9 @@
 
 10.4 Event_Tracker 必须提供聚合分析：在可配置时间范围内的总发送数、总投递数、总失败数和总点击数。
 
-10.5 Event_Tracker 必须提供按通道的投递统计数据（成功率、失败率、平均投递延迟）。
+10.5 **部分实现：** Event_Tracker 提供各通道总数、成功率和失败率；平均投递延迟和外部指标后端仍是扩展目标。
 
-10.6 Notification_Log 必须持久化所有通知尝试及其最终状态，用于审计目的。
+10.6 Notification_Log 记录尝试及队列终态事实；一次FAILED尝试不代表整条通知最终失败。显式选择SQLite后端时可持久化；Event_Tracker中的送达/点击回调历史仍属于当前进程。
 
 ### 需求 11：联系信息管理
 
@@ -222,7 +243,7 @@
 
 11.4 Contact_Info 存储必须支持添加、更新和删除联系条目及设备令牌。
 
-11.5 如果 Device_Token 被 Provider 报告为无效，则 Notification_Service 必须从 Contact_Info 存储中移除该无效令牌。
+11.5 **部署目标，未实现：** 根据真实Provider的错误分类自动从Contact_Info删除无效设备令牌。当前Worker在任务上保存永久拒绝端点并在普通重试中跳过，不自动删除联系人中的注册令牌。
 
 ### 需求 12：通知日志与持久化
 
@@ -230,11 +251,11 @@
 
 #### 验收标准
 
-12.1 Notification_Log 必须记录每次通知尝试，包括：通知标识符、收件人、通道、内容摘要、时间戳和最终状态。
+12.1 Notification_Log 记录通知ID、收件人、通道、内容摘要、时间戳、尝试次数、该次尝试状态与错误详情；单条FAILED尝试记录不能直接推断最终投递失败。
 
 12.2 Notification_Log 必须支持按通知标识符、收件人、通道、状态和时间范围进行查询。
 
-12.3 Notification_Log 必须支持可配置的数据保留策略，并自动清理超过保留期的条目。
+12.3 Notification_Log 提供显式 `cleanup(retention_seconds)` 清理接口；周期调度和事件账本保留策略由部署方负责。清理审计行不会删除event_id去重账本。
 
 12.4 Notification_Log 必须默认使用内存存储，并提供抽象接口以支持可插拔的持久化后端。
 
@@ -276,9 +297,9 @@
 
 14.5 HTTP 演示服务器必须暴露用于管理用户通知设置的端点（获取偏好、opt-in、opt-out）。
 
-14.6 HTTP 演示服务器必须暴露用于管理通知模板的端点（创建、列出、渲染预览）。
+14.6 **部分实现：** 演示支持POST `/templates` 注册和GET `/templates` 列举；模板渲染预览没有HTTP端点，渲染可通过库接口执行。
 
-14.7 HTTP 演示服务器必须返回合适的 HTTP 状态码：成功提交通知返回 201，查询返回 200，校验错误返回 400，未知资源返回 404，限流违反返回 429。
+14.7 通知受理返回202，查询/回调/设置返回200，仅模板创建返回201。无效输入返回400，缺少或错误bearer凭据返回401，未知资源404，重复通知409，无效或过大请求体413，限流429，队列容量拒绝503。
 
 14.8 HTTP 演示服务器必须使用 Notification_Service 库作为核心逻辑，不重复实现通知处理功能。
 
@@ -290,8 +311,8 @@
 - **NFR-1.2**：项目必须采用 src 布局（`src/notification_system/`）。
 - **NFR-1.3**：项目必须要求 Python >= 3.9。
 - **NFR-1.4**：核心库必须零运行时依赖（仅使用 stdlib）。
-- **NFR-1.5**：真实 Provider 集成必须作为可选 extras 提供（例如 `pip install notification-system[smtp]`）。
-- **NFR-1.6**：项目必须包含 dev 依赖：pytest 和 hypothesis。
+- **NFR-1.5**：**部署目标，未实现：** 将真实Provider适配器打包为可选extras。当前pyproject只声明开发extra，不支持 `notification-system[smtp]` 安装命令。
+- **NFR-1.6**：项目包含开发依赖pytest、pytest-asyncio和hypothesis。
 - **NFR-1.7**：项目必须包含一个 `docs/` 目录用于设计文档。
 - **NFR-1.8**：项目必须包含一个 `examples/` 目录，其中存放 HTTP 演示服务器。
 - **NFR-1.9**：项目必须提供干净的 `__init__.py`，导出公共 API。
@@ -303,16 +324,18 @@
 - **NFR-2.3**：项目必须使用 Hypothesis 包含基于属性的测试，用于队列顺序、去重正确性和限流不变量。
 - **NFR-2.4**：项目必须为所有可插拔接口（Provider、Storage 等）使用抽象基类（ABC）。
 - **NFR-2.5**：项目必须定义一个自定义异常模块，涵盖所有错误类型。
-- **NFR-2.6**：项目必须在所有内部并发（队列、Worker、投递）中使用 Python asyncio。
+- **NFR-2.6**：队列协调、Worker和批量受理由asyncio驱动；阻塞SQLite/日志工作可通过 `asyncio.to_thread` 交给线程，不要求所有I/O在事件循环线程执行。
 
 ### NFR-3：架构
 
 - **NFR-3.1**：系统必须采用进程内事件驱动架构，在单个进程内模拟分布式通知管道。
-- **NFR-3.2**：内部 Message_Queue 必须使用 asyncio.Queue 实现非阻塞异步操作。
+- **NFR-3.2**：内存Message_Queue采用各通道独立的可调度堆和asyncio唤醒；SQLiteMessageQueue提供持久计划任务和带receipt的租约。当前实现不是asyncio.Queue。
 - **NFR-3.3**：Worker_Pool 必须使用 asyncio 任务实现并发通知投递。
 - **NFR-3.4**：系统必须支持按通道配置并发级别（每个队列的 Worker 数量）。
 
 ### NFR-4：性能
+
+以下为本地测量目标，实际吞吐取决于Provider延迟、Worker配置和后端；不能把目标数值当作本轮已实测的生产容量。
 
 - **NFR-4.1**：对于内存后端，通知入队操作必须在 5 毫秒内完成。
 - **NFR-4.2**：系统在使用模拟 Provider 时必须支持每秒处理至少 1000 条通知。
@@ -321,6 +344,6 @@
 
 ### NFR-5：可靠性
 
-- **NFR-5.1**：即使 Worker 在投递过程中发生故障，系统也不得丢失已成功入队的通知。
+- **NFR-5.1**：同一进程中的内存任务在可恢复Worker故障后归还；选择SQLite后，待处理任务可跨进程重启并在租约到期后恢复。未提供磁盘/整机容灾或外部副作用恰好一次保证。
 - **NFR-5.2**：重试机制必须使用带抖动（jitter）的指数退避，以防止 Provider 恢复时的惊群效应（thundering herd）。
 - **NFR-5.3**：系统必须支持优雅关闭，在终止 Worker 前完成正在进行的投递。

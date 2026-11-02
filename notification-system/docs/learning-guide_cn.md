@@ -11,6 +11,8 @@
 ```mermaid
 flowchart TB
   B[业务调用者] -->|await send 仅等受理| S[NotificationService]
+  B -->|send_batch| A[有界受理协程 默认最多16个]
+  A --> S
   C[联系人 偏好 模板] --> S
   S -->|事务入队及事件身份| Q[(SQLite队列与事件账本)]
   Q -.->|后台claim租约| W[通道Worker]
@@ -29,7 +31,7 @@ flowchart TB
 | `NotificationTask` | notification_id、endpoints、attempt、completed_endpoints | 同一通知投递与重试的载荷 |
 | `notification_events` | event_id、recipient_id、channel → notification_id | 接受成功后保留，终态后也不删除 |
 | `notification_jobs` | id、payload、available、receipt、lease_until | 可领取、执行、延迟重试直至确认 |
-| `receipt` | 每次claim新生成的随机凭据 | 防止过期Worker确认新租约 |
+| `receipt` | 每次claim新生成的随机凭据；独立任务快照 | 旧对象不会获得新凭据，防止旧Worker控制新领取 |
 | `notification_log` | status、attempt、error_details | 持久审计，不是外部收件人的已读证明 |
 
 ## 七站阅读路线
@@ -37,10 +39,10 @@ flowchart TB
 1. [NotificationService.send](../src/notification_system/service.py#L145)：检查请求和计划时间，再按收件人条带锁串行受理；返回通知ID。
 2. [NotificationService._accept](../src/notification_system/service.py#L186)：先检查显式event_id，再解析端点、偏好和模板；找到任务快照在哪里构造。
 3. [SQLiteMessageQueue._enqueue](../src/notification_system/durable.py#L141)：在写事务里重新检查事件身份并接受任务；这才守住跨实例重复受理。
-4. [SQLiteMessageQueue._claim](../src/notification_system/durable.py#L191)：输入通道，输出带receipt的任务；数据库不删除任务，只标记租约。
-5. [Worker._process_claim](../src/notification_system/worker.py#L137)：并行监视投递与续租，处理取消时返回任务或依赖租约恢复。
-6. [Worker._process_task](../src/notification_system/worker.py#L178)：再查偏好、跳过已完成端点、调用Provider；下一站处理失败。
-7. [RetryHandler.handle_failure](../src/notification_system/retry.py#L70)：决定重试或终态；最后看 [SQLiteMessageQueue._ack](../src/notification_system/durable.py#L234) 如何核验当前租约。
+4. [SQLiteMessageQueue._claim](../src/notification_system/durable.py#L191)：输入通道，取得写锁后采样时间，输出带receipt的任务；数据库不删除任务，只标记租约。先读时钟再等写锁会白白消耗租期。
+5. [Worker._process_claim](../src/notification_system/worker.py#L138)：并行监视投递与续租，处理取消时返回任务或依赖租约恢复。
+6. [Worker._process_task](../src/notification_system/worker.py#L179)：再查偏好、跳过已完成端点、调用Provider；下一站处理失败。
+7. [RetryHandler.handle_failure](../src/notification_system/retry.py#L70)：决定重试或终态；最后看 [SQLiteMessageQueue._ack](../src/notification_system/durable.py#L235) 如何核验当前租约。
 
 ## 微观一：先查去重还不够，接受事务必须再查
 
@@ -72,7 +74,7 @@ def _enqueue(self, task):
 
 ## 微观二：旧Worker不能确认新Worker领到的任务
 
-[durable.py:234](../src/notification_system/durable.py#L234)
+[durable.py:235](../src/notification_system/durable.py#L235)
 
 ```python
 def _ack(self, task, status, details):
@@ -89,6 +91,8 @@ def _ack(self, task, status, details):
 ```
 
 删除语句同时匹配通知id、receipt和未过期租约。如果Worker停顿到租约失效，另一个Worker已经领取，旧receipt即使携带正确notification_id也不能删除新任务；rowcount为0时必须报错。
+
+内存队列也需要隔离领取身份。[MessageQueue.claim](../src/notification_system/queue.py#L77) 返回独立任务快照，不能原地修改已被旧worker持有的对象。用旧对象重排后重新领取，旧对象的receipt仍须保持原值。SQLite续租同样在写事务内重新读时间，过期后不能续租复活。
 
 ```mermaid
 sequenceDiagram
@@ -113,6 +117,29 @@ sequenceDiagram
 
 这条时序不承诺外部恰好一次：Provider已发送但Worker来不及确认时，恢复可能重复调用。供应商幂等需要额外集成。
 
+## 微观三：批量并发上限限制的是任务数
+
+[service.py:391](../src/notification_system/service.py#L391)
+
+```python
+workers = [
+    asyncio.create_task(consume())
+    for _ in range(min(concurrency, len(requests)))
+]
+try:
+    await asyncio.gather(*workers)
+except BaseException:
+    for worker in workers:
+        worker.cancel()
+    await asyncio.gather(*workers, return_exceptions=True)
+    raise
+return results
+```
+
+`send_batch` 前半部分预分配结果位置，共享 `enumerate(requests)` 迭代器；消费者取下一项时没有await，同一事件循环中不会重复领取输入。这里只创建最多concurrency个消费者，不会先为百万条输入创建百万个任务再套Semaphore。默认16，传1可串行受理；结果顺序仍对应输入顺序。
+
+这层并发负责受理，不改变通道worker的投递并发。取消批次会取消并等待子任务退出，已经入队的任务仍保留；SQLite写入仍串行，不能以协程数量推导数据库吞吐。对照结果见 [REPORT.md](../benchmarks/REPORT.md)。
+
 ## 两个很容易误解的失败结果
 
 队列满不是“接受后等待”：入队拒绝应保持业务可重试，不能顺手耗尽本地限流额度或污染内容去重。已经受理的任务暂时投递失败，则使用延迟重试归还Worker，避免一个失败通知占住唯一Worker睡眠。
@@ -120,6 +147,10 @@ sequenceDiagram
 - [test_event_id_dedup_survives_ack_restart_and_concurrent_acceptance](../tests/test_runtime_reliability.py#L185)：两实例并发只接受一个，任务确认和重启后相同业务事件仍被识别。
 - [test_durable_lease_recovers_process_exit_and_fences_stale_ack](../tests/test_runtime_reliability.py#L221)：子进程领取后退出，过期任务可恢复；旧receipt不能确认它。
 - [test_retry_yields_worker_to_other_jobs_and_provider_exception_isolated](../tests/test_runtime_reliability.py#L105)：单Worker的实际投递次序为first、second、first，而非被first的重试等待堵住。
+- [test_memory_old_claim_cannot_control_reclaimed_job](../tests/test_queue_reliability_review.py#L28)：旧领取引用不能确认、重排或续租新的领取。
+- [test_sqlite_claim_lease_starts_after_writer_wait](../tests/test_queue_reliability_review.py#L82)：真实写锁等待之后，才开始新领取的租期。
+- [test_reused_worker_honors_immediate_stop_after_readiness](../tests/test_worker_lifecycle_review.py#L42)：退出后复用Worker，不能用上次的启动信号跳过等待。
+- [test_batch_cancellation_drains_all_children](../tests/test_batch_admission_review.py#L60)：取消大批次后没有遗留受理协程。
 
 ## 自查与练习
 
@@ -128,6 +159,8 @@ sequenceDiagram
 - **多设备推送部分成功后是否重试全部端点？** 任务记录已完成端点，重试只处理剩余端点；最终应结合永久拒绝分支检查结果。
 
 按运行示例把同一业务事件提交两次，再重启服务提交第三次；预期只产生一个被接受的通知身份。换成新event_id、相同正文应允许成为新的业务通知。随后在模拟Provider制造一次暂时失败，观察attempt、receipt和审计如何分别变化。运行方式见 [README_CN.md](../README_CN.md)。
+
+最后把批量受理并发分别设为1和16，比较包含异步等待的队列与SQLite。原书要求、GitHub参考和当前部署边界见 [open-source-review_cn.md](../docs/open-source-review_cn.md)。
 
 
 ---

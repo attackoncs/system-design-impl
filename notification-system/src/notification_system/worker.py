@@ -127,6 +127,7 @@ class Worker:
                 await self._process_claim(notification_task)
         finally:
             self._running = False
+            self._started.clear()
 
     async def _renew_lease(self, task):
         while True:

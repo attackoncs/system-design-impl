@@ -119,9 +119,32 @@ async def _dispatch(self, post: Post) -> bool:
 
 ## 微观三：为什么读取要重新找候选
 
-从 [NewsFeedService._candidates](../src/news_feed_system/news_feed_service.py#L171) 看普通Feed与作者拉取如何合并，再看 [NewsFeedService._hydrate_posts](../src/news_feed_system/news_feed_service.py#L286) 如何保序补全。
+从 [NewsFeedService._candidates](../src/news_feed_system/news_feed_service.py#L171) 看普通Feed与作者拉取如何合并，再看 [NewsFeedService._hydrate_posts](../src/news_feed_system/news_feed_service.py#L290) 如何保序补全。
 
 例子里n3与c2来自不同路径，最终必须在同一个排序空间内比较。补全的并发完成顺序不能改变页面顺序；同作者资料未命中也不能让每条帖子都独立回源。最后的`can_view`检查覆盖读取过程中发生的静音或关注变化。
+
+### 只读足够的内容，保留固定工作协程
+
+[news_feed_service.py:190](../src/news_feed_system/news_feed_service.py#L190)
+
+```python
+async def load(entry: FeedEntry) -> None:
+    # Cache IDs are newest first. Drain already-started reads, but avoid
+    # older content I/O once the visible page and sentinel are complete.
+    if len(candidates) >= candidates.limit:
+        return
+    if entry.author_id in following and (
+        candidates.before is None
+        or (entry.timestamp, entry.post_id) < candidates.before
+    ):
+        post = await run_sync(self._posts.get, entry.post_id)
+        if post is not None:
+            candidates.merge([post])
+```
+
+`candidates.limit`包含页面之外用于判断has_more的一条。这里按**已得到的可见候选数**停止更旧内容I/O，而不是盲取前几个缓存ID。私有或缺失内容不能填满候选，需要继续扫描。[NewsFeedService._read_each](../src/news_feed_system/news_feed_service.py#L114) 仍只创建一组固定读取协程；已经开始的较新读取会排空并参与最终排序。
+
+默认保留500个ID、页面20条、读取并发16：没有过滤时，最多读取20+1+15=36条内容，其余仅遍历ID元数据。页面不能再被未必需要的第500条内容故障拖垮；但必需内容的异常仍正常传播，不会被吞掉。[test_unneeded_old_content_failure_cannot_break_complete_page](../tests/test_open_source_review.py#L75) 检查这一边界。
 
 ## 用两组测试检验理解
 
@@ -129,6 +152,8 @@ async def _dispatch(self, post: Post) -> bool:
 - [test_api_publication_accepts_before_slow_fanout](../tests/test_api_lifecycle.py#L92)：分发钩子故意报错，publish仍能返回，且post_store能读到帖子。该测试使用内存后端，只证明源受理不等待分发，不能单独证明SQLite持久化。
 - [test_restart_recovers_posts_profiles_graph_and_mutes](../tests/test_chapter12.py#L151)：使用同一SQLite路径重建API，Feed缓存最初为空，解除静音后仍能从持久源恢复帖子和资料。用它核对本文所选SQLite方案的恢复边界。
 - [test_parallel_hydration_rechecks_follow_and_mute_policy](../tests/test_chapter12_read_audit.py#L172)：观察测试何时改变关系，以及返回结果为何需要在最后再次过滤。
+- [test_private_cached_prefix_is_skipped_until_page_and_sentinel_are_full](../tests/test_open_source_review.py#L87)：缓存最前25条不可见时仍补满页面与续读候选，同时限制无用内容读取。
+- [test_invalid_media_urls_fail_validation_before_source_acceptance](../tests/test_open_source_review.py#L114)：无效媒体地址在源接受前失败；正文UTF-8验证也在 [PostService._snapshot_request](../src/news_feed_system/post_service.py#L96)，不应交给SQLite编码错误处理。
 
 ## 读懂了吗
 
@@ -141,6 +166,8 @@ async def _dispatch(self, post: Post) -> bool:
 ## 一个小练习
 
 沿用n1、n3、c2的例子，把reader静音author。先预测第一页只剩celebrity的可见候选，再运行相关读取测试。重点观察过滤后是否继续补页；不要通过修改时间戳来掩盖排序问题。
+
+再运行 [benchmark.py](../tools/benchmark.py)，比较500个缓存ID和一页20条所需的内容读取次数；测量范围与原始结果见 [REPORT.md](../benchmarks/REPORT.md)，原书/GitHub对照见 [open-source-review_cn.md](../docs/open-source-review_cn.md)。
 
 
 ---

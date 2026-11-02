@@ -100,6 +100,12 @@ class PostService:
             raise ValidationError(
                 "Post content exceeds 10000 characters", field="content"
             )
+        try:
+            request.content.encode("utf-8")
+        except UnicodeError as error:
+            raise ValidationError(
+                "Post content must be valid UTF-8", field="content"
+            ) from error
         for field in ("media_urls", "selective_sharing"):
             value = getattr(request, field)
             if value is None and field == "selective_sharing":
@@ -123,11 +129,20 @@ class PostService:
             )
         for url in request.media_urls:
             try:
-                parsed = urlsplit(url)
-                valid = parsed.scheme in {"https", "http"} and bool(parsed.hostname)
+                valid = len(url) <= 2048 and not any(
+                    char.isspace() or ord(char) < 32 or ord(char) == 127 or char == "\\"
+                    for char in url
+                )
+                if valid:
+                    url.encode("utf-8")
+                    parsed = urlsplit(url)
+                    _ = (
+                        parsed.port
+                    )  # Validate numeric syntax and range before acceptance.
+                    valid = parsed.scheme in {"https", "http"} and bool(parsed.hostname)
             except ValueError:
                 valid = False
-            if len(url) > 2048 or not valid:
+            if not valid:
                 raise ValidationError("Media must use HTTP(S) URLs", field="media_urls")
         return dataclasses.replace(
             request,

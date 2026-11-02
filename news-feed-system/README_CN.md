@@ -8,6 +8,8 @@
 
 对应《System Design Interview》第12章，提供可运行的发布、读取与倒序动态参考实现。需求及验收见[需求文档](docs/requirements_cn.md)，进度见[任务清单](docs/tasks_cn.md)，逐项覆盖见[章节核对](docs/chapter12-review.md)，架构见[设计文档](docs/design_cn.md)。
 
+2026-11-01再次结合CodeGraph和GitHub源码复核，见[开源对照与修复记录](docs/open-source-review_cn.md)。热首页保留固定读取协程，足够组成可见页面及续读判断后停止更旧内容I/O；默认20条页面、16并发、500个缓存ID时，内容读取最多36次。私有前缀仍继续扫描，已经开始的读取仍须排空。
+
 ## 已实现
 
 - 鉴权的 POST/GET `/v1/me/feed`，组装作者、正文、媒体地址、互动状态和计数，支持稳定游标分页。
@@ -63,6 +65,8 @@ python examples/demo_server.py --database feed.sqlite3 --port 8000
 
 媒体以 HTTP(S) 地址返回，由客户端加载。媒体上传、源站和 CDN 需要外部集成；通知模块只保存本地记录，没有发送真实第三方推送。
 
+媒体地址在接受前校验主机、端口、长度、空白/控制字符和UTF-8；正文也须可UTF-8编码。无效输入以ValidationError拒绝，不写源帖子/outbox。有效中文和IPv6媒体地址保留原串；此校验不访问目标网站。
+
 ## 本地请求观测
 
 `api.metrics()` 为 `publish` 和 `retrieve` 返回独立、可编码为 JSON 的快照：
@@ -90,6 +94,12 @@ python -m pip install -e ".[dev]"
 python -m pytest tests -q -p no:cacheprovider
 ```
 
-2026-10-29 完整回归 **282项通过**，以警告作为错误运行，覆盖真实子进程退出恢复、SQLite 并发、隐私变更、有界内容/资料读取重叠、取消排空、请求指标、worker 重试和本地 HTTP。延迟队列改用 `asyncio.TimeoutError`，适配声明支持的 Python 3.9/3.10；回归模拟其独立异常层次。本次实际执行 Python 3.13，未跑完整版本矩阵。
+2026-11-01完整回归 **310项通过（17.24秒）**，以警告作为错误运行，覆盖真实子进程退出恢复、SQLite并发、隐私变更、有限读取/取消排空、请求指标、worker重试和本地HTTP。新增28项覆盖热窗口停止条件、私有前缀补页、无关旧内容故障及发布前输入校验。本次实际执行Python3.13，未跑完整版本矩阵。
+
+可复跑相同负载的[读取基准与原始数据](benchmarks/REPORT.md)：
+
+```sh
+python tools/benchmark.py --output benchmarks/local.json
+```
 
 若直接使用尚未安装的源码，将 `PYTHONPATH` 设为本项目 `src` 的绝对路径，使子进程也能导入。受限 Windows 环境还需可写的 `TEMP`/`TMP` 及本机回环连接权限。

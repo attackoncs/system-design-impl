@@ -6,6 +6,8 @@
 [Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
 <!-- LEARNING_GUIDE_END -->
 
+Reviewed against Chapter 11, GitHub source and CodeGraph on 2026-11-01. See the [source comparison and regression record](docs/open-source-review_cn.md).
+
 A Python 3.9+ asyncio reference implementation of chapter 11 of `System Design Interview.md`. It supports iOS push, Android push, SMS and email through a pluggable `Provider` interface. The bundled provider **simulates delivery**; it does not contact APNs, FCM, SMS or email services.
 
 [中文说明](README_CN.md) · [Design](docs/design.md) · [Chapter coverage](docs/chapter11-review.md)
@@ -72,6 +74,14 @@ Use `NotificationService()` for a bounded in-memory queue. Its tasks and dedupli
 - Recover SQLite jobs with renewable, fenced leases. Cancellation returns owned jobs; expired leases recover work after process death. Scheduled jobs use persisted `available` timestamps and do not block ready jobs.
 - Retain acceptance, attempt and terminal audit history with query/retention APIs. `tracker` is an in-memory state machine; its event history is not a durable delivery ledger.
 
+## Bounded batch admission
+
+`await service.send_batch(requests, concurrency=16)` accepts several requests concurrently with at most 16 consumer tasks, regardless of batch size. Results preserve input positions; a rejected item returns `""`. Set `concurrency=1` for sequential admission. Recipient-striped locks and event-ID uniqueness still apply.
+
+Cancellation waits for all child tasks to exit; notifications already accepted by the queue remain accepted. Use stable event IDs when retrying an uncertain response. SQLite still serializes writes, so increasing admission concurrency does not guarantee higher database throughput. See the [measured comparison](benchmarks/REPORT.md).
+
+Each memory claim now has an independent receipt snapshot. SQLite claim/renew samples time after acquiring the writer reservation, and a reused Worker waits for a fresh readiness signal after exit.
+
 ## Authenticated HTTP demo
 
 ```powershell
@@ -109,6 +119,8 @@ Contacts, preferences, templates, counters and content TTL deduplication are mem
 The durable event ledger is intentionally retained after audit cleanup. Plan its retention separately before using unbounded event IDs. Queue payloads and logs contain contact/content data and need appropriate local file access and retention.
 
 ## Verification
+
+The review passed 466 tests, including 19 new regressions. Source-only runs that spawn child interpreters need the same `src` path in `PYTHONPATH`; an editable installation already provides it. See the [review](docs/open-source-review_cn.md) and [benchmark tool](tools/benchmark.py).
 
 ```powershell
 python -m pytest tests -q

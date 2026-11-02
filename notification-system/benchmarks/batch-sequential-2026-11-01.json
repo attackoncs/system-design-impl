@@ -1,0 +1,70 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows",
+  "requests_per_sample": 240,
+  "repeats": 3,
+  "requested_concurrency": 1,
+  "synthetic_queue_delay_ms": 2.0,
+  "cases": {
+    "memory": {
+      "samples": [
+        {
+          "seconds": 0.019350899994606152,
+          "accepted_per_second": 12402.523917073486,
+          "peak_enqueue_calls": 1
+        },
+        {
+          "seconds": 0.01605050000216579,
+          "accepted_per_second": 14952.80520654281,
+          "peak_enqueue_calls": 1
+        },
+        {
+          "seconds": 0.015636299998732284,
+          "accepted_per_second": 15348.89967699891,
+          "peak_enqueue_calls": 1
+        }
+      ],
+      "median_accepted_per_second": 14952.80520654281
+    },
+    "delayed_memory": {
+      "samples": [
+        {
+          "seconds": 3.734806100001151,
+          "accepted_per_second": 64.26036414579221,
+          "peak_enqueue_calls": 1
+        },
+        {
+          "seconds": 3.72826289999648,
+          "accepted_per_second": 64.37314278459992,
+          "peak_enqueue_calls": 1
+        },
+        {
+          "seconds": 3.7313254000036977,
+          "accepted_per_second": 64.32030827430975,
+          "peak_enqueue_calls": 1
+        }
+      ],
+      "median_accepted_per_second": 64.32030827430975
+    },
+    "sqlite": {
+      "samples": [
+        {
+          "seconds": 2.4641368000011425,
+          "accepted_per_second": 97.39718996116154,
+          "peak_enqueue_calls": null
+        },
+        {
+          "seconds": 2.2970008999982383,
+          "accepted_per_second": 104.48406876992694,
+          "peak_enqueue_calls": null
+        },
+        {
+          "seconds": 2.3764272999978857,
+          "accepted_per_second": 100.99193861314988,
+          "peak_enqueue_calls": null
+        }
+      ],
+      "median_accepted_per_second": 100.99193861314988
+    }
+  }
+}

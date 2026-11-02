@@ -354,31 +354,51 @@ class NotificationService:
                 )
 
     async def send_batch(
-        self, requests: list[notification_system.models.NotificationRequest]
+        self,
+        requests: list[notification_system.models.NotificationRequest],
+        *,
+        concurrency: int = 16,
     ) -> list[str]:
         """Send notifications to multiple recipients in a single batch.
 
-        Iterates over each request and calls send(). Failed requests
-        return an empty string in their position.
+        A fixed number of consumers call send(), preserving input positions.
+        Failed requests return an empty string. Cancellation drains all consumers;
+        notifications already accepted by a queue are not rolled back.
 
         Args:
             requests: List of notification requests.
+            concurrency: Maximum concurrent admissions; 1 keeps sequential use.
 
         Returns:
             List of notification identifiers (one per request).
             Failed requests have an empty string in their position.
         """
-        results: list[str] = []
-        for request in requests:
-            try:
-                nid = await self.send(request)
-                results.append(nid)
-            # Isolate this operation; record failures before continuing.
-            except Exception:  # pylint: disable=broad-exception-caught
-                logging.getLogger(__name__).exception(
-                    "Failure isolated in %s", "send_batch"
-                )
-                results.append("")
+        if type(concurrency) is not int or concurrency < 1:
+            raise ValueError("concurrency must be a positive integer")
+        results = [""] * len(requests)
+        pending = iter(enumerate(requests))
+
+        async def consume():
+            # Iterator advancement has no await; consumers share one event loop.
+            for index, request in pending:
+                try:
+                    results[index] = await self.send(request)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    logging.getLogger(__name__).exception(
+                        "Failure isolated in %s", "send_batch"
+                    )
+
+        workers = [
+            asyncio.create_task(consume())
+            for _ in range(min(concurrency, len(requests)))
+        ]
+        try:
+            await asyncio.gather(*workers)
+        except BaseException:
+            for worker in workers:
+                worker.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
+            raise
         return results
 
     def _resolve_content(

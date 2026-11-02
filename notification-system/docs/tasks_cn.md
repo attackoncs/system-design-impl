@@ -2,10 +2,9 @@
 
 ## 概述
 
-本文档汇总了 Notification System 项目的实现任务。
-所有任务均已成功完成。
+本文档保留 Notification System 的历史基础任务表。表中的“已完成”仅指当时列出的基础实现与检查点，不代表所有原书部署能力或当前扩展目标都已完成。本轮实现状态和未完成边界列在历史表之后；最新测试结果以[第11章审查记录](chapter11-review.md)为准。
 
-## 任务状态
+## 历史基础任务状态
 
 | # | 任务 | 状态 |
 |---|------|------|
@@ -16,7 +15,7 @@
 | 1.4 | 实现配置模块 | ✅ 已完成 |
 | 2 | 实现消息队列与模板 | ✅ 已完成 |
 | 2.1 | 实现消息队列 | ✅ 已完成 |
-| 2.2 | 属性测试：队列 FIFO 顺序 | ✅ 已完成 |
+| 2.2 | 属性测试：内存队列即时任务的 FIFO 顺序 | ✅ 已完成 |
 | 2.3 | 属性测试：队列深度不变量 | ✅ 已完成 |
 | 2.4 | 实现通知模板 | ✅ 已完成 |
 | 2.5 | 属性测试：模板渲染替换 | ✅ 已完成 |
@@ -80,31 +79,61 @@
 | 11.3 | 将规格文档复制到 docs/ | ✅ 已完成 |
 | 12 | 最终检查点：所有测试通过，包安装正常 | ✅ 已完成 |
 
+## 本轮实现与验收
+
+- [x] `send_batch(requests, *, concurrency=16)` 采用固定受理协程池，协程数量受并发参数限制，不为每一项单独创建任务；`concurrency=1` 保留串行处理。
+- [x] 批量结果按输入顺序返回，每项受理失败保留空字符串，其他项继续；成功项返回通知ID。该接口只等待受理，不等待真实投递。
+- [x] 批量取消时清理并等待内部协程，然后传播取消；已经成功受理的通知不回滚，仍由Worker处理。
+- [x] 内存 `claim` 为每次领取创建独立任务对象和receipt，重新领取不改写旧凭据，旧领取者不得操作新领取。
+- [x] SQLite取得 `BEGIN IMMEDIATE` 后再采样claim/renew租约时钟；续租同时校验receipt和未过期租约，不能用过期凭据复活任务。
+- [x] Worker退出和取消时清理 `_started`；复用同一Worker的新一轮 `wait_started()` 不会读取上一轮就绪信号。见[生命周期回归](../tests/test_worker_lifecycle_review.py)。
+- [x] SQLite可选保存任务、事件ID账本及审计，提供租约恢复与凭据隔离；全局限频、共享元数据和外部副作用幂等不由此自动获得。
+- [x] 需求文档同步当前可调度堆/SQLite后端、通知HTTP受理202，以及内存偏好、模拟Provider的实际边界。
+
+代码入口：[批量受理](../src/notification_system/service.py)、[内存队列](../src/notification_system/queue.py)、[SQLite后端](../src/notification_system/durable.py)、[Worker](../src/notification_system/worker.py)。相关运行验证、完整测试结果和开源对照统一记入[章节审查记录](chapter11-review.md)。
+
+## 部署目标与尚未实现的能力
+
+| 原需求 | 状态与后续工作 |
+|---|---|
+| 4.5 / NFR-1.5 | 未提供真实APNs、FCM、SMS、SMTP适配及对应extras；现有Provider仅模拟，不能使用 `[smtp]` 安装命令 |
+| 8.3 | 偏好保存在内存；持久/共享偏好需实现并在恢复Worker前重载 |
+| 10.5 | 已有通道总数和成功/失败率；平均投递延迟与外部监控尚未接入 |
+| 11.5 | 永久拒绝端点在任务中跳过，但不自动删除联系人设备令牌 |
+| 12.3 | 已有显式日志清理接口；周期清理调度及事件账本保留策略由部署方制定 |
+| 14.6 | 已有模板注册/列表；无HTTP渲染预览端点 |
+| NFR-4 | 数值为环境相关测量目标，不能由模拟Provider测试推导生产容量 |
+| NFR-5.1 | SQLite支持单机文件中的进程恢复；复制型broker、磁盘/整机容灾及外部恰好一次不在实现范围内 |
+
+联系人、模板和实时tracker同样是进程内存；真实厂商鉴权/签名回调、TLS、分布式限额、集群分析和自动扩容仍需部署集成。
+
 ## 架构
 
 系统遵循事件驱动的管道架构：
 
 ```
-Validate → Preferences → Rate Limit → Dedup → Enqueue → Worker Delivery
+Validate → Preferences / Template Snapshot → Quota / Dedup Check → Atomic Accept → Worker Delivery / Retry
 ```
 
 ## 关键组件
 
 - **NotificationService** - 核心编排器（管道入口）
-- **MessageQueue** - 各通道独立的异步队列（asyncio.Queue）
+- **MessageQueue** - 各通道独立的可调度堆与asyncio唤醒；领取使用独立receipt
+- **SQLiteMessageQueue** - 可选持久任务、事件账本与带凭据的租约
 - **WorkerPool** - 各通道可配置的异步 Worker 池
 - **Provider** - 可插拔的投递接口（ABC + SimulatedProvider）
 - **NotificationTemplate** - 基于占位符的模板，含注册表
 - **SlidingWindowRateLimiter** - 按用户、按通道的频率上限
 - **Deduplicator** - 基于内容哈希与 TTL 的重复抑制
 - **RetryHandler** - 带抖动的指数退避
-- **NotificationSettings** - 按用户的 opt-in/opt-out 偏好
+- **NotificationSettings** - 进程内按用户的opt-in/opt-out偏好，非持久设置库
 - **ContactInfoStore** - 用户联系数据与设备令牌
 - **EventTracker** - 生命周期状态机与分析
 - **NotificationLog** - 带可插拔后端的审计日志
 
 ## 测试
 
-- **24 个基于属性的测试**（Hypothesis），验证通用正确性属性
+- **基于属性的测试**（Hypothesis），覆盖内存队列顺序、去重与限流等已定义契约
 - 覆盖所有组件的**单元测试**，涵盖具体示例与边界情况
-- 零运行时依赖（仅使用 stdlib）；dev 依赖：pytest、pytest-asyncio、hypothesis
+- 批量取消、领取凭据、写锁下租约及Worker复用等回归的最终运行结果见[章节审查记录](chapter11-review.md)，不以历史表中的检查点代替本轮验证
+- 零运行时依赖（仅使用stdlib）；开发依赖：pytest、pytest-asyncio、hypothesis

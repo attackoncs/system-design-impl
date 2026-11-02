@@ -2,7 +2,18 @@
 
 ## Introduction
 
-A Python notification system library implementing the design from *System Design Interview* Chapter 11 "Design A Notification System". The library provides a complete in-process event-driven notification pipeline supporting iOS push (APNs), Android push (FCM), SMS, and Email channels. It features an internal message queue with per-channel queues, a configurable worker pool, notification templates, user preference management (opt-in/opt-out), rate limiting, deduplication, retry with exponential backoff, and event tracking/analytics. The core library has zero runtime dependencies; real third-party provider integrations (SMTP, etc.) are available as optional extras. A lightweight stdlib HTTP demo server exposes REST endpoints for sending notifications, checking delivery status, and viewing analytics.
+A Python asyncio reference implementation of Chapter 11, with iOS, Android, SMS and Email channel contracts and simulated delivery. It supplies admission, schedulable queues, workers, templates, preferences, rate limiting, deduplication, retry and tracking. Optional SQLite storage persists pending jobs, event-ID records and audits. The core has zero runtime dependencies; real APNs/FCM/SMS/SMTP adapters and corresponding extras are not supplied. The stdlib HTTP demo invokes the service and running background workers.
+
+## Implementation Status and Acceptance Scope
+
+Original requirement numbers are retained. Unless marked otherwise, entries describe the current reference implementation. Entries marked **partially implemented** or **deployment goal** are not completed capabilities. See the [Chapter 11 review](chapter11-review.md) for validation and limits. Performance figures are environment-dependent measurement targets, not a capacity guarantee under default simulated-provider settings.
+
+| Scope | Current status |
+|---|---|
+| Batch admission, four simulated channels, schedulable queues, workers and retry | Implemented; batch admission and delivery have separate concurrency bounds |
+| SQLite jobs/event ledger/audit, receipt isolation and lease recovery | Optional implementation; a local file database, not a replicated broker |
+| Preferences, contacts, templates, live tracker and content-TTL deduplication | Instance memory; reload metadata during startup/recovery |
+| Real adapters/extras, shared preferences, signed vendor callbacks, cluster quotas and disaster recovery | Deployment goals, not implemented |
 
 ## Glossary
 
@@ -44,9 +55,15 @@ A Python notification system library implementing the design from *System Design
 
 1.6 IF a Notification_Request specifies a channel for which the recipient has opted out, THEN THE Notification_Service SHALL reject the request and record an Event_Tracker entry with status UNSUBSCRIBED.
 
-1.7 THE Notification_Service SHALL support sending notifications to multiple recipients in a single batch request.
+1.7 THE Notification_Service SHALL provide `await send_batch(requests, *, concurrency=16)` for batch admission, returning one notification ID or an empty string per input in the same order as the inputs.
 
 1.8 WHEN a notification is successfully enqueued, THE Notification_Service SHALL return a unique notification identifier for status tracking.
+
+1.9 `send_batch` SHALL use at most `concurrency` fixed admission coroutines rather than one task per input. `concurrency=1` retains sequential admission. Ordered results do not imply an atomic batch transaction or ordered cross-recipient delivery.
+
+1.10 An individual admission failure SHALL leave an empty string at that input position while other items continue. Successful items SHALL return their notification IDs.
+
+1.11 Batch cancellation SHALL cancel and await internal admission coroutines before propagating cancellation. It SHALL NOT roll back or revoke work already accepted by the queue.
 
 ### Requirement 2: Message Queue System
 
@@ -64,7 +81,11 @@ A Python notification system library implementing the design from *System Design
 
 2.5 THE Message_Queue SHALL provide methods to query the current depth and pending count for each channel queue.
 
-2.6 THE Message_Queue SHALL preserve FIFO ordering within each channel queue.
+2.6 THE Message_Queue SHALL schedule tasks by their available time so future notifications and delayed retries do not block ready work. The in-memory heap uses enqueue order for tasks with equal available times, not a guarantee of completion order across concurrent workers.
+
+2.7 Each in-memory `claim` SHALL return a distinct task object and receipt. Reclaiming SHALL NOT mutate an older claimant's credential; stale receipts SHALL NOT acknowledge, renew or reschedule the new claim.
+
+2.8 SQLite `claim` / `renew` SHALL sample the lease clock only after acquiring `BEGIN IMMEDIATE`, so writer-lock waits do not shorten a newly granted lease. Renewal SHALL check both receipt and an unexpired lease; expired claims SHALL NOT be revived.
 
 ### Requirement 3: Worker Pool and Delivery
 
@@ -82,7 +103,7 @@ A Python notification system library implementing the design from *System Design
 
 3.5 THE Worker_Pool SHALL support graceful shutdown, allowing in-flight deliveries to complete before stopping.
 
-3.6 THE Worker_Pool SHALL support starting and stopping workers dynamically at runtime.
+3.6 THE Worker and Worker_Pool SHALL support start/stop across their lifetime. A reused Worker SHALL clear its readiness signal on exit or cancellation so `wait_started()` cannot reuse readiness from a previous run. Hot-resizing an existing worker pool is not supplied.
 
 ### Requirement 4: Third-Party Provider Abstraction
 
@@ -94,11 +115,11 @@ A Python notification system library implementing the design from *System Design
 
 4.2 THE Simulated_Provider SHALL implement the Provider interface with configurable simulated latency and failure rate.
 
-4.3 THE Provider interface SHALL support four channel types: iOS push (APNs), Android push (FCM), SMS, and Email.
+4.3 THE Provider interface SHALL identify four channel types: iOS push, Android push, SMS, and Email. The supplied implementation is simulated; channel names do not imply APNs/FCM or other external connectivity.
 
-4.4 THE Notification_Service SHALL accept any Provider implementation that conforms to the Provider interface at construction time.
+4.4 THE service SHALL accept Provider implementations through `create_worker_pool(providers, ...)`; the provider mapping is wired into Worker_Pool rather than NotificationService construction.
 
-4.5 WHERE real provider integrations are installed as optional extras, THE Notification_Service SHALL support SMTP-based email delivery, APNs HTTP/2 push, FCM HTTP push, and SMS gateway delivery.
+4.5 **Deployment goal, not implemented:** real SMTP, APNs HTTP/2, FCM and SMS gateway adapters may implement the Provider contract. No such adapters or `[smtp]`/other provider extras are supplied by the current package.
 
 4.6 THE Provider SHALL return a structured delivery result containing success status, provider message ID, and optional error details.
 
@@ -164,7 +185,7 @@ A Python notification system library implementing the design from *System Design
 
 8.2 THE Notification_Settings SHALL default to opted-in for all channels when a new user is registered.
 
-8.3 WHEN a user opts out of a channel, THE Notification_Settings SHALL persist the preference and immediately prevent further notifications on that channel.
+8.3 WHEN a user opts out, THE Notification_Settings SHALL retain that preference in the current process and reject new admissions and subsequent provider calls on that channel. Restart persistence/shared preference storage is a deployment goal; already-started external calls cannot be recalled.
 
 8.4 WHEN a user opts back in to a channel, THE Notification_Settings SHALL restore notification delivery for that channel.
 
@@ -204,9 +225,9 @@ A Python notification system library implementing the design from *System Design
 
 10.4 THE Event_Tracker SHALL provide aggregate analytics: total sent, total delivered, total failed, and total clicked counts within a configurable time range.
 
-10.5 THE Event_Tracker SHALL provide per-channel delivery statistics (success rate, failure rate, average delivery latency).
+10.5 **Partially implemented:** Event_Tracker SHALL provide per-channel total count, success rate and failure rate. Average delivery latency and an external monitoring backend remain extension goals.
 
-10.6 THE Notification_Log SHALL persist all notification attempts with their final status for auditing purposes.
+10.6 Notification_Log SHALL record attempt and terminal queue facts; a failed attempt is not necessarily a finally failed notification. SQLite persistence is available when explicitly selected. Event_Tracker delivered/clicked callback history remains process-local.
 
 ### Requirement 11: Contact Information Management
 
@@ -222,7 +243,7 @@ A Python notification system library implementing the design from *System Design
 
 11.4 THE Contact_Info store SHALL support adding, updating, and removing contact entries and device tokens.
 
-11.5 IF a Device_Token is reported as invalid by a Provider, THEN THE Notification_Service SHALL remove the invalid token from the Contact_Info store.
+11.5 **Deployment goal, not implemented:** automatically remove an invalid device token from Contact_Info after provider-specific classification. Current workers retain permanently rejected endpoints on the task and skip them on normal retries, without deleting contact registrations.
 
 ### Requirement 12: Notification Log and Persistence
 
@@ -230,11 +251,11 @@ A Python notification system library implementing the design from *System Design
 
 #### Acceptance Criteria
 
-12.1 THE Notification_Log SHALL record every notification attempt with: notification identifier, recipient, channel, content summary, timestamp, and final status.
+12.1 THE Notification_Log SHALL record notification ID, recipient, channel, content summary, timestamp, attempt number, attempt status and error details. Attempt FAILED records do not by themselves establish a terminal notification failure.
 
 12.2 THE Notification_Log SHALL support querying by notification identifier, recipient, channel, status, and time range.
 
-12.3 THE Notification_Log SHALL support configurable retention with automatic cleanup of entries older than the retention period.
+12.3 THE Notification_Log SHALL expose explicit retention cleanup through `cleanup(retention_seconds)`. Automatic scheduling and an event-ledger retention policy remain deployment responsibilities; cleaning audit rows does not remove event-ID deduplication records.
 
 12.4 THE Notification_Log SHALL use an in-memory store by default with an abstract interface for pluggable persistent backends.
 
@@ -276,9 +297,9 @@ A Python notification system library implementing the design from *System Design
 
 14.5 THE HTTP demo SHALL expose endpoints to manage user notification settings (get preferences, opt-in, opt-out).
 
-14.6 THE HTTP demo SHALL expose endpoints to manage notification templates (create, list, render preview).
+14.6 **Partially implemented:** the demo SHALL support POST `/templates` and GET `/templates` for registration/listing. A rendering-preview HTTP endpoint is not supplied; rendering is available through the library.
 
-14.7 THE HTTP demo SHALL return appropriate HTTP status codes: 201 for successful notification submission, 200 for queries, 400 for validation errors, 404 for unknown resources, and 429 for rate limit violations.
+14.7 The demo SHALL return 202 for accepted notification submissions,200 for queries/callbacks/settings, and201 for template creation only. It SHALL use400 for invalid input,401 for missing/invalid bearer credentials,404 for unknown resources,409 for duplicates,413 for invalid/oversized bodies,429 for rate limiting and503 for queue capacity rejection.
 
 14.8 THE HTTP demo SHALL use the Notification_Service library as its core logic without duplicating notification processing functionality.
 
@@ -290,8 +311,8 @@ A Python notification system library implementing the design from *System Design
 - **NFR-1.2**: The project SHALL use src layout (`src/notification_system/`).
 - **NFR-1.3**: The project SHALL require Python >= 3.9.
 - **NFR-1.4**: The core library SHALL have zero runtime dependencies (stdlib only).
-- **NFR-1.5**: Real provider integrations SHALL be available as optional extras (e.g., `pip install notification-system[smtp]`).
-- **NFR-1.6**: The project SHALL include dev dependencies: pytest and hypothesis.
+- **NFR-1.5**: **Deployment goal, not implemented:** package real provider adapters as optional extras. The current pyproject declares only the development extra; `notification-system[smtp]` is not a supported installation command.
+- **NFR-1.6**: The project SHALL include development dependencies pytest, pytest-asyncio and hypothesis.
 - **NFR-1.7**: The project SHALL include a `docs/` directory for design documentation.
 - **NFR-1.8**: The project SHALL include an `examples/` directory with the HTTP demo server.
 - **NFR-1.9**: The project SHALL provide a clean `__init__.py` with public API exports.
@@ -303,16 +324,18 @@ A Python notification system library implementing the design from *System Design
 - **NFR-2.3**: The project SHALL include property-based tests using Hypothesis for queue ordering, deduplication correctness, and rate limiting invariants.
 - **NFR-2.4**: The project SHALL use abstract base classes (ABC) for all pluggable interfaces (Provider, Storage, etc.).
 - **NFR-2.5**: The project SHALL define a custom exceptions module for all error types.
-- **NFR-2.6**: The project SHALL use Python asyncio for all internal concurrency (queues, workers, delivery).
+- **NFR-2.6**: Queue coordination, workers and batch admission SHALL use asyncio. Blocking SQLite/log work may be delegated through `asyncio.to_thread`; this does not require all I/O to run on the event-loop thread.
 
 ### NFR-3: Architecture
 
 - **NFR-3.1**: The system SHALL use an in-process event-driven architecture simulating a distributed notification pipeline within a single process.
-- **NFR-3.2**: The internal Message_Queue SHALL use asyncio.Queue for non-blocking async operation.
+- **NFR-3.2**: The in-memory Message_Queue SHALL use per-channel schedulable heaps with asyncio wakeups; SQLiteMessageQueue provides persistent scheduled tasks and receipt-protected leases. The current implementation does not use asyncio.Queue.
 - **NFR-3.3**: The Worker_Pool SHALL use asyncio tasks for concurrent notification delivery.
 - **NFR-3.4**: The system SHALL support configurable concurrency levels per channel (number of workers per queue).
 
 ### NFR-4: Performance
+
+The figures below are local measurement targets. Throughput depends on provider latency, worker settings and backend; they do not establish production capacity validated by this review.
 
 - **NFR-4.1**: Notification enqueue operations SHALL complete in under 5 milliseconds for the in-memory backend.
 - **NFR-4.2**: The system SHALL support processing at least 1000 notifications per second with the simulated provider.
@@ -321,6 +344,6 @@ A Python notification system library implementing the design from *System Design
 
 ### NFR-5: Reliability
 
-- **NFR-5.1**: The system SHALL not lose notifications that have been successfully enqueued, even if a worker fails during delivery.
+- **NFR-5.1**: Accepted in-memory work SHALL be returned after a recoverable worker failure within that process. With SQLite, pending tasks SHALL survive process restart and lease expiry; disk/host failure protection and exactly-once external effects are not supplied.
 - **NFR-5.2**: The retry mechanism SHALL use exponential backoff with jitter to prevent thundering herd on provider recovery.
 - **NFR-5.3**: The system SHALL support graceful shutdown, completing in-flight deliveries before terminating workers.

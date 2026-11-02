@@ -10,6 +10,8 @@
 
 [English](README.md) · [设计文档](docs/design_cn.md) · [章节核对记录](docs/chapter11-review.md)
 
+2026-11-01已对照原书、GitHub源码和CodeGraph复审，见[开源对照与回归记录](docs/open-source-review_cn.md)。
+
 ## 安装和启动
 
 ```powershell
@@ -42,6 +44,14 @@ Invoke-RestMethod http://127.0.0.1:8000/notifications -Method Post -Headers $hea
 - SQLite 使用可续期、带凭据隔离的租约；取消 worker 会归还任务，进程退出后租约到期恢复。过期领取者无法确认其他 worker 重新领取的任务。计划通知使用带时区的 `scheduled_at`，持久化后仍能按时进入队列，且不阻塞即时任务。
 - 审计包含接受、失败尝试及终态记录，可以查询和清理。内存 `tracker` 是实时状态机，不是持久送达账本。
 
+## 有界批量受理
+
+`await service.send_batch(requests, concurrency=16)` 默认最多16个消费者协程，不按批次长度创建同等数量任务。返回列表保留输入位置，失败项为空串；`concurrency=1` 保留串行模式。用户条带锁和事件ID去重继续生效。
+
+取消批次会取消并等待所有子任务退出，已经入队的通知继续保留。响应不确定时，业务方应使用稳定事件ID重放。SQLite仍串行写入，提高受理并发不代表数据库吞吐必然提升；见[受控性能对照](benchmarks/REPORT.md)。
+
+内存队列每次领取返回独立receipt快照，旧引用不能获得新凭据；SQLite领取/续租在取得写锁后才采样时间；复用Worker在退出后等待下一次启动信号。
+
 ## HTTP 接口
 
 | 接口 | 作用 |
@@ -66,6 +76,8 @@ Invoke-RestMethod http://127.0.0.1:8000/notifications -Method Post -Headers $hea
 事件账本在清理审计时仍保留，需要独立制定保留策略。通知正文及端点会进入本地数据库，应按业务需要设置文件权限和保留期限。
 
 ## 验证
+
+本轮466项测试通过，包含19项新增回归。未editable安装、直接从源码运行子进程测试时，需要将绝对src目录写入PYTHONPATH；详见[核对记录](docs/open-source-review_cn.md)及[并发验证工具](tools/benchmark.py)。
 
 ```powershell
 python -m pytest tests -q

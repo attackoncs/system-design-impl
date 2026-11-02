@@ -7,6 +7,7 @@ capacity reservation until delivery finishes or the item is rescheduled.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import datetime
 import heapq
 import itertools
@@ -74,8 +75,10 @@ class MessageQueue:
         return None
 
     async def claim(self, channel: Channel) -> NotificationTask:
-        task = await self.dequeue(channel)
-        task.receipt = uuid.uuid4().hex
+        # A later claim must not replace the receipt held by an old worker.
+        task = dataclasses.replace(
+            await self.dequeue(channel), receipt=uuid.uuid4().hex
+        )
         self._claims[task.receipt] = task
         return task
 
