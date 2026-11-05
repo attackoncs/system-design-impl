@@ -1,5 +1,6 @@
 import base64
 import hmac
+import math
 from http.server import BaseHTTPRequestHandler
 import sqlite3
 from urllib.error import HTTPError, URLError
@@ -149,6 +150,15 @@ def server(
                 raise Error(404, "unknown route")
             user = self.auth()
             public_route(path, method, params, gateway=role == "api")
+            if path == "/v1/changes" and method == "GET":
+                wait = float(params.get("wait", "0"))
+                if not math.isfinite(wait) or not 0 <= wait <= 2:
+                    raise ValueError("wait must be between 0 and 2 seconds")
+                if wait > 0:
+                    if not self.server.poll_slots.acquire(False):
+                        raise Error(503, "notification capacity exhausted; retry later")
+                    # The owning HTTP thread releases this only after the reply drains.
+                    self.server.local.polling = True
             body = self.body() if method in ("POST", "PUT") else None
             if role == "api":
                 shard = shard_for(user, len(config["primary_urls"]))

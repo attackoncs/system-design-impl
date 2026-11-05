@@ -17,8 +17,8 @@ From this directory:
 ```powershell
 $env:PYTHONPATH = 'src'
 python examples/network_demo.py
-python -m unittest discover -s tests -v
-python tools/benchmark.py --output benchmarks/results.json
+python -W error -m unittest discover -s tests -v
+python tools/benchmark.py --output .runtime/benchmark.json
 ```
 
 The lab picks local ports, creates private tokens, starts nine independent processes and stops only those it owns. Data/logs stay under ignored `.runtime/lab-*`. If system temp access is restricted, create `.runtime/tmp` and set `TEMP` and `TMP` to that absolute directory. See [validation report](benchmarks/results.md).
@@ -80,7 +80,7 @@ Folders: `inbox` (default), `sent`, `spam`, `quarantine`. `read=true/false` filt
 
 ## Delivery, scanning and replicas
 
-- A successful HTTP send means the sent copy and job are durable. `descriptor.delivery=smtp-accepted` means the local SMTP spool accepted it, not that every inbox is updated. Durable jobs retry with stable raw bytes/IDs and fenced two-second leases.
+- A successful HTTP send means the sent copy and job are durable. `descriptor.delivery=smtp-accepted` means the local SMTP spool accepted it, not that every inbox is updated. Durable jobs retry with stable raw bytes/IDs and fenced 30-second network-worker leases.
 - SMTP acceptance persists the raw object reference and envelope before a 250 reply. Matching retries deduplicate in the gateway and recipient primary. Receive receipts and delete tombstones prevent a retry from restoring deleted mail. Transient scan/storage/mailbox failures keep spool jobs pending; malformed MIME remains inspectable as rejected.
 - The default scanner is **unconfigured**, so mail is quarantined and attachment downloads are blocked. `--test-scanner` enables only literal `LOCAL_TEST_VIRUS_MARKER` / `LOCAL_TEST_SPAM_MARKER` rules. Results identify `scan_engine=test-markers-only`; `test-policy-pass` does not mean malware-free. No real AV provider is implemented.
 - Body, raw RFC messages and attachments live in the separate SHA256 object service. Metadata contains keys and filenames, not large object bytes. Public downloads require an owned nondeleted message and quarantine checks; knowing a key alone does not grant access.
@@ -95,7 +95,27 @@ SMTP gateway `GET /admin/status` exposes durable spool status; `POST /admin/cont
 
 This is not a public mail provider. No external send adapter is enabled, and external sending requires separate authorization and implementation. No real scanner, full authentication/OAuth, TLS, DKIM/SPF/DMARC, MX lookup, HTML client, IMAP/POP or mail fraud protections are implemented. Metadata replicas are asynchronous read copies, not consensus or automatic primary replacement. Objects and SMTP spool have one owner and no replication; full-body reads need object availability. Data/receipts/change logs have no automatic retention or garbage collection. Tests retain local disks and do not prove the book's billion-user scale or availability. See [design](docs/design.md).
 
-## Chapter 24 engineering review (2026-10-26)
+## Source and concurrency review (2026-11-05)
+
+**99 tests passed in 31.374s**, with warnings treated as errors. GitHub source
+comparison with Stalwart and maddy confirmed the durable queue/object separation
+and stable local delivery identities. The confirmed concurrency gap was notification
+polls consuming every HTTP worker, preventing the writes that produce events.
+
+Every API/primary/replica instance now admits at most `floor(3 * concurrency / 4)`
+positive-wait notification requests: 24 of the default 32 workers. Excess requests
+return 503; retry later using the same cursor. With one worker, use `wait=0` because
+positive waits return 503. Credentials and finite `wait` in 0..2 are validated before
+admission. The permit remains owned through response completion, cancellation or
+failure. Other traffic can still exhaust capacity; this is not per-user rate limiting.
+
+Both actual nine-process examples passed; 40/40 local SMTP messages became
+replica-searchable. See [source comparison](docs/open-source-review_cn.md),
+[chapter review](docs/chapter24-review.md) and [measurements](benchmarks/results.md).
+SMTP has a five-second idle timeout, without an absolute session deadline; an
+active connection can retain its slot. Production boundaries below still apply.
+
+## Historical engineering review (2026-10-26)
 
 The review adds `GET /v1/folders` (four fixed folders with total/unread counts),
 `GET /v1/folders/{folder}/messages`, and `GET /v1/changes?after=0&wait=2`.

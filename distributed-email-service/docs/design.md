@@ -16,7 +16,7 @@ The send service validates the request and stages body/RFC MIME objects before t
 
 Sent-folder metadata, postings, an outbound job and `(user,request_key)` receipt commit in one SQLite `BEGIN IMMEDIATE` transaction. Same key/content returns the original sent ID; changed content fails 409. Objects staged by failed or concurrent duplicate submissions may be unreferenced; there is no unsafe immediate deletion because objects are content-addressed and may be shared. An object GC and privacy/receipt retention design are production work.
 
-Each send job has a persistent attempt count, due time, two-second lease and random claim token. Network work occurs outside the metadata write transaction. Success updates the sent copy to `smtp-accepted`; this is gateway acceptance, **not** proof that every recipient has received the message. Failure persists an error and exponential retry delay (capped at 6.4 seconds by the current exponent cap). A crashed worker's lease can be reclaimed; a stale token cannot settle a newer claim. No queue receipt is acknowledged before the corresponding local commit.
+Each send job has a persistent attempt count, due time, 30-second network-worker lease (the direct store helper defaults to two seconds) and random claim token. Network work occurs outside the metadata write transaction. Success updates the sent copy to `smtp-accepted`; this is gateway acceptance, **not** proof that every recipient has received the message. Failure persists an error and exponential retry delay (capped at 6.4 seconds by the current exponent cap). A crashed worker's lease can be reclaimed; a stale token cannot settle a newer claim. No queue receipt is acknowledged before the corresponding local commit.
 
 ## Local SMTP and receiving
 
@@ -50,7 +50,7 @@ The inverted index has `(mail,field,term)` entries with field/term lookup indexe
 
 Each primary mutation appends a checksum-protected metadata/index change in the same transaction as the mail write. Replica HTTP pulls request changes after a durable sequence. Pages have at most 100 entries and a roughly 2 MiB payload budget (one entry may use the whole budget). Replica checks shard assignment, source lineage, contiguous sequence and checksum; it applies mail rows, terms and its checkpoint atomically. Duplicates are ignored. Gaps, changed lineage or corruption stop progress and expose errors. There is no log trimming; a new replica can replay from zero.
 
-Reads expose `lineage`, `position` and the chosen primary/replica source. The router prefers primary reads and falls back to the configured replica only on availability errors, or clients may request `replica=true`. Authoritative 404/409 responses are not masked by an older replica. A replica can serve its last durable state while the primary is unavailable, even while its poll status shows an error. This explicitly permits stale mail, read flags and deletion visibility. There is no read-your-writes barrier or linearizable read claim. Writes never fail over to the replica, and there is no election/split-brain promotion.
+Reads expose `lineage`, `position` and the chosen primary/replica source. The router prefers primary reads and falls back to the configured replica only on availability errors, or clients may request `replica=true`. Authoritative 404/409 responses are not masked by an older replica. A replica can serve its last durable state while the primary is unavailable, even while its poll status shows an error. Without a read barrier, this permits stale mail, read flags and deletion visibility. GET requests may include `min_position=N&lineage=L` from a write receipt: a node below that position returns 503, and a different lineage returns 409. This explicit barrier does not imply generally linearizable reads. Writes never fail over to the replica, and there is no election/split-brain promotion.
 
 Only mailbox metadata and postings replicate; send queues, upload ownership and dedup control tables stay on primaries. Thus the replicas cannot safely replace a lost primary for write service. Process-restart tests retain all local disks. Production reliability requires replicated primary storage/control tables, replicated objects/spool, an election/fencing protocol, privacy lifecycle and multi-host validation. The original billion-user/100k-send-QPS targets are not proven by this local lab.
 
@@ -101,3 +101,30 @@ Cc/Bcc and conversation threading, complete folder management, public SMTP/MX,
 TLS/OAuth/DKIM/SPF/DMARC, placement/consensus and write-primary failover, replicated
 objects/spool, backup/retention and multi-host/billion-user validation. This
 reference does not claim all production requirements are implemented.
+
+## HTTP notification admission review (2026-11-05)
+
+Positive-wait `GET /v1/changes` requests share a per-HTTP-instance quota of
+`floor(3 * concurrency / 4)`: with the default concurrency of 32, at most 24
+notification requests may hold it. After authentication and finite `wait`
+validation within 0..2 seconds, quota acquisition is nonblocking; excess requests
+return 503. With concurrency 1, positive waits return 503 while zero-wait reads
+remain supported. Quota ownership lasts until the response handler finishes,
+including response writing, exceptions and cancellation; it is released in the
+handler's `finally` path.
+
+The API router and each primary/replica enforce separate quotas. This leaves
+HTTP admission capacity for receive, CAS and other ordinary requests while
+notification clients wait. It is per-instance admission, not per-user rate
+limiting, and does not guarantee freedom from starvation under arbitrary load.
+SMTP retains a five-second idle socket timeout but has no absolute session
+budget: an active SMTP client can still occupy a connection slot for longer.
+
+This change is confined to `http.py` and `server_runtime.py`; mail content,
+idempotency, delivery and replication semantics are unchanged. The baseline was
+96 tests in 32.220 seconds. Final validation passed **99 tests in 31.374 seconds**,
+with `-W error` and no skips. Three new HTTP regressions bring that suite from
+13 to 16 tests; all 16 passed in 2.105 seconds. Timings are individual observations,
+not a controlled performance comparison. See the
+[open-source and chapter audit](open-source-review_cn.md) and
+[validation report](../benchmarks/results.md). Earlier results above are historical.

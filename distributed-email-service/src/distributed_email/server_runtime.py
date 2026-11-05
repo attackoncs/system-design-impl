@@ -18,6 +18,8 @@ class Server(ThreadingHTTPServer):
         integer(concurrency, "HTTP concurrency", 1, 256)
         self.request_timeout = seconds(request_timeout)
         self.slots = threading.BoundedSemaphore(concurrency)
+        # Notification waiters must leave room for the writes that wake them.
+        self.poll_slots = threading.BoundedSemaphore(3 * concurrency // 4)
         self.stopping, self.local = threading.Event(), threading.local()
         super().__init__(address, handler)
 
@@ -49,6 +51,7 @@ class Server(ThreadingHTTPServer):
     def process_request_thread(self, request, address):
         self.local.deadline = time.monotonic() + self.request_timeout
         self.local.cancel = threading.Event()
+        self.local.polling = False
         cancel = self.local.cancel
 
         def interrupt():
@@ -59,6 +62,9 @@ class Server(ThreadingHTTPServer):
             with Deadline(self.local.deadline, interrupt, self.stopping):
                 super().process_request_thread(request, address)
         finally:
+            if self.local.polling:
+                self.poll_slots.release()
+            del self.local.polling
             del self.local.deadline
             del self.local.cancel
             self.slots.release()

@@ -1,4 +1,87 @@
-# 2026-10-26 engineering review
+# 2026-11-05 source and concurrency review
+
+Python3.13.9, Windows11 build26100; all recipients are configured synthetic
+local.test mailboxes. No external email or real AV service was used.
+[Chapter review](../docs/chapter24-review.md),
+[open-source audit](../docs/open-source-review_cn.md),
+[raw performance](review-2026-11-05.json),
+[raw feature evidence](features-2026-11-05.json).
+
+## Correctness and concurrency
+
+Baseline96 tests passed32.220s on2026-11-04; final **99 passed31.374s** on2026-11-05,
+no skips, with `-W error`. Three new HTTP tests were added. Before the fix,
+the new admission assertions failed for primary, API and concurrency1; after
+the fix all16 HTTP tests passed2.105s. No speedup is inferred from suite timings.
+
+With concurrency4, three actual HTTP notification requests wait at the same
+SQLite mailbox cursor. A fourth positive-wait request is rejected503; invalid
+waits still return400, a zero-wait query succeeds, and a real CAS read-state
+write succeeds and wakes all three with version2. This runs both directly
+against the primary and through an independent HTTP API server. Normal and
+business-error completion permit subsequent positive-wait requests. The test
+uses an entry-observer for synchronization; SQL and network work are real.
+It is an in-process multi-server regression, not a nine-process saturation benchmark.
+
+## Actual nine-process examples
+
+Original demo: one unique inbox message, same sent ID on retry, matching
+attachment bytes, replica search source, `scan_engine=test-markers-only`,
+`external_delivery=false`; send-to-replica-search763.96ms.
+Notification demo:363.629ms, one inbox event, same send ID, unread1 before CAS,
+replica read-barrier version2, wrong-lineage409, resumed versions[2,3],
+deletion version3, outsider events0 and one metadata-cache hit.
+
+## HTTP/SMTP/object/replica measurement
+
+| Metric | Observed |
+| --- | ---: |
+| Processes / primary shards / read replicas | 9 / 2 / 2 |
+| Messages / sending clients | 40 / 4 |
+| HTTP admission seconds / admitted messages per second | 0.971 / 41.21 |
+| All delivered and replica-searchable seconds / messages per second | 5.143 / 7.78 |
+| Unique SMTP deliveries / replica search matches | 40 / 40 |
+| Search requests / clients | 40 / 4 |
+| Search p50 / p95 milliseconds | 43.181 / 77.829 |
+| Search requests per second | 90.75 |
+| Sampled SQLite bytes / immutable object bytes | 1,187,840 / 18,000 |
+
+Full tests and both examples completed before this measurement; the examples
+and benchmark ran sequentially. A short localhost burst is not a controlled
+before/after comparison, sustained capacity or production SLA. Repeated
+same-query searches may benefit from the process-local metadata LRU and OS
+caches. p95 uses sorted index37 among40 observations. Storage size includes
+sampled SQLite sidecars and is not an atomic filesystem snapshot. Sender and
+recipient occupy different primary shards; there is no cross-host scale proof.
+Owned lab processes stop; private configs, disks and logs remain in ignored
+`.runtime/lab-*` directories. SMTP idle timeout is not a total session budget;
+objects/spool are unreplicated and no automatic write-primary failover exists.
+
+## Static and documentation checks
+
+Ruff E9/F passed for project source and the changed HTTP test; all three changed
+Python files passed the format check. All30 project Python files parse with
+Python3.10 syntax rules. The16 reviewed Markdown files contain525 valid local
+links. All27 authored guides match generated output; all three chapter24
+Mermaid diagrams rendered in an actual headless Edge browser. Scoped
+`git diff --check` passed. Independent read-only source and document reviews
+found no remaining confirmed issue in this change.
+
+## Reproduce without replacing historical evidence
+
+From the project directory with `PYTHONPATH=src` (set TEMP/TMP to an accessible
+private directory when needed):
+
+```powershell
+python -W error -m unittest discover -s tests -v
+python -W error examples/network_demo.py
+python -W error examples/mailbox_updates_demo.py --output .runtime/features.json
+python -W error tools/benchmark.py --output .runtime/benchmark.json
+```
+
+---
+
+# Historical 2026-10-26 engineering review
 
 96 tests passed in30.741s (`-W error`, no skips). Actual nine-process feature
 notification342.560ms; original SMTP demo send-to-replica-search535.690ms.

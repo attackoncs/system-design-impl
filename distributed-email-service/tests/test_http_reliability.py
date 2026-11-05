@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import socket
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -13,8 +14,10 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from distributed_email.common import http_json
+from distributed_email.common import Error, http_json
 from distributed_email.http import server
+from distributed_email.mailbox_views import MailboxViews
+from distributed_email.store import MailStore
 from distributed_email.transport import loads
 
 TOKEN = "a" * 48
@@ -184,6 +187,139 @@ class HTTPReliabilityTests(unittest.TestCase):
                 instance.server_close()
                 self.assertLess(time.monotonic() - started, 0.5)
                 self.assertEqual(sock.recv(1), b"")
+
+    def test_notifications_leave_capacity_for_mailbox_writes(self):
+        original_changes = MailboxViews.changes
+        for role in ("primary", "api"):
+            with self.subTest(role=role), tempfile.TemporaryDirectory() as directory:
+                store = MailStore(Path(directory) / "mail.sqlite")
+                received = store.receive(
+                    "alice",
+                    "delivery",
+                    {
+                        "subject": "Capacity",
+                        "sender": "sender@local.test",
+                        "recipients": ["alice@local.test"],
+                        "folder": "inbox",
+                        "delivery_id": "delivery",
+                        "body_key": "0" * 64,
+                        "attachments": [],
+                        "scan": "test-policy-pass",
+                        "scan_engine": "test-markers-only",
+                    },
+                    "notification capacity",
+                )
+                ready, lock = threading.Event(), threading.Lock()
+                results, failures, entered = [], [], []
+
+                def observe(view, *args, **kwargs):
+                    with lock:
+                        entered.append(True)
+                        if len(entered) == 3:
+                            ready.set()
+                    return original_changes(view, *args, **kwargs)
+
+                primary = server(
+                    "primary", CONFIG, store, "127.0.0.1", 0, concurrency=4
+                )
+                with running(primary), patch.object(MailboxViews, "changes", observe):
+                    config = {
+                        **CONFIG,
+                        "primary_urls": [f"http://127.0.0.1:{primary.server_port}"],
+                        "replica_urls": ["http://127.0.0.1:1"],
+                    }
+                    gateway = server("api", config, None, "127.0.0.1", 0, concurrency=4)
+                    with running(gateway):
+                        instance = primary if role == "primary" else gateway
+                        base = f"http://127.0.0.1:{instance.server_port}"
+                        cursor = f"after={received['position']}&lineage={received['lineage']}"
+
+                        def poll():
+                            try:
+                                results.append(
+                                    http_json(
+                                        base + "/v1/changes?" + cursor + "&wait=2",
+                                        TOKEN,
+                                    )
+                                )
+                            except Exception as exc:
+                                failures.append(exc)
+
+                        threads = [threading.Thread(target=poll) for _ in range(3)]
+                        for thread in threads:
+                            thread.start()
+                        try:
+                            self.assertTrue(
+                                ready.wait(1), "three polls did not enter the mailbox"
+                            )
+                            with self.assertRaises(HTTPError) as raised:
+                                http_json(
+                                    base + "/v1/changes?" + cursor + "&wait=0.2", TOKEN
+                                )
+                            self.assertEqual(raised.exception.code, 503)
+                            raised.exception.close()
+                            for wait in ("nan", "inf", "-1", "3", "bad"):
+                                with self.assertRaises(HTTPError) as invalid:
+                                    http_json(base + "/v1/changes?wait=" + wait, TOKEN)
+                                self.assertEqual(invalid.exception.code, 400)
+                                invalid.exception.close()
+                            empty = http_json(
+                                base + "/v1/changes?" + cursor + "&wait=0", TOKEN
+                            )
+                            self.assertEqual(empty["events"], [])
+                            self.assertEqual(results, [])
+                            updated = http_json(
+                                base + "/v1/messages/" + received["id"],
+                                TOKEN,
+                                {"version": 1, "read": True},
+                                "PUT",
+                            )
+                            self.assertEqual(updated["version"], 2)
+                        finally:
+                            for thread in threads:
+                                thread.join(3)
+                        self.assertFalse(any(thread.is_alive() for thread in threads))
+                        self.assertEqual(failures, [])
+                        self.assertEqual(len(results), 3)
+                        self.assertTrue(
+                            all(value["events"][0]["version"] == 2 for value in results)
+                        )
+                        # Once the response drains, the same positive-wait request can enter again.
+                        resumed = http_json(
+                            base + "/v1/changes?" + cursor + "&wait=0.1", TOKEN
+                        )
+                        self.assertEqual(resumed["events"][0]["version"], 2)
+
+    def test_single_http_worker_rejects_waiting_but_allows_immediate_poll(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = MailStore(Path(directory) / "mail.sqlite")
+            instance = server("primary", CONFIG, store, "127.0.0.1", 0, concurrency=1)
+            with running(instance):
+                base = f"http://127.0.0.1:{instance.server_port}"
+                with self.assertRaises(HTTPError) as raised:
+                    http_json(base + "/v1/changes?wait=0.1", TOKEN)
+                self.assertEqual(raised.exception.code, 503)
+                raised.exception.close()
+                self.assertEqual(
+                    http_json(base + "/v1/changes?wait=0", TOKEN)["events"], []
+                )
+
+    def test_notification_capacity_is_released_after_dispatch_error(self):
+        instance = server("primary", CONFIG, FakeStore(), "127.0.0.1", 0, concurrency=2)
+        with (
+            running(instance),
+            patch.object(
+                MailboxViews,
+                "changes",
+                side_effect=[Error(409, "cursor changed"), {"events": []}],
+            ),
+        ):
+            url = f"http://127.0.0.1:{instance.server_port}/v1/changes?wait=0.1"
+            with self.assertRaises(HTTPError) as raised:
+                http_json(url, TOKEN)
+            self.assertEqual(raised.exception.code, 409)
+            raised.exception.close()
+            self.assertEqual(http_json(url, TOKEN)["events"], [])
 
 
 class TransportReliabilityTests(unittest.TestCase):

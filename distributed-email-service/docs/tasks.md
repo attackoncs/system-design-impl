@@ -2,7 +2,7 @@
 
 Source: root-level `System Design Interview.md`, Chapter 24, chapter starting at line 11227.
 
-Status: core review complete (2026-10-26);96 tests passed30.741s with real nine-process HTTP/SMTP. Production gaps remain documented.
+Status: source/concurrency review complete (2026-11-05); 99 tests passed in 31.374s with real nine-process HTTP/SMTP. Production gaps remain documented.
 
 ## Scope
 
@@ -34,7 +34,7 @@ HTTP mail send/receive, attachments, read filtering, subject/sender/body search,
 - 40 emails all delivered via HTTP/SMTP and searchable from replicas, 40 unique gateway deliveries; replica search p95 76.077ms.
 - After the primary exits, replicas remain readable and writes return 503; restart recovery after gateway acknowledgement loss and scanner unavailability shows no duplicates. See ../benchmarks/results.md.
 - No real AV, public external delivery, primary/replica election, object/queue replication, automatic privacy retention or object GC yet; local measurements do not represent billion-user scale.
-- This chapter is locally complete and not yet committed. Chapter 23's commit is 3597112, currently unpushed.
+- This review does not commit or push changes; commit status is separate from chapter acceptance.
 
 ## 2026-10-26 review
 
@@ -44,3 +44,12 @@ HTTP mail send/receive, attachments, read filtering, subject/sender/body search,
 - [x] Bound HTTP/SMTP, direct RPC budgets, cancellation and owned thread cleanup.
 - [x] 96 tests passed (30.741s, -W error); real nine-process demos and measurements.
 - [ ] Production AV/spam, Cc/Bcc/threading, public deliverability and replicated HA/scale.
+
+## 2026-11-05 source and concurrency review
+
+- [x] Read the chapter and actual pinned Stalwart/maddy queue implementations; record [scope and differences](open-source-review_cn.md).
+- [x] Reserve ordinary HTTP capacity by capping positive-wait notifications at `floor(3 * concurrency / 4)` per instance; overflow returns 503. One worker permits only zero-wait polls.
+- [x] Retain notification permits until the owning response ends, including errors/cancellation; validate credentials and finite 0..2-second waits first.
+- [x] Add three regressions: primary/API saturation plus real CAS wake-up, one-worker immediate polling and error cleanup. Before the fix, three subcases failed; all 16 HTTP tests now pass.
+- [x] Strict full suite: 99 passed in 31.374s, no skips. Both nine-process examples and the 40-message/40-search benchmark passed; [raw results](../benchmarks/results.md).
+- [x] Synchronize bilingual documents, correct the stale no-read-barrier statement, and update the learning guide.

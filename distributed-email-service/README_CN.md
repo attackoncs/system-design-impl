@@ -15,8 +15,8 @@
 ```powershell
 $env:PYTHONPATH = 'src'
 python examples/network_demo.py
-python -m unittest discover -s tests -v
-python tools/benchmark.py --output benchmarks/results.json
+python -W error -m unittest discover -s tests -v
+python tools/benchmark.py --output .runtime/benchmark.json
 ```
 
 在本目录执行。实验自动选择本机端口、生成私有凭据、启动并清理自有九个进程；数据与日志保留在忽略提交的 `.runtime/lab-*`。系统临时目录受限时创建 `.runtime/tmp`，将 `TEMP`/`TMP` 设为其绝对路径。证据见 [验证报告](benchmarks/results.md)。
@@ -80,7 +80,23 @@ SMTP 管理接口 `/admin/status` 和 `/admin/control` 使用管理令牌；控�
 
 生产边界：暂无公网 SMTP、真实反病毒、完整 OAuth、TLS、DKIM/SPF/DMARC、HTML 客户端或 IMAP/POP。副本异步且无选主；对象与 SMTP 队列仍为单节点。无自动隐私保留、对象 GC 或变更日志清理。验证保留本地磁盘，不覆盖机器/磁盘丢失，也不代表原书十亿用户规模。更多细节见 [设计文档](docs/design.md)。
 
-## 第24章工程复核（2026-10-26）
+## 开源与并发复核（2026-11-05）
+
+**99项测试通过，31.374秒**，警告按错误处理。对照Stalwart和maddy的真实源码，
+核对了持久队列、对象分离和稳定本地投递身份。本次确认并修复的问题是：
+通知长轮询可能占满HTTP槽位，使产生通知所需的收信或写操作无法进入。
+
+网关、主库和副本各自最多接纳 `floor(3 * concurrency / 4)` 个正等待通知请求，
+默认32槽中最多24个。超额返回503，客户端稍后用原游标重试；并发数为1时，
+正等待返回503，仍可使用 `wait=0`。先验证身份及有限的0..2秒等待参数再领取配额，
+持有至回复完成、异常或取消。普通流量仍可能耗尽容量，这不是按用户限流。
+
+两个真实九进程示例通过，40封本地SMTP邮件全部投递并可在副本搜索。
+详见[开源源码对照](docs/open-source-review_cn.md)、[章节核对](docs/chapter24-review.md)
+和[实测报告](benchmarks/results.md)。SMTP只有5秒空闲超时，没有总会话期限；
+持续活跃的连接仍可长期占用槽位。下述生产范围缺口仍然保留。
+
+## 历史工程复核（2026-10-26）
 
 新增 `GET /v1/folders`（四个固定文件夹、总数及未读数）、
 `GET /v1/folders/{folder}/messages` 和 `GET /v1/changes?after=0&wait=2`。
