@@ -1,7 +1,7 @@
 # Tasks: Metrics Monitoring and Alerting
 
 Source: [chapter 21](<../../System Design Interview.md>), lines 8997–9663.
-Core review: 2026-10-26. Final tests/measurement are recorded in
+Latest review: 2026-11-04; core review: 2026-10-26. Tests/measurement are recorded in
 [verification](../benchmarks/results.md); [coverage and gaps](chapter21-review.md).
 No commit/push is implied. Historical 2026-10-20 totals are not current totals.
 
@@ -31,6 +31,12 @@ No commit/push is implied. Historical 2026-10-20 totals are not current totals.
   regressions and the two-collector/partition/grouping/severity chapter demo.
 - [x] T12. Synchronize EN/CN README/design and local requirements/tasks; link actual
   execution evidence, preserve historical benchmark dates and production limits.
+- [x] T13. Compare pinned Prometheus/Alertmanager source and trace collection,
+  ingestion, query and alert/delivery boundaries with CodeGraph.
+- [x] T14. Reproduce queue JSON acceptance/stall defects; reuse strict parsing,
+  persist rejected inputs before commit and add four focused regression tests.
+- [x] T15. Run 112 strict-warning tests, both independent-process examples and
+  the dated query observation; synchronize bilingual docs and the learning guide.
 
 ## Acceptance
 

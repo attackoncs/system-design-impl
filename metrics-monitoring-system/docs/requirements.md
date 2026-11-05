@@ -1,7 +1,7 @@
 # Requirements: Metrics Monitoring and Alerting (chapter 21)
 
 Source: [System Design Interview.md](<../../System Design Interview.md>), lines
-8997–9663. Review date: 2026-10-26. Infrastructure gauges/counters only; logs,
+8997–9663. Latest review: 2026-11-04; prior core review: 2026-10-26. Gauges/counters only; logs,
 traces and business analytics remain outside scope. Final execution results:
 [verification](../benchmarks/results.md); gaps: [chapter review](chapter21-review.md).
 
@@ -16,6 +16,10 @@ traces and business analytics remain outside scope. Final execution results:
   after transport duplicates, and temporary failures never acknowledge lost work.
 - Actual chapter 20 HTTP brokers/independent disks provide queue transport. Group
   consumers rotate assignments; expired offsets require explicit recovery.
+- Parse queue envelopes strictly, rejecting duplicate fields/non-finite numbers
+  and isolating excessive nesting. Persist identity/hash/reason before committing
+  rejected records; later valid records in that page must remain processable.
+  Rejection-write failure, SQL/network errors and 5xx leave work uncommitted.
 - SQLite reference stores immutable samples, exact label indexes, bounded series,
   consistent revision queries and isolated/coalesced cache results. Rollups rebuild
   dirty buckets outside the writer and publish with revision validation.
@@ -27,6 +31,8 @@ traces and business analytics remain outside scope. Final execution results:
 - Immutable rules/atomic JSON file import, static severity labels, bounded snapshot
   evaluation, pending/firing/resolved/no-data policy, silence, stable notification
   grouping, leases, attempt/backoff limits and visible dead records.
+  Group identity includes rule, destination, channel and configured labels;
+  cross-rule routing trees are outside the local reference.
 - Real owned HTTP webhook delivery, with explicit Provider boundaries for
   email/phone/PagerDuty. Receiver cooperation is required for external deduplication.
 - Authenticated query/SVG/dashboard; bounded HTTP admission/framing/JSON/deadlines,

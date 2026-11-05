@@ -14,14 +14,17 @@
 规则JSON导入及有界网络/后台生命周期。最终执行结果见[验证报告](benchmarks/results.md)，
 逐项原书覆盖和生产缺口见[章节记录](docs/chapter21-review.md)。
 
+[2026-11-04源码复核](docs/open-source-review_cn.md)对照Prometheus和Alertmanager，
+修复队列信封解析及坏消息隔离；112项严格警告测试、两个独立进程示例通过。
+
 ## 运行
 
 Python 3.10+，标准库。在本目录执行：
 
 ```powershell
-python -W error::ResourceWarning -m unittest discover -s tests -v
+python -W error -m unittest discover -s tests -v
 python examples/network_demo.py
-python examples/chapter_demo.py --output benchmarks/features-2026-10-26.json
+python examples/chapter_demo.py --output .runtime/chapter-features.json
 python tools/benchmark.py --output .runtime/query.json
 ```
 
@@ -59,6 +62,8 @@ alerts角色，完整命令见[英文说明](README.md)。打开 `http://127.0.0
 - 默认全局1万序列／每指标1000序列、每序列最多8标签、每标签值128字符。
   单次查询最多200序列和2万输出点。异步基数／无效批次进入可见拒绝账本。
   队列offset过期会停止推进，需运维显式重置，不静默跳过。
+  队列信封与HTTP复用严格JSON解析，拒绝重复字段、非有限数值；过深嵌套作为坏输入
+  隔离，避免持续阻塞分区。拒绝账本写成功后才提交游标；SQL/网络/5xx故障仍保留重试。
 
 配置可设`queue_partitions`（默认1，最多64）、`partition_by=metric/series`、
 `dispatch_workers`和`scrape_workers`（默认4，最多32）。队列已有分区不足时需显式扩容；
@@ -109,6 +114,7 @@ API/storage/alerts角色可用`--rules-file path.json`（别名`--rules`）在�
 幂等ID／内容重试；分组FIFO防止恢复通知越过失败告警。30秒租约隔离worker，最多5次
 指数退避，耗尽保留dead记录。接收方配合幂等才能避免外部重复。
 静默可能推迟整批，已分组旧状态可能在解除后按序投递；也可能单独发送resolved。
+通知合并限于同规则、目标、通道及group_by标签值，不提供Alertmanager完整跨规则路由树。
 
 实际验证的是自有HTTP webhook；邮件／电话／PagerDuty由可替换Provider接口扩展，
 未配置会明确失败，不能宣称真实供应商投递完成。配置生成器不启用任何通知目的地。

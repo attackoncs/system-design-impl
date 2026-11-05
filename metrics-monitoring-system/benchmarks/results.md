@@ -1,6 +1,97 @@
 # Metrics verification report
 
-## Core review — 2026-10-26 (Asia/Shanghai)
+## Source re-review — 2026-11-04 (Asia/Shanghai)
+
+Chapter 21 was re-read and compared against current code using CodeGraph, with
+separate storage and alert reviews. The [source comparison](../docs/open-source-review_cn.md)
+links the actual pinned Prometheus/Alertmanager code read and the local boundaries.
+The one source change reuses strict queue JSON parsing and isolates excessive
+nesting, preserving durable rejection before commit and temporary-error retries.
+
+### Strict regression
+
+Python 3.13.9 / Windows 11 build 26100, standard library/SQLite. Real socket and
+process checks used approved unrestricted execution, with temporary paths isolated
+under the workspace. From this project with PYTHONPATH=src:
+
+```powershell
+python -W error -m unittest discover -s tests -v
+```
+
+Before changes, **108 tests passed in 27.577s**. Regression reproduced default
+JSON acceptance of duplicate fields/non-finite metadata and an approximately
+8KiB deeply nested payload escaping as RecursionError. After the fix, **112 tests
+passed in 26.271s, no skips, all warnings treated as errors**. The six historical
+test groups below remain; four new pipeline parsing/rejection tests are added.
+
+The new tests use real Store/rejection transactions and a controlled queue page:
+bad records are isolated, later valid samples ingest, replay stays idempotent,
+and failed rejection persistence does not commit the cursor. Existing transient
+storage-error tests continue to prevent poison acknowledgement of 5xx failures.
+
+### Independent-process examples
+
+```powershell
+python -W error examples/network_demo.py
+python -W error examples/chapter_demo.py --output benchmarks/features-2026-11-04.json
+```
+
+Both passed. The 13-process example includes actual chapter 20 HTTP brokers and
+separate disks, proxies, exporter/collector/storage/query/alerts and an owned
+webhook. Push-to-query took **419.936ms**; a lost-confirmation retry produced
+**2 attempts and 1 unique notification**. This is local evidence, not an external
+provider delivery SLA.
+
+The [14-process report](features-2026-11-04.json) shows 2 static collectors owning
+4 targets exactly once, all 3 queue partitions active, weighted gauge mean
+**40.0 / count 3**, identical push replay and webhook severity=page. Owned
+processes stopped; diagnostic configs/disks/logs remain ignored under `.runtime`.
+No commercial notifications, production Kafka/TSDB or cloud account were used.
+
+### Small fixed-range query observation
+
+```powershell
+python -W error tools/benchmark.py --output benchmarks/review-2026-11-04.json
+```
+
+The run followed regression and both examples, without concurrent tests or graph
+builds. [Raw report](review-2026-11-04.json):
+
+| Metric | Observed |
+| --- | ---: |
+| Gauge source series / raw samples | 100 / 6000 |
+| Direct fixture ingestion | 1.032s |
+| Warm query requests / clients | 40 / 4 |
+| Points returned per query | 3000 |
+| Cold query | 266.157ms |
+| Warm p50 / p95 | 70.148 / 91.971ms |
+| Warm query QPS | 54.27 |
+| SQLite including sidecars | 3,260,416 bytes |
+| Request errors | 0 |
+
+Data is seeded directly, then queried through an independent localhost HTTP
+process. Repeated identical ranges warm the revision cache. P95 is sorted index
+floor(0.95 × (n−1)) from only 40 warm samples. This does not measure queue ingestion,
+random-query load, sustained throughput or professional TSDB scale. The fix is
+about input correctness/progress, with no performance-improvement claim. Historical
+results below retain their dates and are not a controlled before/after comparison.
+
+### Static, graph and documentation checks
+
+Ruff E9/F passed for `src` and the new regression file; both changed Python files
+passed formatting. All 39 project Python files parsed with Python 3.10 syntax
+rules. Local checks validated 528 links in 16 Markdown files and parsed benchmark
+JSON. All 27 authored guides matched generated output; the chapter's 3 Mermaid
+diagrams rendered in a headless browser. Scoped `git diff --check` passed.
+
+The graph incrementally re-parsed 1 file, updating 3 nodes/40 edges without errors.
+Pipeline-scoped direct impact reported 3 file nodes, 12 impacted nodes and 4
+additional files, with no truncation/unresolved calls in that query. These counts
+describe the scoped operation, not full dynamic-dispatch/test coverage. The new
+regression also has direct source/execution evidence; other chapters' existing
+changes remain separate. See the source comparison for reviewed paths/limits.
+
+## Historical core review — 2026-10-26 (Asia/Shanghai)
 
 Python 3.13.9 / Windows 11 build 26100, standard library only. Real localhost
 fixtures used approved unrestricted processes because the Windows sandbox blocks

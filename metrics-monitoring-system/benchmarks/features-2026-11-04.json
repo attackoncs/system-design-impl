@@ -1,0 +1,13 @@
+{
+  "scope": "14 independent localhost processes: 3 broker disks, coordinator, 3 TCP proxies, 2 collectors, exporter, query API, storage, alerts, owned webhook",
+  "static_collectors": 2,
+  "disjoint_scrape_targets": 4,
+  "all_targets_owned_once": true,
+  "queue_partitions": 3,
+  "active_queue_partitions": 3,
+  "weighted_group_average": 40.0,
+  "group_sample_count": 3,
+  "push_replay_identical": true,
+  "notification_severity": "page",
+  "external_provider": "owned localhost webhook only"
+}

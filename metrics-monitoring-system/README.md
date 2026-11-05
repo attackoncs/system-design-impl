@@ -15,14 +15,18 @@ bounded concurrent scraping, cross-series gauge queries, incremental rollups and
 atomic rule-file import. Final execution evidence is in [validation](benchmarks/results.md)
 and the [chapter mapping](docs/chapter21-review.md); it does not establish production scale.
 
+The [2026-11-04 source review](docs/open-source-review_cn.md) compares Prometheus
+and Alertmanager and hardens queue-envelope parsing/rejection. All 112 tests
+passed with warnings treated as errors; both independent-process examples passed.
+
 ## Run the reference
 
 Python 3.10+, standard library only. From this directory:
 
 ```powershell
-python -W error::ResourceWarning -m unittest discover -s tests -v
+python -W error -m unittest discover -s tests -v
 python examples/network_demo.py
-python examples/chapter_demo.py --output benchmarks/features-2026-10-26.json
+python examples/chapter_demo.py --output .runtime/chapter-features.json
 python tools/benchmark.py --output .runtime/query.json
 ```
 
@@ -122,8 +126,12 @@ heads. `Dispatcher` owns a bounded executor and drains accepted publication work
 Storage consumers rotate through their group assignments, applying data before queue commit; duplicates after
 crash/lost ACK are safe. Invalid batches/cardinality violations enter a visible
 hash/reason rejection ledger; they are not retried forever. Queue offset expiry
-fails closed and requires explicit operator reset/recovery. Its coordinator is
-still a SPOF. Collector receipts/rejection receipts retain 14 days; successfully
+fails closed and requires explicit operator reset/recovery. Queue envelopes use
+the same strict JSON parser as HTTP: duplicate fields and non-finite values are
+rejected. Excessive nesting is recorded as invalid input so it cannot stall a
+partition indefinitely. Rejection persistence must succeed before cursor commit;
+database/network errors and 5xx storage failures still retry without committing.
+The queue coordinator is still a SPOF. Collector receipts/rejection receipts retain 14 days; successfully
 dispatched collector payloads are cleared. Some durable delivery/alert metadata
 does not yet have GC.
 
@@ -191,7 +199,9 @@ reuse its exact payload/key; groups use FIFO, 30s leases and up to five attempts
 with bounded exponential backoff. A newly added silence can delay an entire mixed
 batch. Already materialized historical transitions may be delivered after silence
 in order. A resolution can be sent even when its firing event was suppressed.
-Without receiver idempotency, external delivery is at least once.
+Groups are scoped to rule, destination, channel and configured label values,
+without a full cross-rule routing tree. Lost acknowledgements can cause duplicate
+external delivery; receiver idempotency is required. Exhausted attempts stay dead.
 
 HTTP defaults to 32 accepted handlers, backlog 128 and a 10-second absolute socket
 budget; CLI exposes `--concurrency` and `--request-timeout`. Bodies are limited to

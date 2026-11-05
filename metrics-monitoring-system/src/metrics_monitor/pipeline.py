@@ -1,6 +1,5 @@
 """Compatibility facade and durable queue-to-storage consumer operations."""
 
-import json
 import logging
 import time
 from urllib.error import HTTPError
@@ -9,6 +8,7 @@ from .collector import Collector as Collector
 from .collector import Dispatcher as Dispatcher
 from .common import Error, digest
 from .queue_adapter import QueueAdapter as QueueAdapter
+from .transport import loads
 
 LOGGER = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ def consume_once(store, queue):
         payload = record["value"]
         batch_id = digest(payload)
         try:
-            body = json.loads(payload)
+            body = loads(payload)
             if not isinstance(body, dict) or set(body) - {
                 "batch_id",
                 "samples",
@@ -30,7 +30,7 @@ def consume_once(store, queue):
                 raise ValueError("invalid metrics queue envelope")
             batch_id = body["batch_id"]
             store.ingest(batch_id, body["samples"])
-        except (ValueError, TypeError, KeyError) as exc:
+        except (ValueError, TypeError, KeyError, RecursionError) as exc:
             store.reject(digest(str(batch_id)), payload, type(exc).__name__)
         except Error as exc:
             # Temporary storage failures must leave the queue cursor unchanged.

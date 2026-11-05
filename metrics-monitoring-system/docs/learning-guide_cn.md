@@ -98,6 +98,60 @@ stateDiagram-v2
 
 该图省略静默与投递任务，避免把“状态求值”与“是否发送外部通知”混为一步。
 
+## 微观三：坏消息与临时故障为什么不能同样重试
+
+消费到一个批次时，约8KiB的深嵌套JSON也可能超过解析深度；重复字段还可能悄悄覆盖
+前值。这类输入需要隔离，否则重读同一批会阻塞分区。查看
+[consume_once](../src/metrics_monitor/pipeline.py#L16)的严格解析及异常分支：
+
+[pipeline.py:23](../src/metrics_monitor/pipeline.py#L23)
+
+```python
+try:
+    body = loads(payload)
+    if not isinstance(body, dict) or set(body) - {
+        "batch_id",
+        "samples",
+        "partition",
+    }:
+        raise ValueError("invalid metrics queue envelope")
+    batch_id = body["batch_id"]
+    store.ingest(batch_id, body["samples"])
+except (ValueError, TypeError, KeyError, RecursionError) as exc:
+    store.reject(digest(str(batch_id)), payload, type(exc).__name__)
+except Error as exc:
+    # Temporary storage failures must leave the queue cursor unchanged.
+    if not 400 <= exc.status < 500:
+        raise
+    store.reject(digest(str(batch_id)), payload, "sample rejected")
+```
+
+拒绝账本只记标识、payload hash及原因；写成功后才能跳过该记录。同批后续正常样本
+继续入库，全部处理后才commit返回的next_offset。若写拒绝账本失败，或者入库遭遇
+SQL/网络/5xx故障，游标不能前移；已经入库的部分靠批次幂等安全重放。
+
+```mermaid
+flowchart TD
+  R["读取本页一条record"] --> P["严格JSON解析与入库"]
+  P -->|"成功"| N["继续本页"]
+  P -->|"坏输入／校验4xx"| D["持久记录拒绝标识、hash、原因"]
+  D -->|"成功"| N
+  P -->|"SQL／网络／5xx"| W["不提交游标，稍后重试"]
+  D -->|"写失败"| W
+  N --> A{"本页处理完？"}
+  A -->|"否"| R
+  A -->|"是"| C["commit next_offset"]
+```
+
+对照[PipelineSourceReviewTests.test_deep_json_is_rejected_without_blocking_later_samples](../tests/test_pipeline_source_review.py#L58)
+和[PipelineSourceReviewTests.test_rejection_storage_failure_does_not_commit_queue_position](../tests/test_pipeline_source_review.py#L87)，
+分别预测“坏记录后跟正常记录”和“拒绝账本暂不可写”的游标结果。测试用真实SQLite，
+队列页与commit接收器是受控替代；网络闭环另由独立进程示例验证。
+
+[open-source-review_cn.md](../docs/open-source-review_cn.md)链接Prometheus抓取/规则和Alertmanager通知源码。
+先核对同一阶段的接受、提交、重试条件，再比较实现差异。本地通知分组仅限同规则、
+目标、通道及group_by标签，未实现完整跨规则路由树。
+
 ## 跟踪一次失败
 
 队列发布异常后，outbox保留pending并更新`attempts/due`，本轮返回False。下次尝试应复用负载，而不是重新采一条替代旧样本。存储端临时故障同样不能直接当坏消息确认丢弃；看[PipelineTests.test_temporary_storage_failure_is_not_poison_acknowledged](../tests/test_pipeline_reliability.py#L286)，观察消费确认是否被保留。

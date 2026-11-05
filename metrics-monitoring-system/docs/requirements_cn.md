@@ -1,7 +1,7 @@
 # 需求：指标监控与告警（第21章）
 
 来源[System Design Interview.md](<../../System Design Interview.md>)8997–9663行。
-2026-10-26审查；最终结果见[报告](../benchmarks/results.md)，缺口见[章节记录](chapter21-review.md)。
+最新复核2026-11-04，前次核心审查2026-10-26；结果见[报告](../benchmarks/results.md)，缺口见[章节记录](chapter21-review.md)。
 仅基础设施gauge/counter，不含日志、分布式追踪或业务分析。
 
 ## 可执行核心
@@ -11,6 +11,8 @@
 - 有界持久outbox先接受后发送；按metric/series分片、partition FIFO lease claim、有界
   Dispatcher并行不同队首。稳定批次让传输重复可幂等入库，临时故障不确认未存储数据。
 - 第20章真实HTTP broker/独立磁盘传输，组消费者轮询分配；offset过期显式恢复。
+- 严格解析队列信封，拒绝重复字段/非有限数值，隔离过深嵌套；先持久记录拒绝标识/hash/
+  原因再提交，同页后续合法记录仍可处理。拒绝写失败、SQL/网络/5xx错误不推进游标。
 - SQLite参考引擎保存不可变样本、精确标签索引、基数预算、一致revision查询及隔离/合并
   冷加载缓存。dirty桶降采样在写锁外计算，以revision校验发布。
 - 原始约7天、分钟约30天、小时约365天；迟到数据在raw窗口重建受影响摘要后裁剪。
@@ -18,6 +20,7 @@
 - 有界完整小时本地gzip归档，校验hash/结构/身份，独占/fsync及失败清理，不冒充云存储。
 - 不可变规则/原子JSON导入、静态severity标签、有界快照评估、持续pending/firing/resolved/
   no_data语义、静默、冻结通知分组、lease/重试/退避/死信。
+  通知按规则/目标/通道/指定标签值合组，跨规则路由树仍在本地范围外。
 - 实际自有HTTP webhook；邮件/电话/PagerDuty由Provider扩展，外部去重依赖接收方配合。
 - 鉴权query/SVG/dashboard；HTTP准入/协议/JSON/期限有界，出站直接传输，关闭排空自有后台。
 

@@ -1,6 +1,6 @@
 # Design: Metrics Monitoring and Alerting
 
-Core review: 2026-10-26. Source: chapter 21, lines 8997–9663. Final results:
+Latest review: 2026-11-04; core review: 2026-10-26. Source: chapter 21, lines 8997–9663. Results:
 [verification](../benchmarks/results.md); [chapter mapping](chapter21-review.md).
 
 ## Collection and transmission
@@ -19,6 +19,13 @@ Invalid payloads/cardinality failures enter a durable rejection ledger; temporar
 storage failures leave the queue cursor unchanged. Queue offset expiry fails
 closed. Chapter 20 transport uses actual independent HTTP brokers and disks,
 not simulated Kafka; it retains that project's single coordinator limitation.
+
+Queue payloads reuse the strict HTTP JSON parser: duplicate keys and non-finite
+numbers are rejected throughout the envelope. Excessive nesting is an invalid
+input path, not a reason to retry the same partition forever. The rejection
+ledger stores identity/hash/reason before commit. If that write fails, SQL/network
+errors occur or storage returns 5xx, the cursor stays uncommitted. A valid record
+later in the same page can still be ingested after a successful rejection.
 
 Reloadable target JSON supports labels, interval, timeout and retries. Invalid
 updates retain the last valid list and expose errors. Static consistent hashing
@@ -71,8 +78,9 @@ read snapshots and uses each rule's evaluation-version CAS before publishing
 state/events. It does not require an unchanged global Store revision.
 
 False conditions reset pending or resolve firing; no-data resets pending and
-keeps firing active, avoiding invented recovery. Notification groups use rule and
-configured labels. Unbatched superseded transitions may be cancelled; frozen
+keeps firing active, avoiding invented recovery. Notification groups use rule,
+destination, channel and configured label values; this is not a cross-rule routing
+tree. Unbatched superseded transitions may be cancelled; frozen
 batches retain their payload/key across retries. Per-group FIFO prevents recovery
 overtaking earlier retries. Leases fence delivery results; attempt count advances
 at claim, bounded backoff and five attempts leave exhausted work visibly dead.
