@@ -10,6 +10,9 @@
 补齐持久预生成瓦片与私有导航会话的后台路线更新。示例为CC0合成道路，不是真实导航数据。
 [English](README.md)。
 
+[2026-11-04源码核对](docs/open-source-review_cn.md)对照Valhalla和OSRM：
+113项测试在警告视为错误的条件下通过，两个真实进程示例通过。本轮未确认源码缺陷。
+
 ## 运行
 
 Python3.10+，只使用标准库（含SQLite RTree）。在本目录执行：
@@ -105,7 +108,7 @@ XYZ支持z0..21、经度环绕和极区钳制。冷渲染默认限制5000候选�
 绑定成功才启动后台组件，关闭排空处理器、复制、导航和维护；严格JSON/framing、私有正文前
 鉴权，直接传输拒绝重定向，仅在同region切换副本。系统DNS/SQLite/CPU不受套接字期限强制终止。
 
-最终数量和实测见[验证报告](benchmarks/results.md)、[本轮原始数据](benchmarks/review-2026-10-25.json)。
+最终数量和实测见[验证报告](benchmarks/results.md)、[本轮原始数据](benchmarks/review-2026-11-04.json)。
 2026-10-20的14项测试/72.17混合QPS为历史结果，不能冒充本轮或证明生产容量。
 [章节记录](docs/chapter19-review.md)与[设计](docs/design_cn.md)列明原书映射和范围：
 真实道路授权、生产转弯/公交、ML ETA、物理分片、HA、云地域及书中规模仍待扩展。

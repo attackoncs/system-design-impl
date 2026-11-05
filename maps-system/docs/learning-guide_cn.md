@@ -114,7 +114,40 @@ flowchart TD
 
 道路关闭也不同于速度很慢：closed边应被排除，不能靠设置一个很大耗时保证“总有路线”。
 
-导航会话还有另一类竞态：旧刷新工作算完时，用户位置可能已更新。它不能把旧origin和路线覆盖回来，阅读tracking时检查版本条件。
+## 微观四：旧后台刷新为什么不能覆盖新位置
+
+导航会话还有另一类竞态：旧刷新工作算完时，用户位置可能已更新。沿
+[NavigationTracker.run_once](../src/maps_service/tracking.py#L328)和
+[NavigationTracker.move](../src/maps_service/tracking.py#L221)各走一遍，注意两个阶段：
+
+1. 读取会话的revision和起点，在写锁外计算路线，避免慢搜索占住SQLite写者。
+2. 安装结果时用`WHERE id=? AND revision=? AND expires>?`再次校验；
+   用户移动已增加版本、删除或TTL已过期时，旧结果不能写回。
+
+```mermaid
+sequenceDiagram
+  participant W as 后台刷新
+  participant D as SQLite会话
+  participant U as 用户移动请求
+  W->>D: 读取起点A、revision r
+  W->>W: 在写锁外计算旧起点路线
+  U->>D: 按版本更新起点，提交revision r+1
+  W->>D: 按revision r和有效期尝试写回
+  D-->>W: 更新0行，丢弃旧结果
+  Note over D: 新位置与路线保持有效
+```
+
+这里比较的是读取时的版本，不能只在写回前再读一个最新版本去更新；后者会让旧起点
+计算结果覆盖新状态。会话有效期也要在获得写锁后检查，避免排队期间过期仍被恢复。
+SSE读取的是已接受的最新状态，允许合并中间变化，不是每个revision的持久事件回放。
+
+## 对照开源时看什么
+
+[open-source-review_cn.md](../docs/open-source-review_cn.md)链接了实际阅读的Valhalla瓦片/读取器和OSRM候选
+路线源码。读本地[route](../src/maps_service/navigation.py#L89)时先找共享搜索预算，
+再看[design_cn.md](../docs/design_cn.md)中的分类视图和细图搜索边界：导出z16/z12/z8三层数据
+不代表减少了搜索节点；单边避让候选也不是完整K最短路。先理解本地可运行闭环，
+再用上游源码补充真实分层及候选筛选机制。
 
 ## 看测试而非猜地图效果
 

@@ -1,0 +1,22 @@
+{
+  "scope": "synthetic roads, independent localhost primary and CLI precompute; not a live map provider",
+  "precomputed_tiles": 2,
+  "precomputed_objects": 4,
+  "precomputed_bytes": 4517,
+  "viewport_urls": 9,
+  "initial_edges": [
+    "ab",
+    "bc"
+  ],
+  "rerouted_edges": [
+    "ad",
+    "de",
+    "ec"
+  ],
+  "steps": 3,
+  "encoded_polyline": true,
+  "sse_revision": 2,
+  "png_bytes": 794,
+  "png_type": "image/png",
+  "session_removed": true
+}

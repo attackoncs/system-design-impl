@@ -1,6 +1,79 @@
 # Maps System verification
 
-## Core review — 2026-10-25 (Asia/Shanghai)
+## Source re-review — 2026-11-04 (Asia/Shanghai)
+
+Re-read chapter 19 and reviewed the current routing, telemetry, navigation, cache,
+archive and HTTP code through CodeGraph. The [source comparison](../docs/open-source-review_cn.md)
+links the Valhalla and OSRM code actually read and records local coverage and
+differences. No confirmed source defect or source/test change resulted this time.
+
+Python 3.13.9 / Windows 11 build 26100, standard library and SQLite RTree. Real
+network/process runs used approved unrestricted local execution; temporary paths
+were set to the workspace `.test-tmp`. Owned service processes stopped on exit;
+ignored `.runtime/lab-<uuid>/` diagnostic files remain.
+
+### Strict regression and executable examples
+
+From this project, with `PYTHONPATH=src`:
+
+```powershell
+python -W error -m unittest discover -s tests -v
+python -W error examples/adaptive_demo.py --output benchmarks/features-2026-11-04.json
+python -W error examples/network_demo.py
+```
+
+**113 tests passed in 19.507s, no skips, all warnings treated as errors.** The
+test groups remain the eight groups recorded in the 2026-10-25 section below.
+They include the independent 225-pair shortest-path oracle, graph/traffic snapshot
+consistency, geometry/PNG checks, bounded work, atomic ingestion and archives,
+private-session ownership/TTL/CAS, strict HTTP and actual independent processes.
+Controlled fault injection and real network checks retain their distinct scopes.
+
+The [adaptive example report](features-2026-11-04.json) records 2 precomputed tiles,
+4 objects / 4517 bytes, 9 neighboring URLs, and closure-triggered ab/bc → ad/de/ec
+replanning delivered as SSE revision 2. It returned 3 steps, encoded polyline and
+a 794-byte PNG, then deleted the private session successfully.
+
+The network example used 3 processes / 2 independent catalog databases. The
+initial ab/bc route had a 44.48s ETA; closure changed it to ad/de/ec. It referenced
+3 routing tiles, returned a 794-byte PNG and 9 vector features, then recovered
+public revision 2 through the gateway after stopping the primary. These are
+synthetic local roads, without a live map provider, cloud region or deployed CDN.
+
+### Mixed HTTP observation
+
+```powershell
+python -W error tools/benchmark.py --output benchmarks/review-2026-11-04.json
+```
+
+[Raw report](review-2026-11-04.json): 900 nodes / 3480 directed edges, import
+**141.418ms**, SQLite plus sidecars **1,024,000 bytes**. Four clients completed
+60 actual HTTP requests against an independent primary: **1.286s, 46.66 mixed QPS,
+zero errors**. The graph spans 42 fine routing tiles; a short route loaded 2.
+The benchmark ran separately after regression, without concurrent test traffic.
+
+| Operation | Count | p50 ms | p95 ms | Response bytes |
+| --- | ---: | ---: | ---: | ---: |
+| Corner route | 20 | 174.491 | 385.863 | 18054 |
+| GeoJSON tile | 20 | 17.186 | 30.299 | 433554 |
+| PNG tile | 20 | 19.540 | 183.898 | 1253 |
+
+Each case has only 20 samples; P95 uses sorted index floor(0.95×(n−1)). Cold and
+warm requests were not separated. Tile loading counts show lazy loading for this
+fixture, not hierarchical routing acceleration or a memory bound. This is a small
+localhost observation, with no before/after optimization experiment, sustained
+load, real-road comparison or global-capacity claim. Earlier results below keep
+their original dates and cannot establish a speedup or regression by themselves.
+
+### Documentation and static verification
+
+Ruff E9/F passed for `src`; all 31 project Python files parsed with Python 3.10
+syntax rules. Local-link checks passed for 534 links in 16 Markdown files, and
+benchmark JSON parsed successfully. The guide generator checked all 27 authored
+guides without drift; the map guide's 3 Mermaid diagrams rendered in a real
+headless browser. Scoped `git diff --check` passed. Source and test diffs are empty.
+
+## Historical core review — 2026-10-25 (Asia/Shanghai)
 
 Python 3.13.9 / Windows 11 build 26100, standard library only; SQLite RTree is
 available. Real localhost networking used an approved unrestricted local process

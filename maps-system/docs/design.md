@@ -1,5 +1,10 @@
 # Design: Google Maps reference
 
+The [2026-11-04 source comparison](open-source-review_cn.md) records the reviewed
+Valhalla and OSRM mechanisms and the local boundaries. Classified z16/z12/z8 views
+do not accelerate the fine-graph search; bounded alternatives do not implement
+MLD or complete K-shortest paths. No source change was required by this review.
+
 ## Responsibilities and storage
 
 | Module | Responsibility |

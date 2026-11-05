@@ -5,6 +5,10 @@ is batch location updates, navigation/ETA and map rendering. Use independent
 standard-library Python/SQLite components and a small licensed synthetic fixture;
 photos/business data and multi-stop optimization are outside the initial scope.
 
+The [2026-11-04 review](open-source-review_cn.md) maps these requirements to the
+current source and upstream references. All 113 strict-warning tests and both
+real-process examples passed; global production extensions remain out of scope.
+
 - Import a validated directed graph atomically, with WGS84 nodes, positive road
   length/mode speeds, toll flag and optional local/arterial/highway classification.
   Preserve one-way, mode and avoidance constraints; distinguish unreachable from
@@ -34,7 +38,7 @@ photos/business data and multi-stop optimization are outside the initial scope.
   Exclude credentials, locations, replay and navigation state. Do not access-log
   coordinates/tokens. Query-time retention is explicit, with physical cleanup lag.
 
-Acceptance: independent shortest-path oracle, actual PNG/GeoJSON, hierarchy,
+Acceptance: independent shortest-path oracle, actual PNG/GeoJSON, classified routing views,
 archive restart/immutability, traffic/expiry/reroute, private sessions and SSE,
 location concurrency/replay/retention, resource lifecycle and real independent
 process/network faults. Report measured scope. Licensed worldwide data, turn/transit

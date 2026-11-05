@@ -1,7 +1,7 @@
 # Tasks: Google Maps
 
 Source: root System Design Interview.md chapter 19, starting at line 7294.
-Core review date: 2026-10-25. Final test totals and measurements are recorded in
+Latest review date: 2026-11-04; prior core review: 2026-10-25. Test totals are recorded in
 [validation](../benchmarks/results.md), not inferred from implementation status.
 
 ## Completed reference work
@@ -28,11 +28,19 @@ Core review date: 2026-10-25. Final test totals and measurements are recorded in
   failover, no credential redirects and accepted-I/O shutdown draining.
 - [x] Credential-file ownership, bind-before-start helpers and retrying maintenance;
   synchronize bilingual READMEs/design/requirements/tasks and chapter mapping.
+- [x] Re-read chapter 19, compare pinned Valhalla/OSRM source and trace the current
+  routing, tracking, telemetry, archive and HTTP boundaries with CodeGraph.
+- [x] Repeat 113 tests with `-W error`, both real-process examples and the bounded
+  mixed HTTP measurement; record scope and raw results without a speedup claim.
+- [x] Document source-review conclusions and add the navigation CAS sequence to
+  the learning guide; synchronize bilingual documentation and project indexes.
 
 ## Evidence
 
 Current [report](../benchmarks/results.md) includes actual counts, real-process
-versus injected faults, commands and [dated raw data](../benchmarks/review-2026-10-25.json).
+versus injected faults, commands and [dated raw data](../benchmarks/review-2026-11-04.json).
+The [source comparison](open-source-review_cn.md) found no confirmed source defect
+in this review; the production extensions below remain open.
 Historical baseline on 2026-10-20: 14 tests in 8.650s; 225 node-pair Floyd–Warshall
 comparisons, 90 reads during eight swaps, real HTTP primary/replica/gateway.
 A 900-node/3480-edge synthetic graph measured 60 requests/four clients, zero

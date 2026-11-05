@@ -11,6 +11,10 @@ classified routing tiles and versioned GeoJSON/PNG maps. Includes precomputed
 persistent tiles and private navigation sessions with adaptive route updates.
 [中文](README_CN.md). Roads are synthetic CC0 fixtures, not real directions.
 
+The [2026-11-04 source review](docs/open-source-review_cn.md) compares Valhalla
+and OSRM with this implementation. All 113 tests passed with warnings treated as
+errors; the two real-process examples passed. No source defect was confirmed.
+
 ## Run
 
 Python 3.10+, standard library only (including SQLite RTree). From this directory:
@@ -135,7 +139,7 @@ and same-region failover reject redirects and never forward replica credentials
 to a redirect target. DNS/SQLite/CPU work cannot be forcibly stopped by socket timeouts.
 
 [Current validation](benchmarks/results.md) records final tests and dated
-[raw measurement](benchmarks/review-2026-10-25.json). The original 2026-10-20 run had
+[latest raw measurement](benchmarks/review-2026-11-04.json). The original 2026-10-20 run had
 14 tests and 72.17 mixed QPS; these are historical observations. See the
 [chapter review](docs/chapter19-review.md) and [design](docs/design.md) for coverage
 and limits. Licensed road ingestion, ML ETA, production transit/turn rules,
