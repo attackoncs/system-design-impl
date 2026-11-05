@@ -6,7 +6,7 @@ The lab has seven processes: one authoritative SQLite/HTTP service, two HTTP pro
 
 SQLite WAL with synchronous FULL stores profiles, registration time, seasons, absolute authoritative scores, unique match receipts, and contiguous event sequences for each score shard. Score changes, events and receipt commit in one transaction. A pre-commit failure rolls back all of them. A source lineage UUID and immutable shard/grace configuration survive restart. Missing/recreated authority state is not silently treated as the same dataset.
 
-The authority shares a read gate between rank queries and exclusively gates mutations, rebuilds and reconciliation. Internal event feeds bypass that lock so projectors can catch up while a public request waits for its barrier. Thus source scores cannot change between the phases of one global rank query. This deliberately trades throughput for an assessable snapshot model; multiple active authority processes or independently writing clients bypassing this coordinator are unsupported. Authority SQLite has no replication or automatic failover.
+The authority shares a read gate between rank queries and exclusively gates mutations, rebuilds and reconciliation. Rank queries may overlap; they are not serialized against one another. Internal event feeds and status bypass public operation capacity so projectors can catch up while a public request waits for its barrier. Thus source scores cannot change between the phases of one global rank query. This deliberately trades throughput for an assessable snapshot model; multiple active authority processes or independently writing clients bypassing this coordinator are unsupported. Authority SQLite has no replication or automatic failover.
 
 ## Trusted matches and monthly membership
 
@@ -55,7 +55,7 @@ The lab checks the server run ID before stopping an owned Redis and uses its ver
 
 ## Partitioning alternatives and limits
 
-Score-range partitions can derive rank from counts of higher partitions but require moving a player when a score crosses a boundary; dense score clusters also need range rebalancing. Hashing users avoids migration for ordinary increments but requires scatter/gather global counts and candidates. The extra lex index solves deterministic tie positions efficiently. This is manual application sharding, not Redis Cluster hash-slot distribution of a single giant sorted-set key.
+Score-range partitions can derive rank from counts of higher partitions but require moving a player when a score crosses a boundary; dense score clusters also need range rebalancing. Hashing users avoids migration for ordinary increments but requires scatter/gather global counts and candidates. The extra lex index solves deterministic tie positions efficiently. This is fixed application-level user-hash sharding across independent Redis primary/replica pairs, not Redis Cluster CRC16 hash-slot routing or automatic resharding of a single giant sorted-set key.
 
 A NoSQL score-sort index would also need write sharding for a hot monthly partition and cross-shard rank aggregation; eventual secondary-index visibility complicates read barriers. No DynamoDB, Cassandra, score-range migration or Redis Cluster implementation/benchmark is claimed. The code implements and validates the hash-sharded algorithm only.
 
@@ -105,3 +105,26 @@ not controlled speedup or25M-user/2500-QPS evidence. See
 Authority HA, automatic Redis election, TLS/full accounts, anti-cheat, online
 resharding, score-range/DynamoDB alternatives, achieved-time tie breaks and
 historical retention remain outside this bounded reference. No commit or push.
+
+## Source and contract review — 2026-11-05
+
+The chapter, CodeGraph call paths and the [pinned open-source comparison](open-source-review_cn.md)
+were checked against the journal, Redis projection, exact ranking and HTTP paths.
+No confirmed production-code defect was found in this review, so production code
+and tests were left unchanged. One complete strict acceptance run passed
+**72 tests in 36.409 seconds**, with `-W error` and no skips. This is one current
+run, not separate before/after measurements. Earlier 2026-10-27 numbers above
+are historical; current execution evidence is in the [validation report](../benchmarks/results.md).
+
+Each multi-phase ranking query holds a shared source gate and uses the same
+source heads plus stable Redis epochs throughout. Writes, reconciliation and
+rebuild take exclusive ownership; internal feed/status remains available outside
+public operation admission. This permits concurrent readers without mixing
+snapshots or preventing projection progress. The bounded profile LRU stores
+display names keyed by source revision and player ID, not Top10 scores.
+
+The book's score-range partitions and DynamoDB design are alternatives to the
+chosen hash-sharded solution, not additional mandatory backends. Fixed independent
+Redis pairs do not provide Redis Cluster routing, automatic migration or election.
+The existing single-authority, manual fencing and production-scale limitations
+remain unchanged; no new backend or speculative abstraction was added.

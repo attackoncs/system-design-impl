@@ -8,7 +8,7 @@ Based on Chapter 26 of the root-directory "System Design Interview.md". The goal
 4. Tied scores share the competition rank `1 + count of strictly higher scores`; e.g., 1, 2, 2, 4. Display order breaks ties by ascending user ID; Top 10 holds exactly at most 10 people and does not expand tied groups.
 5. The neighbor window is at most four display positions before and after, not four distinct score groups; it returns the competition rank and a unique display position.
 6. The SQLite authoritative match/score log provides durable deduplication, and the Redis sorted-set is a rebuildable projection. Scores, events, and idempotent receipts commit in the same transaction.
-7. Redis is sharded by user hash, with real primary/replica, AOF, and journal rebuild; partial rankings with a missing shard are forbidden, and standby nodes are not automatically guessed and promoted.
+7. Fixed application-level user hashing routes to independent Redis primary/replica pairs, with real replication, AOF and journal rebuild; this is not Redis Cluster CRC16 routing or automatic resharding. Partial rankings with a missing shard are forbidden, and standby nodes are not automatically guessed and promoted.
 8. Reads and writes expose the distinction between durable acceptance and completed projection; normal writes wait for a short projection barrier, during failures the write is saved and answered with 202, and reads that cannot establish a complete barrier return 503.
 9. Validate concurrent duplicates, ties/zero scores, cross-month lateness, commit rollback, real primary process exit/manual promotion/AOF recovery, independent reconciliation and rebuild; measure real latency.
 
@@ -18,3 +18,14 @@ The reference capacity limit is 10,000 registered players, with scores up to 1 b
 Shared ranking snapshots, exact heads/epochs, bounded RPC/HTTP/RESP, revision
 profile cache, frozen journal values, batched zero membership, stale-poll fences
 and idle-AOF preservation verified. Production limitations remain documented.
+
+2026-11-05 acceptance: a single complete run passed **72 tests in36.409s**,
+`-W error`, no skips. Chapter/CodeGraph/open-source review found no confirmed
+production-code defect; no production code or tests were changed this round.
+Concurrent ranking readers share the source gate and verify identical source
+heads/stable Redis epochs across phases; writes, reconciliation and rebuild are
+exclusive. Internal feed/status bypass public operation capacity. The bounded
+profile cache stores names, not Top10 scores. Score-range/DynamoDB designs are
+alternatives, not simultaneously required backends. Earlier measurements remain
+historical; see [source comparison](open-source-review_cn.md) and
+[current validation](../benchmarks/results.md).

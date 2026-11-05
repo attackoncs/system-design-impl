@@ -17,8 +17,8 @@
 ```powershell
 $env:LB_REDIS_BINARY = 'C:/path/to/redis-server.exe'
 python examples/network_demo.py
-python -m unittest discover -s tests -v
-python tools/benchmark.py --output benchmarks/results.json
+python -W error -m unittest discover -s tests -v
+python tools/benchmark.py --output .runtime/benchmark.json
 ```
 
 Linux 可使用 PATH 上的 Redis 或设置同名环境变量。Windows 使用 WSL 时，改用以下配置，不同时设置 LB_REDIS_BINARY：
@@ -74,7 +74,23 @@ python -m gaming_leaderboard.cli projection --config .runtime/secrets.json --sha
 
 参考上限 10000 注册玩家、单人 10 亿积分。无权威 SQL 复制、自动切主、完整账号/TLS、反作弊、在线扩分片或历史自动清理；本机结果不代表 2500 万月活或 2500 峰值写 QPS。更多细节见 [设计文档](docs/design.md)。
 
-## 第26章工程复核（2026-10-27）
+## 开源及实现复核（2026-11-05）
+
+有界核心路径已覆盖，本轮未发现需要修复的确认生产代码缺陷，生产代码和测试保持不变。
+结合CodeGraph，对照WB-Games排行榜库与Redis8.0.5真实源码。
+**72项测试通过，36.409秒**，启用 `-W error`、无跳过，使用真实WSL Redis8.0.5，
+包括主进程退出/人工提升、AOF及权威日志重放。
+
+七进程示例得到名次 `[1,1,3,3]`、积分 `[1,1,0,0]`，检测重复且独立核对一致。
+60场基准比赛全部完成投影，4客户端Top10和个人邻居查询后核对仍一致。
+这些本地小样本不构成受控提速或生产SLA证明。
+
+本地采用应用层用户哈希、独立Redis主从对，不是原生Redis Cluster的CRC16槽迁移。
+分数区间分片和DynamoDB属于原章备选方案，本轮未额外叠加后端。
+详见[固定源码对照](docs/open-source-review_cn.md)、[章节核对](docs/chapter26-review.md)
+及[实测报告](benchmarks/results.md)。
+
+## 历史工程复核（2026-10-27）
 
 章节核心流程已覆盖：可信胜局+1、月赛零分成员、Top10、同分竞赛名次、个人精确位置
 和前后四个显示行。拆分日志契约、RESP、Lua脚本、候选校验、资料缓存、传输及runtime。

@@ -105,6 +105,47 @@ Journal提交前异常，比赛、积分及分片头都应回滚。[JournalTests
 
 Redis丢失时重建投影需要位置和epoch隔离。真实Lua与恢复行为见[ProjectionNetworkTests.test_real_lua_prevalidation_reset_fence_and_idle_aof](../tests/test_projection_network.py#L17)，需要README列出的真实Redis环境。
 
+## 微观三：跨分片查询如何读到同一个比赛前缀
+
+从[Service.query](../src/gaming_leaderboard/service.py#L191)进入
+[Service._snapshot](../src/gaming_leaderboard/service.py#L54)：先捕获赛季、各分片heads、
+lineage与资料修订号。这个查询持有共享源读门；其他查询可以同时读取，源写入必须等待。
+若新月尚未初始化，先退出读门，再独占补齐零分成员，最后重新捕获快照，避免读锁升级。
+
+```mermaid
+flowchart TD
+  Q["排名请求"] --> S["共享读门内捕获赛季和源heads"]
+  S --> W["并行读取各投影进度；等待源屏障"]
+  W --> R{"所有分片准备完成？"}
+  R -->|否| F["503；不返回部分完整榜"]
+  R -->|是| E["固定各分片epoch"]
+  E --> P["并行查询：Top10或个人与邻居及计数"]
+  P --> V{"每阶段精确heads和epoch一致？"}
+  V -->|否| F
+  V -->|是| M["合并候选；rank与position分开计算"]
+  M --> N["按profile_revision读取姓名缓存"]
+  N --> O["返回完整榜或窗口；释放共享读门"]
+  I["内部feed不占公开操作容量"] -.-> W
+```
+
+[Service._ready](../src/gaming_leaderboard/service.py#L139)等待进度；
+[Service.scatter](../src/gaming_leaderboard/service.py#L174)并行请求每个分片，
+[Service._envelope](../src/gaming_leaderboard/service.py#L103)在各阶段检查源身份、精确位置和epoch。
+查询中途发生reset，不能把新旧Redis代混合成一个排名。
+[ServiceTests.test_epoch_change_between_rank_phases_fails_closed](../tests/test_service_reliability.py#L146)
+与[ServiceTests.test_future_projection_head_cannot_mix_with_source_snapshot](../tests/test_service_reliability.py#L160)
+验证这些拒绝路径；它们使用SQL支撑的RPC替身，便于精确控制阶段，并不冒充Redis网络实验。
+
+个人名次的关键算式是 `rank = 1 + 各分片严格更高分人数之和`；显示position还计入同分中ID更小的人。
+例如分数`3,3,1`的第三人前面有两人，因此rank为3；前两人共享rank1，但position分别为1、2。
+Top10、窗口和计数仍从Redis查询，缓存仅存姓名，不会缓存一份可能过期的Top10积分。
+[ServiceTests.test_readers_overlap_and_writer_waits_for_complete_snapshot](../tests/test_service_reliability.py#L113)
+可观察多个读者重叠、写者等待完整查询；真实七进程的同分/邻居验证见
+[NetworkTests.test_ties_global_rank_neighbors_and_authenticated_results](../tests/test_network.py#L15)。
+
+本地按用户哈希选择独立Redis主从对，不是把一个巨大zset自动拆进Redis Cluster槽。
+原章的范围分片和DynamoDB是备选架构，固定源码和边界见[open-source-review_cn.md](../docs/open-source-review_cn.md)。
+
 ## 自查与练习
 
 - **为什么不能直接接受客户端points=100？** 可信输入是受规则约束的比赛结果，积分由服务端生成。

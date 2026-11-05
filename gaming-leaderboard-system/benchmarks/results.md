@@ -1,4 +1,89 @@
-# Review — 2026-10-27
+# Source and implementation review — 2026-11-05
+
+Python3.13.9, Windows11 build26100, actual Redis8.0.5 in WSL Ubuntu-26.04.
+The existing executable and shared-library path were verified locally; no
+Redis installation or existing service configuration was changed.
+[Chapter review](../docs/chapter26-review.md),
+[open-source audit](../docs/open-source-review_cn.md),
+[raw benchmark](review-2026-11-05.json),
+[raw demo](features-2026-11-05.json).
+
+## Correctness and retained-disk recovery
+
+**72 tests passed in36.409s**, `-W error`, no skips. One current full run;
+production and test source unchanged. Existing tests cover trusted ingestion,
+concurrent duplicate matches, commit rollback, UTC months/late receipts,
+cross-shard ties/windows, coherent shared reads, profile-cache invalidation,
+real Lua prevalidation, stale reset/poll epochs and idle AOF behavior.
+
+Integration uses four actual Redis processes, two projection HTTP processes and
+one authority. Verified primary hard exit and manual promotion after fencing,
+AOF reopening before projector repair, Redis dataset loss/replay and independent
+SQL/Redis reconciliation. RESP in-memory tests and SQL-backed RPC unit tests
+make fault phases repeatable, but do not establish these real-Redis results.
+All experiments use retained local disks, not host/disk loss or consensus failover.
+
+## Seven-process demo
+
+Actual ranks[1,1,3,3], scores[1,1,0,0]; duplicate detected, first match fully
+projected and reconciliation matched. Observed551.54ms covers two accepted
+wins, one duplicate and the query; it excludes startup/registration and the later
+reconciliation. This is a scenario time, not one-request latency.
+
+## HTTP/Redis measurement
+
+| Metric | Observed |
+| --- | ---: |
+| Processes / user shards / replicas | 7 / 2 / 2 |
+| Registered players / fully projected unique wins | 21 / 60 |
+| Sequential write seconds / projected wins per second | 7.728 / 7.76 |
+| Write p50 / p95 milliseconds | 140.650 / 185.539 |
+| Requests per query kind / clients | 40 / 4 |
+| Top10 p50 / p95 milliseconds | 127.066 / 156.015 |
+| Top10 requests per second | 30.42 |
+| Personal rank with neighbors p50 / p95 milliseconds | 216.349 / 262.949 |
+| Rank/window requests per second | 17.84 |
+| Independent SQL/Redis reconciliation | Matched |
+| Sampled authority SQLite main-file bytes | 81,920 |
+
+Tests completed before the demo; demo and benchmark ran sequentially. Writes
+wait for source-head projection barriers. Reads use shared source snapshots and
+real cross-shard queries; the score board is not served from a result cache.
+Name and OS caches, WSL and desktop activity can affect this short sample.
+Query p95 uses sorted index37 of40; write p95 uses index56 of60.
+The SQLite main-file count excludes WAL/SHM, Redis AOF and logs, so it is not
+total storage. The benchmark checks nonempty query rows and final independent
+full-board reconciliation; detailed tie/window correctness is tested separately.
+
+There is no controlled before/after comparison, sustained capacity or25M-player/
+2500-score-QPS proof. The reference uses application user hashing, not Redis
+Cluster slot migration. Redis replication is asynchronous and promotion is
+manually fenced; the SQLite authority has no replicated HA. Owned processes
+stop while private configs, AOF, journal and logs remain in ignored
+`.runtime/lab-*` directories. No cloud services were used.
+
+## Static and documentation checks
+
+All project source passed Ruff E9/F. All30 project Python files parse with
+Python3.10 syntax rules. The16 reviewed Markdown files contain529 valid local
+links; all27 authored guides match generated output. All three chapter26
+Mermaid diagrams rendered in an actual headless Edge browser, and scoped
+`git diff --check` passed. Production and test directories have no changes.
+
+## Reproduce without replacing historical evidence
+
+Configure the real Redis executable or WSL paths from the README. From the
+project directory, set `PYTHONPATH=src` and accessible TEMP/TMP if needed:
+
+```powershell
+python -W error -m unittest discover -s tests -v
+python -W error examples/network_demo.py
+python -W error tools/benchmark.py --output .runtime/benchmark.json
+```
+
+---
+
+# Historical review — 2026-10-27
 
 72tests39.110s,-Werror,no skips.Real Redis8.0.5/WSL and seven processes.
 60fully projected matches/21players:8.153s,7.36/s,p50/p95141.863/197.049ms.

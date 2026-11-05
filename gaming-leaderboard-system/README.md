@@ -17,8 +17,8 @@ From this directory, point the lab to your installed executable:
 ```powershell
 $env:LB_REDIS_BINARY = 'C:/path/to/redis-server.exe'
 python examples/network_demo.py
-python -m unittest discover -s tests -v
-python tools/benchmark.py --output benchmarks/results.json
+python -W error -m unittest discover -s tests -v
+python tools/benchmark.py --output .runtime/benchmark.json
 ```
 
 On Linux, Redis on PATH or `LB_REDIS_BINARY=/path/to/redis-server` works. For Windows with Redis inside WSL, use these **instead of** `LB_REDIS_BINARY`:
@@ -83,13 +83,32 @@ All registered players, including zero-score players, enter the month. Rank is `
 - New events may arrive until month end + 48 hours, exclusively. A closed/deadline-passed month rejects new events; an already accepted receipt can still replay. Close persists a board digest and Top 10. History is not automatically purged.
 - SQLite commits the score, per-shard event and receipt together. Redis receives absolute scores with a durable cursor, not unguarded increments. Source lineage, ownership, checksums and offsets are verified.
 - A successful normal score request returns 200 with `projected=true`. During projection outage it can return **202 with durable=true/projected=false**: retrying the same match is safe. Ranking reads wait for every shard's authority-head barrier or return 503; they never return partial/stale rankings as complete.
-- The authority serializes public writes and multi-phase global reads to provide this barrier. Internal feeds stay available while reads wait. This limits throughput and assumes one active authority process.
+- Rank queries share a source read gate through all query phases; source writes, reconciliation and rebuilds take exclusive ownership. Internal feeds stay available while reads wait. This coherent barrier limits throughput and assumes one active authority process.
 - Redis pairs use AOF and asynchronous replication. Failover is **manual and fenced**: stop the old primary, promote its replica, then bring the old node back as a replica. Two reachable masters fail closed. No Sentinel/election is provided. Missing projected data replays from authority; a changed authority lineage requires an explicit rebuild.
 - GET `/internal/status` on authority/projectors requires the internal token and exposes source heads, projection position/lineage, poll time/errors. Projection query/feed routes are internal-only. Redis namespaces isolate rebuild/reset; tests only flush wholly owned disposable instances.
 
 The reference supports 10000 registered players and at most 10^9 wins each. Catalog/journal SQLite is not replicated, and no game anti-cheat, full account auth, TLS, online sharding, multi-host HA or automatic history/log cleanup is supplied. No production 25M-user or 2500-score-QPS claim is made. Details: [design](docs/design.md).
 
-## Chapter 26 engineering review — 2026-10-27
+## Source and implementation review — 2026-11-05
+
+The bounded core paths are present; this review found no confirmed production-code
+defect and leaves production code and tests unchanged. Compared actual
+WB-Games leaderboard and Redis8.0.5 source with CodeGraph's local call paths.
+**72 tests passed in36.409s**, with `-W error` and no skips, using actual Redis8.0.5
+under WSL, including primary crash/manual promotion, AOF and journal replay.
+
+The seven-process demo produced ranks `[1,1,3,3]`, scores `[1,1,0,0]`, detected
+the duplicate and matched independent reconciliation. The60-match benchmark
+projected every accepted result; four-client Top10 and neighbor queries also
+reconciled. These are local samples, not a controlled speedup or production SLA.
+
+Local partitioning is application-level user hashing across independent Redis
+pairs. It does not implement Redis Cluster CRC16 slots, score-range migration or
+DynamoDB. Those are alternatives discussed in the chapter. See
+[pinned source comparison](docs/open-source-review_cn.md),
+[chapter review](docs/chapter26-review.md) and [measurements](benchmarks/results.md).
+
+## Historical engineering review — 2026-10-27
 
 The core chapter flows are present: trusted +1 wins, monthly zero-score
 membership, Top10, shared competition ranks, exact individual positions and
