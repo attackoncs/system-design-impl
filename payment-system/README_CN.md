@@ -17,12 +17,12 @@ $env:PYTHONPATH = 'src'
 New-Item -ItemType Directory -Force .runtime/tmp | Out-Null
 $env:TEMP = (Resolve-Path .runtime/tmp).Path
 $env:TMP = $env:TEMP
-python -m unittest discover -s tests -v
+python -W error -m unittest discover -s tests -v
 python examples/network_demo.py
-python tools/benchmark.py --payments 20 --clients 4
+python tools/benchmark.py --payments 20 --clients 4 --output .runtime/benchmark.json
 ```
 
-48项测试包括5项独立进程HTTP测试。演示自动启动并清理自己的四个进程，完成收款10000美分、出款3000美分、退款2000美分，核验最终可用余额5000美分、5笔账本事务及供应商对账。演示退出后删除临时数据库；压测结果保存在 `benchmarks/latest.json`。
+48项测试包括5项独立进程HTTP测试。演示自动启动并清理自己的四个进程，完成收款10000美分、出款3000美分、退款2000美分，核验最终可用余额5000美分、5笔账本事务及供应商对账。演示退出后删除临时数据库；按日期保留的证据见实测报告，重新压测使用独立输出路径。
 
 如需保留数据库并在浏览器体验模拟托管收银台：
 
@@ -67,7 +67,7 @@ python -m payment_system.cli worker --config .runtime/private-config.json
 
 操作、钱包、平衡分录及outbox在同一SQLite事务提交。入账触发器要求借贷相等，已入账分录禁止修改或删除。供应商交易ID关联最终分录。
 
-工作进程先查询PSP，只在明确404时用原操作ID创建。超时保留 `UNKNOWN`，出款/退款冻结金额不会自动释放。五次连续通信失败进入死信并生成人工复核；正常等待用户支付的轮询不消耗失败次数。租约过期后使用新令牌认领，旧工作进程不能确认新认领；供应商及本地账本的唯一ID约束防止重叠执行重复生效。
+工作进程先查询PSP，只在明确404时用原操作ID创建。超时保留 `UNKNOWN`，出款/退款冻结金额不会自动释放。累计五次计入预算的失败进入死信并生成人工复核；正常PENDING轮询既不增加，也不清零失败计数，人工重试才重置。总claim包含正常轮询，不是最多执行五次。租约过期后使用新令牌认领，旧工作进程不能确认新认领；供应商及本地账本的唯一ID约束防止重叠执行重复生效。
 
 回调校验原始请求字节的HMAC-SHA256和五分钟时间窗口，持久化去重并检查供应商版本，拒绝伪造签名，同事件ID不同内容返回409。较旧回调被忽略，金额/身份不符或终态冲突进入复核，不更改资金。内部事件采用至少一次投递，消费者持久化去重，不宣称网络恰好一次。
 
@@ -87,11 +87,23 @@ python -m payment_system.cli worker --config .runtime/private-config.json
 
 ## 实测与边界
 
-详见[设计文档](docs/design.md)及[测试/压测报告](benchmarks/REPORT.md)。本机Windows、20笔支付、4个并发客户端的样本为 **6.67笔/秒**，从创建到模拟批准并确认成功的p95为 **697.34毫秒**；尚未达到或证明原书约10 TPS的目标。
+详见[设计文档](docs/design.md)及[测试/压测报告](benchmarks/REPORT.md)。2026-11-05本机Windows、20笔支付、4个并发客户端的样本为 **6.33笔/秒**，从创建到模拟批准并确认成功的p95为 **732.89毫秒**；计时不含启动与最终回调/outbox/对账排空，不构成原书约10 TPS或生产容量证明。
 
 权威库是单SQLite WAL，写事务串行；四进程验证了网络和持久化重启，未实现权威库复制、自动故障切换或跨地域可用性。无真实PSP、PCI认证、真实银行结算、多币种、手续费、税费、拒付、跨商户原子外部扣款、商户开户或生产级凭据生命周期。模拟PSP上限10000个操作，供应商对账采用有界完整快照，大历史需要分页/流式对账及更完整的运维设计。
 
-## 第27章工程复核（2026-10-27）
+## 开源及契约复核（2026-11-05）
+
+结合CodeGraph，对照Hyperswitch/TigerBeetle实际源码。本轮未发现新的确认代码缺陷，
+生产代码和测试保持不变。**48项测试通过，22.021秒**，启用 `-W error`、无跳过，
+包括5项真实四进程HTTP测试；两个示例和20笔收款基准通过，账本平衡、独立对账一致。
+全部资金仍为模拟。
+
+文档已区分累计失败预算与总claim、30秒网络租约与辅助方法默认2秒，
+以及原子本地受理与逐笔外部支付。可信checkout支持1..20订单，不是跨商户原子PSP扣款。
+详见[固定源码对照](docs/open-source-review_cn.md)、[章节记录](docs/chapter27-review.md)
+和[验证报告](benchmarks/REPORT.md)。
+
+## 历史工程复核（2026-10-27）
 
 新增可信订单编排 `POST /internal/checkouts`，正文 `{checkout_id,orders}`，每次1..20笔；
 订单字段为merchant/order_id/amount/currency，金额仍为USD整数美分。只允许内部令牌，

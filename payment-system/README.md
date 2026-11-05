@@ -17,12 +17,12 @@ $env:PYTHONPATH = 'src'
 New-Item -ItemType Directory -Force .runtime/tmp | Out-Null
 $env:TEMP = (Resolve-Path .runtime/tmp).Path
 $env:TMP = $env:TEMP
-python -m unittest discover -s tests -v
+python -W error -m unittest discover -s tests -v
 python examples/network_demo.py
-python tools/benchmark.py --payments 20 --clients 4
+python tools/benchmark.py --payments 20 --clients 4 --output .runtime/benchmark.json
 ```
 
-The reviewed suite has47 cases, including five multi-process HTTP tests. The demo starts and stops only its own four processes, creates an ephemeral private configuration, pays in 10,000 cents, pays out 3,000, refunds 2,000 and verifies a 5,000-cent wallet and matching reconciliation. Temporary demo databases are removed on exit. `benchmarks/latest.json` records the measured sample, not a capacity guarantee.
+The reviewed suite has48 cases, including five multi-process HTTP tests. The demo starts and stops only its own four processes, creates an ephemeral private configuration, pays in 10,000 cents, pays out 3,000, refunds 2,000 and verifies a 5,000-cent wallet and matching reconciliation. Temporary demo databases are removed on exit. Dated evidence is retained in the validation report; use a separate output path for new measurements.
 
 For persistent interactive use, generate a private config once:
 
@@ -70,7 +70,7 @@ Use the distinct admin credential for these routes:
 | POST | `/admin/retry/<operation>` with `{}` | Requeue an unresolved operation with its original PSP identity |
 | POST | `/admin/retry-job` | `{"job_id":"notify:<operation>"}`; requeue a dead job without changing event identity |
 
-Workers query before creating at the PSP; only a definitive 404 allows creation. Five consecutive transport failures cause a dead job and manual review. Pending-provider polling does not consume this failure budget. A30-second HTTP claim lease with token and expiry fencing prevents an expired worker from acknowledging a newer claim; stable PSP IDs and local unique ledger IDs also make overlapping executions harmless. Retry uses the original operation, never a new charge key. Confirm provider state and investigate reviews before manually retrying. Manual reviews are inspection records in this reference, with no resolution UI or automated financial correction.
+Workers query before creating at the PSP; only a definitive 404 allows creation. Five cumulative counted failures cause a dead job and manual review. Normal PENDING polling neither consumes nor clears prior failures; administrative retry resets the budget. Total claims include PENDING polls and are not capped at five. A30-second HTTP claim lease with token and expiry fencing prevents an expired worker from acknowledging a newer claim; stable PSP IDs and local unique ledger IDs also make overlapping executions harmless. Retry uses the original operation, never a new charge key. Confirm provider state and investigate reviews before manually retrying. Manual reviews are inspection records in this reference, with no resolution UI or automated financial correction.
 
 Terminal operation, ledger, wallet and notification-outbox changes commit together. Webhooks use HMAC-SHA256 over timestamp plus exact request bytes, a five-minute freshness window, durable event deduplication and revision checks. Internal event delivery is at least once, with a durable idempotent consumer; this does **not** claim exactly-once network delivery.
 
@@ -84,11 +84,26 @@ PSP fault injection uses its `/admin/control` route and all four fields:
 
 ## Evidence and limits
 
-See [design](docs/design.md) and [measured verification](benchmarks/REPORT.md). A 20-payment/4-client Windows sample completed at **6.67 pay-ins/s**, end-to-end p95 **697.34 ms**. This does not meet or establish the book's roughly 10 TPS target.
+See [design](docs/design.md) and [measured verification](benchmarks/REPORT.md). The 2026-11-05 20-payment/4-client Windows sample completed at **6.33 pay-ins/s**, create/checkout/settlement p95 **732.89 ms**. Startup and final callback/outbox/reconciliation drain are excluded. This does not establish the book's roughly 10 TPS target or production capacity.
 
 The payment authority is one SQLite WAL database, with serialized writes, not a replicated financial database. Multiple processes validate networking and restart behavior, not regional availability or automatic failover. No real PSP, PCI certification, bank settlement, FX, fees, tax, chargebacks, merchant onboarding, distributed transactions, production monitoring or production authorization lifecycle is implemented. The provider is capped at 10,000 operations, reconciliation reads a full bounded provider snapshot and the ledger HTTP view is limited to 100 transactions. Large histories require pagination/streaming and a stronger operational design.
 
-## Chapter 27 engineering review — 2026-10-27
+## Source and contract review — 2026-11-05
+
+Compared actual Hyperswitch/TigerBeetle source and CodeGraph's local paths.
+No confirmed new production-code defect was found; production code and tests
+are unchanged. **48 tests passed in22.021s**, with `-W error`, no skips and five
+actual four-process HTTP tests. Both demos and the20-payment benchmark passed
+with balanced ledgers and independent reconciliation. All funds remain simulated.
+
+Documentation now distinguishes cumulative failure budget from total claims,
+30-second network leases from the two-second direct helper default, and atomic
+local checkout acceptance from independent external payments. Trusted checkout
+accepts1..20 orders; it does not provide an atomic multi-merchant PSP charge.
+See [pinned source comparison](docs/open-source-review_cn.md),
+[chapter review](docs/chapter27-review.md) and [measurements](benchmarks/REPORT.md).
+
+## Historical engineering review — 2026-10-27
 
 Added trusted checkout orchestration: `POST /internal/checkouts` accepts
 `{checkout_id,orders}` with1..20 orders. Each order contains merchant,order_id,

@@ -1,4 +1,63 @@
-# Chapter 27 review — 2026-10-27
+# Chapter 27 source and contract review — 2026-11-05
+
+Chapter26 acceptance is complete; no unfinished code or verification work was
+carried forward. Read Chapter27 (local lines13482–14170), compared actual pinned
+Hyperswitch/TigerBeetle source and inspected CodeGraph paths for checkout,
+operation/receipt identity, ledger/wallet, jobs, provider/worker, signed callbacks,
+outbox consumer, reconciliation, HTTP and lifecycle ownership.
+[Source audit and chapter matrix](open-source-review_cn.md).
+
+The bounded core implementation is present; no confirmed new production-code
+defect was found. Production and test source are unchanged. Local acceptance
+uses one SQLite transaction for each checkout batch and for final operation/
+ledger/wallet/outbox updates; external merchant orders still settle independently.
+UNKNOWN and dead jobs cannot by themselves authorize releasing payout/refund holds.
+Reconciliation records differences and never auto-corrects money.
+
+Corrected substantive documentation drift:48 current tests, not47; the retry
+budget accumulates counted failures, not necessarily consecutive errors.
+Normal PENDING polling neither increments nor clears failures, while total
+attempts include those polls; administrative retry resets the budget. The
+network worker's lease is30s with a shared20s I/O budget, distinct from the
+direct helper's2s default. Requirements now distinguish supported1..20-order
+atomic local acceptance from unsupported atomic multi-merchant external charges.
+
+Current strict acceptance: **48 tests passed in22.021s**, `-W error`, no skips.
+This is one full run, not a before/after comparison. Five tests use four actual
+loopback HTTP processes; worker/callback unit tests with controlled RPC are
+supporting evidence, not real PSP integration. All money, checkout choices and
+bank destinations are synthetic; no card/bank data or real provider was used.
+
+Both actual four-process examples passed. Original flow: payin10000, payout3000,
+refund2000, available5000/held0, five ledger transactions, three unique PSP
+operations and three consumer events; reconciliation/audit matched. Batch flow:
+two merchant orders SUCCEEDED/FAILED independently, same IDs on retry, payout300/
+refund200, available500/held0, other wallet0, five ledger transactions and four
+unique PSP operations. [Feature JSON](../benchmarks/features-2026-11-05.json).
+
+Twenty pay-ins/four clients:3.159829s,6.329456 completed/s, p50/p95
+562.813/732.890ms. Wallet2000/held0,20 provider operations,20 consumer events,
+zero pending provider callbacks and matching reconciliation/audit.
+[Raw benchmark](../benchmarks/review-2026-11-05.json),
+[measurement scope](../benchmarks/REPORT.md). Startup and final outbox/callback/
+reconciliation drain are excluded; this is not a speedup or production10TPS proof.
+
+Graph refresh completed with0 files re-parsed and no errors because no source
+changed. Explicit dependency scope operations.py/ledger.py/worker.py returned
+16 target nodes,16 two-hop impacted nodes and7 additional files, no truncation;
+568 unresolved call sites remain. The tool's changed-file labels denote manual
+review targets here, not a code diff. The old approval-blocked note below is
+historical; current graph access succeeded. Static results do not prove full
+coverage or runtime correctness.
+
+Updated bilingual documentation, root indexes and the macro-to-source guide.
+No staging, commit or push. Real PSP/risk/AML, PCI certification, bank settlement,
+authority HA, TLS, FX/fees/taxes/chargebacks, financial resolution UI and
+large-history streaming/retention remain outside the validated reference.
+
+---
+
+# Historical Chapter 27 review — 2026-10-27
 
 Read local book lines13482–14170. Pay-in/payout, hosted token simulation,
 partial refunds, double-entry ledger, wallet, retries, outbox and reconciliation

@@ -11,7 +11,7 @@ Source: Chapter 27 of `System Design Interview.md` in the root directory. The or
 - Asynchronous reconciliation across provider statements, local operations, ledger and wallet; differences are recorded rather than auto-corrected.
 - Tests failure recovery through independent-process HTTP, records measured performance and boundaries such as single-authority SQLite and no real PSP/HA.
 
-This reference implementation simplifies to one payment per order; combined multi-order payment, chargebacks, tax, FX and real bank settlement are out of scope.
+This reference uses one payment per merchant order and supports a trusted checkout containing 1..20 orders. All local operation IDs and execution jobs are accepted in one transaction, while each order authorizes and settles independently. Atomic external charging across merchants, chargebacks, tax, FX and real bank settlement are out of scope.
 
 ## 2026-10-27 review
 
@@ -22,3 +22,11 @@ This reference implementation simplifies to one payment per order; combined mult
 - [x] Strict bounded direct HTTP, bind-before-background startup and cancellation/drain.
 - [x] 48tests21.561s, four-process demos and20payment/four-client measurements.
 - [ ] Production provider/risk/banking, HA, security, streaming/retention and finance resolution.
+
+## 2026-11-05 source and contract review
+
+Chapter, pinned GitHub source and CodeGraph review found no confirmed production-code defect; this round changes neither production code nor tests. One complete strict run passed **48 tests in22.021s**, with `-W error` and no skips. The 2026-10-27 results above remain historical.
+
+Jobs accumulate counted communication/processing failures until an administrative retry resets the count. Normal PENDING polling neither adds to nor clears that count; five counted failures dead-letter the job. The direct claim helper defaults to a two-second lease, while the HTTP worker claims for 30 seconds and shares a 20-second I/O budget per task. Lease fencing and provider/ledger idempotency remain separate protections. Trusted multi-order checkout provides atomic local acceptance, not an atomic external multi-merchant payment.
+
+See [source and chapter comparison](open-source-review_cn.md) and [current validation](../benchmarks/REPORT.md). All funds remain simulated; real PSP, banking and production HA limits are unchanged.

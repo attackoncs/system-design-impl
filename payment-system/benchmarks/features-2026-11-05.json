@@ -1,0 +1,18 @@
+{
+  "processes": 4,
+  "executor_threads": 4,
+  "checkout_orders": 2,
+  "same_operation_ids_on_retry": true,
+  "order_states": [
+    "SUCCEEDED",
+    "FAILED"
+  ],
+  "wallet_available": 500,
+  "wallet_held": 0,
+  "other_wallet_available": 0,
+  "posted_transactions": 5,
+  "unique_provider_operations": 4,
+  "reconciliation_matches": true,
+  "balanced_ledger": true,
+  "scope": "localhost simulated PSP only; no real funds or card data"
+}

@@ -2,7 +2,7 @@
 
 Source: Chapter 27 of `System Design Interview.md` in the root directory, chapter start line 13482.
 
-Status: Reference implementation completed; 48 tests pass, a four-process HTTP demo and actual load test have been run. Uses only a local mock PSP; no real payment rails, replica/HA of the authority store, or production-scale validation.
+Status: source/contract review completed (2026-11-05); 48 tests passed in22.021s. Both four-process examples and the local benchmark passed. No production or test code changed this round; all payments use a local mock PSP, without real rails or authority HA.
 
 ## Scope
 
@@ -37,3 +37,11 @@ Single-currency e-commerce pay-in, payout to sellers, third-party PSP interface 
 - [x] Strict bounded direct HTTP, bind-before-background startup and cancellation/drain.
 - [x] 48tests21.561s, four-process demos and20payment/four-client measurements.
 - [ ] Production provider/risk/banking, HA, security, streaming/retention and finance resolution.
+
+## 2026-11-05 source and contract review
+
+- [x] Read the chapter, inspect CodeGraph paths and compare pinned Hyperswitch/TigerBeetle source; [mechanisms and boundaries](open-source-review_cn.md).
+- [x] Review checkout, operation/receipt identity, balanced ledger/wallet, refund holds, leases, callbacks, outbox and reconciliation. No confirmed new production defect; production/test source unchanged.
+- [x] Correct cumulative counted failures versus total attempts/PENDING polling, network30s/direct2s leases, and multi-order local acceptance versus independent external settlement.
+- [x] Strict full acceptance:48 tests22.021s, no skips; five tests use actual four-process HTTP. Controlled-RPC tests do not substitute for real PSP validation.
+- [x] Run both examples and20-payment/four-client benchmark sequentially after tests; synchronize bilingual docs, root indexes and the learning guide. See [measurements](../benchmarks/REPORT.md).

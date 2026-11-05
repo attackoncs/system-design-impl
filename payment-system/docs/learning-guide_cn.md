@@ -121,6 +121,48 @@ payin结算从`psp:clearing`转到商户available；payout／refund从held转到
 
 更隐蔽的错误是同一个provider交易号给两个操作入账；[PaymentSafetyTests.test_provider_transaction_identity_cannot_credit_two_operations](../tests/test_safety.py#L227)应阻止这种情况。读测试时比较钱包值、账本笔数和review结果，不只看HTTP状态码。
 
+## 微观三：未知结果、任务死信与冻结资金是三件事
+
+从已有10000美分余额继续发起3000美分payout。
+[OperationMixin.create](../src/payment_system/operations.py#L20)受理时先记reserve，
+available变为7000、held变为3000；此时还不能说供应商已经付款。
+
+```mermaid
+flowchart TD
+  A["受理出款3000；available 7000 / held 3000"] --> Q["Worker先查询原operation身份"]
+  Q --> U["通信失败：本地UNKNOWN；冻结款保留"]
+  Q --> P["有效PENDING：仍等待；冻结款保留"]
+  U --> F["本轮error：累计failures加1"]
+  F --> D{"累计达到5？"}
+  D -->|否| R["原身份退避重试"]
+  D -->|是| M["dead任务和人工review；held仍3000"]
+  M -.->|管理员核查后原身份重试| R
+  P --> R
+  R --> Q
+  Q --> V["回执身份、金额、修订号均匹配"]
+  V --> S["SUCCEEDED：settle held到清算；available 7000 / held 0"]
+  V --> E["FAILED：release回available；available 10000 / held 0"]
+```
+
+[JobMixin.finish_job](../src/payment_system/jobs.py#L41)的`attempts`记录领取尝试，
+`failures`仅在有error结果时累计。正常PENDING不增加，也不清零failures，所以不是
+“五次连续失败”，更不是“最多领取五次”。进入dead不调用release；
+[JobMixin.retry](../src/payment_system/jobs.py#L96)重置失败预算但继续使用同一操作身份。
+网络worker的claim租约30秒、任务I/O预算20秒，直接辅助调用默认2秒；租约到期隔离的是执行尝试，
+不能据此认定PSP支付失败。
+
+[OperationMixin.apply](../src/payment_system/operations.py#L121)才依据可信且匹配的终态，
+在同一事务内修改账本、钱包、操作和outbox。签名正确但身份/版本冲突的回执只进入审查，
+不会跳过业务校验移动资金。
+[StoreTests.test_dead_letter_retains_hold_and_retry_reuses_identity](../tests/test_store.py#L181)
+用受控时钟验证死信保留冻结和原身份；真实四进程的未知结果/重启阅读点是
+[NetworkTests.test_lost_provider_commit_unknown_hold_dead_letter_and_restart](../tests/test_network.py#L130)。
+后者仍使用模拟PSP，不能外推成真实银行扣款实验。
+
+checkout只把1..20订单的本地操作和任务一起受理；各商户的外部支付仍可能独立成功或失败。
+从[checkout_demo.py](../examples/checkout_demo.py)看两商户案例，再到[open-source-review_cn.md](../docs/open-source-review_cn.md)
+比较上游编排与记账职责。
+
 ## 自查与练习
 
 - **网络超时能证明扣款失败吗？** 不能，可能是提交后回执丢失，需要查询或对账。
