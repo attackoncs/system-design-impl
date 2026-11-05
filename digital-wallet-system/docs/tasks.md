@@ -2,7 +2,7 @@
 
 Source: Chapter 28 of `System Design Interview.md` in the root directory, chapter starting at line 14171.
 
-Status: Reference implementation complete; 54 tests and the 7-process HTTP demo/measured runs pass. All balances are synthetic; fixed-coordinator journal majority and persistent epoch fencing are verified. Automatic leader election, account shard replication, and coordinator original-disk-loss recovery are not implemented; one million TPS / four nines are unproven.
+Status: Reference implementation complete; 59 tests and the 7-process HTTP demo/measured runs pass. All balances are synthetic; fixed-coordinator journal majority and persistent epoch fencing are verified. Automatic leader election, account shard replication, and coordinator original-disk-loss recovery are not implemented; one million TPS / four nines are unproven.
 
 ## Scope
 
@@ -36,3 +36,9 @@ Two-wallet balance transfers, transactional correctness, and reproducible histor
 - [x] Failure/race/protocol and seven-process notification recovery tests; retain HEAD baseline and raw measurements.
 - [ ] Raft elections, participant event replication and authority-disk-loss recovery.
 - [ ] Independent CQRS readers, accelerated/compacted snapshots, shard migration and production-scale validation.
+
+## 2026-11-05 audit and balance review
+
+- [x] Validate internal audit response fields/types, strict integer shard IDs, exact configured account placement and nonnegative integer balances against opening supply.
+- [x] Return HTTP 502 for malformed audit responses; report `matches=false` for wrong shard identity or account distribution even when aggregate supply matches.
+- [x] Preserve opening/transfer input limits while accepting accumulated balances up to configured opening supply; add regression coverage for these receipt and reconciliation boundaries.

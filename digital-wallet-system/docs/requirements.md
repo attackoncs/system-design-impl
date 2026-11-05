@@ -18,3 +18,9 @@ Explicitly excluded: deposits/withdrawals, FX, fees, chargebacks, real bank reco
 - Bound connections/threads/output, share I/O deadlines, cancel/drain owned work, enforce JSON/HTTP contracts; rebuildable caches are not monetary truth.
 
 Open: Raft/elections and participant event replicas, authority-disk-loss promotion, independently deployed CQRS readers, accelerated/compacted snapshots, million TPS and four-nines evidence.
+
+## 2026-11-05 audit and balance contracts
+
+- Reconciliation must check each response's configured shard ID (a strict integer, excluding booleans), exact configured account set, and nonnegative integer balances against configured opening supply. Matching totals alone do not establish correct account placement.
+- Missing contract fields or invalid types in internal audit responses return HTTP 502. Validly shaped responses with the wrong shard identity or account distribution report `matches=false`.
+- Each opening balance remains bounded by `10**12` cents and each transfer by `10**8` cents. Accumulated account balances may exceed either input limit, up to configured opening supply (at most `100 * 10**12` cents); valid balance receipts must remain readable.

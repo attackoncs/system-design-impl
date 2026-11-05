@@ -1,5 +1,8 @@
 """Cross-shard supply and participant reconciliation under writer ownership."""
 
+from .common import Error, integer, shard_for
+from .contracts import participant
+
 
 class AuditMixin:
     def audit(self):
@@ -10,13 +13,54 @@ class AuditMixin:
                 for i in range(len(self.config["shards"]))
             ]
             checks = [self.shard(i, "/internal/audit") for i in range(len(views))]
+            expected = sum(row["opening"] for row in self.config["accounts"].values())
+            errors = []
+            for index, (view, check) in enumerate(zip(views, checks)):
+                try:
+                    if (
+                        not isinstance(view, dict)
+                        or set(view) != {"shard", "seq", "head", "accounts", "parts"}
+                        or not isinstance(view["accounts"], dict)
+                        or not isinstance(view["parts"], dict)
+                        or not isinstance(view["head"], str)
+                        or not isinstance(check, dict)
+                        or set(check) != {"matches", "events", "head"}
+                        or type(check["matches"]) is not bool
+                        or not isinstance(check["head"], str)
+                    ):
+                        raise ValueError("invalid audit structure")
+                    integer(view["shard"], 0, len(views) - 1)
+                    integer(view["seq"], 1)
+                    integer(check["events"], 1)
+                    for balance in view["accounts"].values():
+                        if not isinstance(balance, dict) or set(balance) != {
+                            "available",
+                            "held",
+                        }:
+                            raise ValueError("invalid account balance")
+                        integer(balance["available"], 0, expected)
+                        integer(balance["held"], 0, expected)
+                    for part in view["parts"].values():
+                        if part["role"] not in ("source", "destination", "local"):
+                            raise ValueError("invalid participant role")
+                        participant(part, part["intent"], part["role"])
+                except (KeyError, TypeError, ValueError):
+                    raise Error(502, "invalid shard audit receipt") from None
+                if view["shard"] != index:
+                    errors.append("shard identity mismatch: " + str(index))
+                accounts = {
+                    account
+                    for account in self.config["accounts"]
+                    if shard_for(account, len(views)) == index
+                }
+                if view["accounts"].keys() != accounts:
+                    errors.append("account distribution mismatch: " + str(index))
             total = sum(
                 balance["available"] + balance["held"]
                 for view in views
                 for balance in view["accounts"].values()
             )
             transit = 0
-            errors = []
             commands = self.state()
             for id, value in commands.items():
                 source, destination = self.indices(value["intent"])
@@ -75,7 +119,6 @@ class AuditMixin:
                         or view["shard"] not in self.indices(part["intent"])
                     ):
                         errors.append("orphan or mismatched participant: " + id)
-            expected = sum(row["opening"] for row in self.config["accounts"].values())
             if total + transit != expected:
                 errors.append("supply mismatch")
             if any(

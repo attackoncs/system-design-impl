@@ -1,0 +1,64 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "processes": 7,
+  "transfers": 20,
+  "local_transfers": 10,
+  "cross_shard_transfers": 10,
+  "clients": 4,
+  "completion": "wait",
+  "elapsed_seconds": 12.889801299999817,
+  "completed_transfers_per_second": 1.551614298352317,
+  "accept_to_terminal_p50_ms": 1167.077000001882,
+  "accept_to_terminal_p95_ms": 4856.829200001812,
+  "audit": {
+    "errors": [],
+    "in_transit": 0,
+    "matches": true,
+    "opening_supply": 30000,
+    "quorum": {
+      "acks": 3,
+      "events": 50
+    },
+    "shards": [
+      {
+        "events": 31,
+        "head": "80678d46e18d89e9e5e541d4bbdb2693c0748e4d228730c90b63aefec5e924bd",
+        "matches": true
+      },
+      {
+        "events": 21,
+        "head": "37857682f3f2b03e6c98f260ed1662bb71dd19b31664b5227fa08cbd01133df7",
+        "matches": true
+      }
+    ],
+    "wallet_total": 30000
+  },
+  "balances": [
+    {
+      "account": "alice_0",
+      "available": 8000,
+      "currency": "USD",
+      "held": 0,
+      "sequence": 31,
+      "shard": 0
+    },
+    {
+      "account": "peer_3",
+      "available": 11000,
+      "currency": "USD",
+      "held": 0,
+      "sequence": 31,
+      "shard": 0
+    },
+    {
+      "account": "bob_0",
+      "available": 11000,
+      "currency": "USD",
+      "held": 0,
+      "sequence": 21,
+      "shard": 1
+    }
+  ],
+  "scope": "Single fixed coordinator; 2-of-3 real HTTP journal replicas; two unreplicated SQLite participants; includes terminal-state polling or bounded completion wait (see completion), excludes startup and final audit."
+}

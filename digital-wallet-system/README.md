@@ -24,7 +24,7 @@ python examples/network_demo.py
 python tools/benchmark.py --transfers 20 --clients 4
 ```
 
-The 54 tests include seven real HTTP process tests. The demo pauses after source confirmation, checks in-transit funds, restarts the coordinator using its original database and completes the transfer exactly once. It also executes a local transfer. Labs create private temporary configurations and stop only their own processes; temporary databases are removed afterward. The benchmark checks final balances and reconciliation, not just response codes.
+The 59 tests include seven real HTTP process tests. The demo pauses after source confirmation, checks in-transit funds, restarts the coordinator using its original database and completes the transfer exactly once. It also executes a local transfer. Labs create private temporary configurations and stop only their own processes; temporary databases are removed afterward. The benchmark checks final balances and reconciliation, not just response codes.
 
 For a persistent lab, run `python tools/init_config.py` once. It creates `.runtime/private-config.json` without overwriting existing files. Set `PYTHONPATH=src` in seven separate terminals and run:
 
@@ -94,7 +94,9 @@ Fault injection: shard `POST /admin/control` accepts `{"lose_reply":false,"rejec
 
 ## Evidence and limits
 
-See the [chapter review and remaining gaps](docs/chapter28-review.md), [design](docs/design.md), [verification report](benchmarks/REPORT.md) and [current wait sample](benchmarks/review-wait-2026-10-27.json), [poll sample](benchmarks/review-poll-2026-10-27.json) and [historical sample](benchmarks/latest.json). Million TPS and 99.99% availability are unproven book targets. No cross-host durability, authority-disk loss recovery, automatic elections, replicated participant balances, bank integration, FX, deposits, withdrawals, fees, chargebacks or production identity/key management is implemented.
+See the [chapter review and remaining gaps](docs/chapter28-review.md), [fixed-source comparison with Formance and Seata](docs/open-source-review_cn.md), [design](docs/design.md), [verification report](benchmarks/REPORT.md), [current wait sample](benchmarks/review-wait-2026-11-05.json) and [recovery demo output](benchmarks/features-2026-11-05.json). Earlier [wait](benchmarks/review-wait-2026-10-27.json), [poll](benchmarks/review-poll-2026-10-27.json) and [initial](benchmarks/latest.json) samples remain available. Million TPS and 99.99% availability are unproven book targets. No cross-host durability, authority-disk loss recovery, automatic elections, replicated participant balances, bank integration, FX, deposits, withdrawals, fees, chargebacks or production identity/key management is implemented.
+
+The 2026-11-05 review fixes equal-supply audit false positives by checking each shard ID and its exact configured accounts. Malformed audit receipts return 502; routing/distribution differences report `matches=false`. Accumulated balances may exceed the per-account opening limit of `10**12` cents and are checked against total configured supply. The per-transfer limit remains `10**8` cents. Five new regression tests cover these boundaries.
 
 The reference bounds configuration to 100 accounts and accepted history to 1,000 transfers, retains all logs, incrementally caches committed coordinator facts in a rebuildable read model, and uses full shard state for audit. It needs pagination, indexed histories, streaming replication/replay, partition-map migration, stronger deployment/security and operational backup/recovery before larger workloads.
 

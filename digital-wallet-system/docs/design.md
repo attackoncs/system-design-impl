@@ -118,3 +118,9 @@ Balance/participant RPCs return only the requested object. Receipts validate int
 HTTP is bounded to 32 connections/15 seconds; coordinator contexts to 16, waiters to eight, replica workers to three. One deadline reaches writer waits and RPCs, with 0.5/0.75-second per-replica/shard caps. Strict JSON/framing/query contracts and direct nonredirecting RPC prevent hidden request reinterpretation. Incoming bodies are 1 MiB, output/RPC 8 MiB. Socket cancellation cannot forcibly interrupt SQLite, CPU or custom blocking adapters; accepted ownership drains. CLI cleanup also closes resources after bind or listener-close failures.
 
 See [chapter mapping, tests and remaining architecture](chapter28-review.md). Full Raft/replicated participant events, disk-loss promotion, separately hosted read replicas, snapshot acceleration/compaction and production throughput remain open.
+
+## 2026-11-05 audit identity and accumulated balances
+
+Before reconciliation, validate internal audit response fields and types, including a strict integer shard ID, account maps and nonnegative integer balances. Malformed responses return HTTP 502. Compare the shard ID and exact account set with configured routing: a correctly replayed, equal-supply response from the wrong shard or with the wrong accounts must report `matches=false`. Reconciliation still verifies participants, in-transit amounts and configured opening supply.
+
+Input limits and balance limits serve different purposes. Opening balances are at most `10**12` cents per account and transfers at most `10**8` cents each; repeated credits can produce a larger balance. Balance receipts and audit checks therefore use configured opening supply as the monetary upper bound (at most `100 * 10**12` cents), while preserving strict integer and nonnegative checks. No new funds or larger transfer limit are introduced.

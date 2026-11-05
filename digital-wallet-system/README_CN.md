@@ -24,7 +24,7 @@ python examples/network_demo.py
 python tools/benchmark.py --transfers 20 --clients 4
 ```
 
-54项测试包含7项真实HTTP独立进程测试。演示在付款方已确认、收款方尚未到账时核验在途资金，重启协调者后继续完成，并执行同分片转账。实验只清理自己启动的进程，退出后删除临时数据库。压测会断言最终余额和对账一致。
+59项测试包含7项真实HTTP独立进程测试。演示在付款方已确认、收款方尚未到账时核验在途资金，重启协调者后继续完成，并执行同分片转账。实验只清理自己启动的进程，退出后删除临时数据库。压测会断言最终余额和对账一致。
 
 如需持久化运行，先执行 `python tools/init_config.py` 生成 `.runtime/private-config.json`，随后在七个独立终端分别设置 `PYTHONPATH=src` 并执行：
 
@@ -97,7 +97,9 @@ python -m digital_wallet.cli worker --config .runtime/private-config.json
 
 ## 验证边界
 
-本轮对照与遗留项见[第28章审查记录](docs/chapter28-review.md)。详见[设计文档](docs/design.md)、[测试/压测报告](benchmarks/REPORT.md)与[本轮等待样本](benchmarks/review-wait-2026-10-27.json)、[轮询样本](benchmarks/review-poll-2026-10-27.json)与[历史样本](benchmarks/latest.json)。百万TPS、99.99%可用性均未证明。账户分片不复制，固定协调者原盘仍是恢复前提；未验证跨主机耐久性、真实资金、存取款、FX、手续费、拒付、自动选主及生产身份/密钥管理。
+本轮对照与遗留项见[第28章审查记录](docs/chapter28-review.md)及[Formance、Seata固定源码对照](docs/open-source-review_cn.md)。详见[设计文档](docs/design.md)、[测试/压测报告](benchmarks/REPORT.md)、[本轮等待样本](benchmarks/review-wait-2026-11-05.json)与[恢复演示输出](benchmarks/features-2026-11-05.json)。此前[等待](benchmarks/review-wait-2026-10-27.json)、[轮询](benchmarks/review-poll-2026-10-27.json)和[初始样本](benchmarks/latest.json)保留。百万TPS、99.99%可用性均未证明。账户分片不复制，固定协调者原盘仍是恢复前提；未验证跨主机耐久性、真实资金、存取款、FX、手续费、拒付、自动选主及生产身份/密钥管理。
+
+2026-11-05审查修复两类边界：审计核对每片ID及配置的准确账户集合，防止等额错片/错账户仍通过；非法审计回执返回502，身份/分布差异报告`matches=false`。累计余额按配置总供应量校验，可合法超过单户初始余额上限`10**12`美分；单次转账上限仍为`10**8`美分。新增5项回归验证这些行为。
 
 参考实现限制100个预置账户、1000笔受理转账，保留完整日志，协调者按已提交事件增量维护可重建的状态缓存，对账读取完整分片状态。更大规模需要分页、索引、流式复制/重放、分片迁移、更完善的存储复制与备份恢复。
 

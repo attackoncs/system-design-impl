@@ -305,8 +305,9 @@ class Coordinator(AuditMixin):
 
             integer(result["shard"], 0, len(self.config["shards"]) - 1)
             integer(result["sequence"], 1)
-            integer(result["available"])
-            integer(result["held"])
+            supply = sum(row["opening"] for row in self.config["accounts"].values())
+            integer(result["available"], 0, supply)
+            integer(result["held"], 0, supply)
         except (ValueError, TypeError, KeyError):
             raise Error(502, "participant returned an invalid balance") from None
         return result
