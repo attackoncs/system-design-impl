@@ -188,6 +188,17 @@ def test_malformed_publication_returns_400(served, payload):
     assert api.request is None
 
 
+def test_excessive_json_nesting_is_a_client_error_and_server_recovers(served):
+    _, api, server = served
+    payload = b'{"content":' + b"[" * 10000 + b"0" + b"]" * 10000 + b"}"
+    status, _, _ = request(
+        server, "POST", body=payload, headers={"Content-Type": "application/json"}
+    )
+    assert status == 400
+    assert api.request is None
+    assert request(server, "POST", body={"content": "valid after rejection"})[0] == 201
+
+
 @pytest.mark.parametrize(
     "query",
     [

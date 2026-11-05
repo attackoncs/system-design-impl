@@ -1,5 +1,19 @@
 # 第12章：原书、GitHub源码与本地实现复核
 
+## 2026-11-05固定版本复查
+
+重新通过GitHub搜索`Stream-Framework activity feeds`核实主仓库，并读取固定提交[8b18655aa78b4e1e78bdddc2baa9e46b1d66fe3b](https://github.com/tschellenbach/Stream-Framework/tree/8b18655aa78b4e1e78bdddc2baa9e46b1d66fe3b)的实际源码：
+
+| 永久源码 | 本轮核对 |
+|---|---|
+| [Manager.add_user_activity](https://github.com/tschellenbach/Stream-Framework/blob/8b18655aa78b4e1e78bdddc2baa9e46b1d66fe3b/stream_framework/feed_managers/base.py#L125-L154) | 先保存活动及作者Feed，再创建关注者扇出任务；这里只核对分层和调用顺序，不据此宣称跨存储原子提交或worker持久确认 |
+| [RedisFeed](https://github.com/tschellenbach/Stream-Framework/blob/8b18655aa78b4e1e78bdddc2baa9e46b1d66fe3b/stream_framework/feeds/redis.py#L1-L28) | 活动源与时间线分别配置；本地继续保留PostStore、正文缓存与Feed ID分离 |
+| [时间线范围与排序](https://github.com/tschellenbach/Stream-Framework/blob/8b18655aa78b4e1e78bdddc2baa9e46b1d66fe3b/stream_framework/storage/redis/timeline_storage.py#L25-L95)、[计数及裁剪](https://github.com/tschellenbach/Stream-Framework/blob/8b18655aa78b4e1e78bdddc2baa9e46b1d66fe3b/stream_framework/storage/redis/timeline_storage.py#L115-L127) | 边界过滤、升降序、所需窗口和有界保留；没有把上游数值activity_id直接替换本地时间/ID游标 |
+
+本次读到的三个blob SHA仍与下文11-01记录一致，提交ID与文件blob已分开标明。未安装、执行或复制上游，也没有增加Celery/Redis依赖。现有发布/推拉/缓存/恢复流程已实现，唯一新增修复是HTTP解析过深JSON返回400：最终311项/17.48秒，无失败/跳过；详细[本轮章节核查](chapter12-review.md)和[实际HTTP恢复输出](../benchmarks/features-2026-11-05.json)分别记录代码与执行证据。
+
+## 2026-11-01历史对照与修复
+
 复核日期：2026-11-01。阅读仓库《System Design Interview.md》第12章“Design A News Feed System”，用CodeGraph跟踪发布、普通作者扇出、明星拉取、候选合并、内容/资料组装和测试调用链。原有282项测试通过后，针对实际缺口添加28项回归并修复，最终310项通过。
 
 ## 找到的开源代码与参考范围

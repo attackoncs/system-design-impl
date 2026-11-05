@@ -298,7 +298,12 @@ def create_server(
             raw = self.rfile.read(length)
             if len(raw) != length:
                 raise ValidationError("Truncated request body")
-            payload = json.loads(raw)
+            try:
+                payload = json.loads(raw)
+            except RecursionError as error:
+                raise ValidationError(
+                    "JSON nesting exceeds the parser limit"
+                ) from error
             if not isinstance(payload, dict):
                 raise ValidationError("Expected a JSON object")
             return payload

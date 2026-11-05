@@ -1,6 +1,6 @@
 # Chapter 12 implementation and verification tasks
 
-Updated 2026-11-01. The [Chinese task list](tasks_cn.md) has matching task IDs. These tasks implement the [requirements](requirements.md); the [chapter audit](chapter12-review.md) records the current review's final verification. Checked items describe the local implementation inspected in this review, not deployment acceptance or a substitute for the final regression run.
+Updated 2026-11-05. The [Chinese task list](tasks_cn.md) has matching task IDs. These tasks implement the [requirements](requirements.md); the [chapter audit](chapter12-review.md) records the current review's final verification. Checked items describe the local implementation inspected in this review, not deployment acceptance or a substitute for the final regression run.
 
 ## Implemented local reference
 
@@ -26,7 +26,7 @@ Updated 2026-11-01. The [Chinese task list](tasks_cn.md) has matching task IDs. 
 | --- | --- | --- | --- |
 | TASK-12-14 | [x] | Re-read chapter 12 and use CodeGraph/code-review-graph to trace the publication, fanout, read, cache and test paths. | Source-backed requirement matrix; graph results are navigation evidence, not proof that dynamic calls or tests are complete. See the chapter audit. |
 | TASK-12-15 | [x] | Restore English/Chinese `requirements` and `tasks`, with stable IDs, acceptance mapping and explicit local/deployment boundaries. | All four documents exist, cross-links resolve, requirement/task IDs agree across languages; README/design/audit are updated by the coordinating review. |
-| TASK-12-16 | [x] | Complete the current review's final regression and static/documentation checks. | 2026-11-01: 310 passed, no failures/skips, warnings as errors; 28 new window/input regressions. Static checks, links and guide synchronization verified; [source review](open-source-review_cn.md), [benchmark](../benchmarks/REPORT.md). |
+| TASK-12-16 | [x] | Complete the current review's final regression and static/documentation checks. | 2026-11-05: 311 passed/17.48s, no failures/skips, warnings as errors; one new real-HTTP nesting/recovery regression. Retains the 2026-11-01 evidence (310 tests, 28 added then); [source review](open-source-review_cn.md), [HTTP restart output](../benchmarks/features-2026-11-05.json), [verification report](../benchmarks/REPORT.md). |
 
 ## Deployment and operations backlog
 

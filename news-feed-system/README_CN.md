@@ -8,7 +8,9 @@
 
 对应《System Design Interview》第12章，提供可运行的发布、读取与倒序动态参考实现。需求及验收见[需求文档](docs/requirements_cn.md)，进度见[任务清单](docs/tasks_cn.md)，逐项覆盖见[章节核对](docs/chapter12-review.md)，架构见[设计文档](docs/design_cn.md)。
 
-2026-11-01再次结合CodeGraph和GitHub源码复核，见[开源对照与修复记录](docs/open-source-review_cn.md)。热首页保留固定读取协程，足够组成可见页面及续读判断后停止更旧内容I/O；默认20条页面、16并发、500个缓存ID时，内容读取最多36次。私有前缀仍继续扫描，已经开始的读取仍须排空。
+2026-11-05重新结合原书、CodeGraph及[Stream-Framework固定源码](docs/open-source-review_cn.md)核对，既有发布/扇出/缓存/读取主链已实现。本轮仅修复JSON解析器嵌套上限错误：过深请求返回400且不发布，后续合法请求仍成功。最终 **311项通过，17.48秒，警告视为错误，无跳过**。[实际HTTP/SQLite输出](benchmarks/features-2026-11-05.json)验证原库重启后帖子ID、关注关系和资料可恢复；不新增部署能力或性能结论。
+
+此前2026-11-01复核优化热首页，历史证据见[开源对照与修复记录](docs/open-source-review_cn.md)。热首页保留固定读取协程，足够组成可见页面及续读判断后停止更旧内容I/O；默认20条页面、16并发、500个缓存ID时，内容读取最多36次。私有前缀仍继续扫描，已经开始的读取仍须排空。
 
 ## 已实现
 

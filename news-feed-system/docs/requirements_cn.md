@@ -1,6 +1,8 @@
 # 第12章需求：新闻动态系统
 
-依据仓库《System Design Interview.md》第12章“Design A News Feed System”核对，更新于2026-11-01。本文约定可执行的本地参考实现，并将其与书中的部署讨论分开。[英文版本](requirements.md)使用相同需求编号；[任务清单](tasks_cn.md)、[设计](design_cn.md)和[章节核对](chapter12-review.md)提供实现及验证背景。
+依据仓库《System Design Interview.md》第12章“Design A News Feed System”核对，更新于2026-11-05。本文约定可执行的本地参考实现，并将其与书中的部署讨论分开。[英文版本](requirements.md)使用相同需求编号；[任务清单](tasks_cn.md)、[设计](design_cn.md)和[章节核对](chapter12-review.md)提供实现及验证背景。
+
+2026-11-05复核保留需求编号和既有本地/部署边界。REQ-12-01同时覆盖小于正文字节上限、但超过JSON解析器嵌套上限的请求：发布前返回400，并继续服务后续合法请求。新增真实HTTP回归位于`test_http.py`；最终311项、警告视为错误、无跳过，详见章节核对。
 
 ## 范围与状态
 

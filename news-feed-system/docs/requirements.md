@@ -1,6 +1,8 @@
 # Chapter 12 requirements: News Feed System
 
-Reviewed against chapter 12, “Design A News Feed System”, in the repository's `System Design Interview.md`. Updated 2026-11-01. This document specifies the executable local reference and separates it from the book's deployment discussion. The [Chinese version](requirements_cn.md) uses the same requirement IDs; [tasks](tasks.md), [design](design.md) and [chapter audit](chapter12-review.md) provide implementation and verification context.
+Reviewed against chapter 12, “Design A News Feed System”, in the repository's `System Design Interview.md`. Updated 2026-11-05. This document specifies the executable local reference and separates it from the book's deployment discussion. The [Chinese version](requirements_cn.md) uses the same requirement IDs; [tasks](tasks.md), [design](design.md) and [chapter audit](chapter12-review.md) provide implementation and verification context.
+
+The 2026-11-05 recheck retains these requirement IDs and the existing local/deployment split. REQ-12-01 also covers bodies below the byte limit that exceed the JSON parser's nesting limit: reject with HTTP 400 before publication, and keep serving subsequent valid requests. The new real-HTTP regression is in `test_http.py`; final validation is 311 tests, warnings as errors and no skips, recorded in the chapter audit.
 
 ## Scope and status
 

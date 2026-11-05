@@ -8,7 +8,11 @@
 
 Chapter 12 of *System Design Interview*: an executable Python reference for publishing and reading a reverse chronological feed. See [requirements](docs/requirements.md), [tasks](docs/tasks.md), [the chapter audit](docs/chapter12-review.md) and [design](docs/design.md) for acceptance evidence and deployment limits.
 
-## 2026-11-01 source review
+## 2026-11-05 follow-up review
+
+Rechecked the chapter and CodeGraph call paths, and read Stream-Framework at a [fixed commit](docs/open-source-review_cn.md). The publication/fanout/cache/read flows already exist. One narrow fix converts JSON parser nesting exhaustion into HTTP 400 before publication; a wire regression verifies rejection and a subsequent valid request. Final validation: **311 passed in 17.48 seconds**, warnings as errors, no skips. [Actual HTTP/SQLite output](benchmarks/features-2026-11-05.json) also verifies same-file restart with the same post, persisted follow relationship and author profile. This input fix changes no read/fanout algorithm or deployment guarantees; previous performance data is retained as history.
+
+## 2026-11-01 source review (historical)
 
 The chapter was rechecked against the book, CodeGraph and Stream-Framework source. [The comparison and fixes](docs/open-source-review_cn.md) cover bounded warm-window I/O and validation before source acceptance.
 

@@ -2,7 +2,7 @@
 
 The application has separate publication and read paths. `NewsFeedAPI` composes storage, policies, caches, the queue and owned background tasks. See [requirements](requirements.md), [tasks](tasks.md) and the [chapter audit](chapter12-review.md) for acceptance criteria, book coverage and verification evidence.
 
-The [2026-11-01 source comparison](open-source-review_cn.md) and [benchmark record](../benchmarks/REPORT.md) cover the latest read-window and input-validation fixes.
+The [source comparison](open-source-review_cn.md) now pins Stream-Framework to a verified commit. The 2026-11-05 follow-up only converts JSON parser nesting exhaustion to a validation error at the HTTP parse boundary: reject with 400 before source acceptance, then continue serving valid requests. Business exceptions keep their existing handling. The [verification record](../benchmarks/REPORT.md) preserves the 2026-11-01 read-window measurements separately.
 
 ```mermaid
 flowchart LR

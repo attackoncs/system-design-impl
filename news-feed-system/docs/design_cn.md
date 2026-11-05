@@ -2,7 +2,7 @@
 
 `NewsFeedAPI` 组合发布、读取、存储、策略、队列与后台任务；验收标准和实现计划见[需求](requirements_cn.md)及[任务](tasks_cn.md)，详细章节对应关系和验证证据见[章节核对](chapter12-review.md)。
 
-2026-11-01复核与开源参考见[最新记录](open-source-review_cn.md)，同负载测量见[基准说明](../benchmarks/REPORT.md)。
+2026-11-05复核与Stream-Framework固定提交参考见[最新记录](open-source-review_cn.md)。本轮仅在HTTP的JSON解析边界把嵌套上限异常转换为校验错误，源接受前返回400，后续合法请求继续服务；业务内部异常保持原有处理。此前11-01同负载测量保留为历史，见[验证及基准说明](../benchmarks/REPORT.md)。
 
 ## 发布
 

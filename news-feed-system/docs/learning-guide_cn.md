@@ -157,6 +157,8 @@ async def load(entry: FeedEntry) -> None:
 
 ## 读懂了吗
 
+HTTP边界也可以单独验证：[test_excessive_json_nesting_is_a_client_error_and_server_recovers](../tests/test_http.py#L191)发送仍小于正文大小上限、但超过JSON解析器嵌套上限的输入，要求400、未进入发布，随后合法发帖仍201。[http.py](../src/news_feed_system/http.py)只在解析处转换该错误，不能将业务内部异常都当成客户端错误。这与“源已接受但分发尚未完成”是两个不同阶段。
+
 **Feed丢了是否等于帖子丢了？** 不等于。Feed是派生候选，帖子源支持回源和修复；但普通热Feed仍存在最终一致窗口。
 
 **为什么不能只取Feed里前两条就返回？** 可能包含已不可见帖子，也可能缺少明星或历史候选，需要继续补足页面并保持游标语义。

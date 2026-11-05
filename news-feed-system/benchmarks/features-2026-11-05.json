@@ -1,0 +1,79 @@
+{
+  "scope": "actual loopback HTTP, SQLite source, original-file restart; media URLs returned only",
+  "phases": [
+    {
+      "restarted": false,
+      "status": 200,
+      "feed": {
+        "entries": [
+          {
+            "post": {
+              "post_id": "2f84d2b1-0fba-4527-aec5-8b1ed7a436dc",
+              "author_id": "author",
+              "content": "chapter12 HTTP recovery",
+              "media_urls": [
+                "https://cdn.example/photo.jpg"
+              ],
+              "created_at": "2026-11-05T11:29:44.443621+00:00",
+              "selective_sharing": null
+            },
+            "author": {
+              "user_id": "author",
+              "username": "Author",
+              "profile_picture_url": "",
+              "follower_count": 0
+            },
+            "actions": {
+              "liked": false,
+              "replied": false,
+              "other_actions": []
+            },
+            "counters": {
+              "like_count": 0,
+              "reply_count": 0
+            }
+          }
+        ],
+        "has_more": false,
+        "next_cursor": null
+      }
+    },
+    {
+      "restarted": true,
+      "status": 200,
+      "feed": {
+        "entries": [
+          {
+            "post": {
+              "post_id": "2f84d2b1-0fba-4527-aec5-8b1ed7a436dc",
+              "author_id": "author",
+              "content": "chapter12 HTTP recovery",
+              "media_urls": [
+                "https://cdn.example/photo.jpg"
+              ],
+              "created_at": "2026-11-05T11:29:44.443621+00:00",
+              "selective_sharing": null
+            },
+            "author": {
+              "user_id": "author",
+              "username": "Author",
+              "profile_picture_url": "",
+              "follower_count": 0
+            },
+            "actions": {
+              "liked": false,
+              "replied": false,
+              "other_actions": []
+            },
+            "counters": {
+              "like_count": 0,
+              "reply_count": 0
+            }
+          }
+        ],
+        "has_more": false,
+        "next_cursor": null
+      }
+    }
+  ]
+}
