@@ -1,7 +1,7 @@
 # Requirements: Distributed Message Queue (chapter 20)
 
 Source: [System Design Interview.md](<../../System Design Interview.md>), chapter 20,
-lines 8020–8996. Core review: 2026-10-26. The executable reference and production
+lines 8020–8996. Latest review: 2026-11-04; core review: 2026-10-26. The reference and production
 targets must remain distinguishable; not every book-scale deployment is present.
 
 ## Core behavior
@@ -34,6 +34,14 @@ the SQL writer, per-log locks, complete input ownership, bounded HTTP/RPC and ow
 shutdown. Preserve per-partition serialization and multi-output publication while
 allowing unrelated partitions to progress. Retention failures require durable
 retry and visible maintenance status.
+
+Positive-wait HTTP fetch/group-fetch must share at most floor(3 × handler capacity
+/ 4) slots, retained until response/thread cleanup. Reject excess polls with 503
+so they cannot consume all handlers needed by publications and heartbeats.
+At capacity 1, positive waits are disabled; zero-wait fetch remains available.
+Malformed waits retain 400. This reserves capacity against parsed long polls,
+without promising fairness against every slow request. Tag filtering is performed
+at the coordinator; internal broker reads retain complete-envelope validation.
 
 Exercise real independent processes/networks for leader stop, lost responses,
 quorum loss/recovery, corrupted disk and rebalance; label controlled in-process

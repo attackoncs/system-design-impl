@@ -1,6 +1,105 @@
 # Queue verification report
 
-## Core review — 2026-10-26 (Asia/Shanghai)
+## Source re-review — 2026-11-04 (Asia/Shanghai)
+
+Re-read chapter 20, compared Kafka batching/retry and RocketMQ polling/filtering
+source, and traced local storage, replication, groups, clients and HTTP using
+CodeGraph. The [source review](../docs/open-source-review_cn.md) links the fixed
+commits and records coverage, differences and the one confirmed admission fix.
+
+Positive-wait fetch/group-fetch requests now share floor(3 × handler capacity / 4)
+polling slots, held through response and thread cleanup. Default 32 handlers allow
+24 polls; excess polls receive 503. At capacity 1, use wait_seconds=0 or increase
+capacity. Invalid waits remain 400. This prevents parsed long polls from filling
+all handlers needed by publication/heartbeats, without claiming general fairness
+against every slow request. Internal broker reads still validate full envelopes;
+tag filtering occurs in the coordinator before client output.
+
+### Regression
+
+Python 3.13.9 / Windows 11 build 26100, standard library/SQLite. Actual localhost
+network/process checks used approved unrestricted execution and workspace-isolated
+temporary files. From this project with PYTHONPATH=src:
+
+```powershell
+python -W error -m unittest discover -s tests -v
+```
+
+Before changes, **116 tests passed in 35.368s**. The new reservation test then
+failed for both fetch and group-fetch against the original code. After the fix,
+**121 tests passed in 35.634s, no skips, all warnings treated as errors**. Five new
+HTTP tests cover publication/heartbeat capacity, zero waits, dispatch-error reuse,
+single-handler/invalid-wait behavior and holding admission through response writes.
+The groups below remain unchanged except HTTP/RPC increases from 22 to 27.
+
+The final test-only scheduling refinements tolerate response/handler-exit races
+without accepting a persistent 503; the 27-test HTTP suite passed again in 2.460s.
+These tests use real HTTP with a controlled waiting service/paused response;
+they are separate from the independent full-queue process examples below.
+
+### Independent processes and feature checks
+
+```powershell
+python -W error examples/chapter_demo.py --output benchmarks/features-2026-11-04.json
+python -W error examples/network_demo.py
+```
+
+Both passed using 3 separate broker disks/processes, 1 coordinator and 3 TCP fault
+proxies. The network example replayed one identical receipt, continued on b1 /
+epoch 1 after b0 stopped, rejected a minority write with 503, committed offset 2
+after recovery, advanced the input cursor to 3 and kept one transaction output.
+
+[Feature report](features-2026-11-04.json): 8 buffered messages quorum-confirmed
+across 2 keyed partitions; 4 tag matches and scanned cursors at high water; leave
+reassigned [0,1], expansion assigned [0,1,2], and partition 2 accepted offset 0.
+Long polling delivered the scheduled head and following record in order, not
+early. These are synthetic local tests without external Kafka/RocketMQ services.
+Owned processes stopped; diagnostic files remain under ignored `.runtime/lab-<uuid>/`.
+
+### Small HTTP observation
+
+```powershell
+python -W error tools/benchmark.py --output benchmarks/review-2026-11-04.json
+```
+
+The final run followed regression and examples, without concurrent graph builds
+or test traffic. [Raw report](review-2026-11-04.json):
+
+| Metric | Observed |
+| --- | ---: |
+| Brokers / coordinator / TCP proxies | 3 / 1 / 3 |
+| Partitions / producer threads | 3 / 2 |
+| Batches × messages / text bytes per message | 12 × 10 / 256 |
+| Committed / independently fetched | 120 / 120 |
+| Timed production interval | 1.616s |
+| Messages per second | 74.26 |
+| Batch ACK p50 / p95 | 260.023 / 277.405ms |
+| Broker disk bytes, all replicas including indexes/manifests | 215,976 |
+| Segment files, all replicas | 54 |
+| Request errors | 0 |
+
+Timing includes HTTP/proxies, metadata, integrity checks, batched fsync and majority
+confirmation; readback is outside the timed interval. P95 uses sorted index
+floor(0.95 × (n−1)) from only 12 batches. This is not a sustained throughput test,
+an upstream comparison or a before/after optimization experiment. Historical
+results retain their dates and do not establish a speedup/regression by themselves.
+
+### Static, graph and documentation checks
+
+Ruff E9/F passed for `src` and the changed HTTP test, and both changed Python
+files passed formatting. All 32 project Python files parsed with Python 3.10
+syntax rules. Local checks validated 527 links in 16 Markdown files and parsed
+the benchmark JSON. The guide generator checked all 27 authored guides; the
+chapter's 3 Mermaid diagrams rendered in a headless browser. Scoped
+`git diff --check` passed.
+
+The graph incrementally re-parsed 3 files, updating 129 nodes/1475 edges without
+errors. HTTP-scoped direct impact reported 17 file nodes, 27 impacted nodes and
+3 additional files; 42 edges were truncated and 255 calls unresolved. These are
+structural hints, not complete dynamic-dispatch/test coverage. See the source
+review for the inspected paths and the unchanged production boundaries.
+
+## Historical core review — 2026-10-26 (Asia/Shanghai)
 
 Python 3.13.9 / Windows 11 build 26100, standard library only. Actual localhost
 networking ran in an approved unrestricted process because the Windows sandbox

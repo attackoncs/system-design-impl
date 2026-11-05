@@ -1,5 +1,8 @@
 # Design: Distributed Message Queue
 
+The [2026-11-04 review](open-source-review_cn.md) compares Kafka batching and
+RocketMQ polling/filtering, and adds bounded long-poll admission as described below.
+
 ## Roles, modules and concurrency
 
 One durable HTTP coordinator owns topic metadata, partition epochs/high waters,
@@ -98,12 +101,21 @@ Commit checks current session, generation, partition ownership, live lease and
 the scanned delivery bound. Membership is rechecked after broker I/O. At-least-once
 leaves the cursor unchanged until commit; at-most-once stores it before responding.
 
-Tag filters are OR matches. limit bounds scanned input, not matching output;
+Tag filters are OR matches in the coordinator. Broker-to-coordinator reads still
+carry and verify full envelopes; filtering reduces client output, not internal
+RPC payload. limit bounds scanned input, not matching output;
 next_offset advances across nonmatches, including an empty page. A committed
 filter change cannot recover skipped records without reset. Relative delay and
 absolute deliver_at are exclusive. A not-yet-due head blocks later records to
 preserve partition order; scheduling does not extend retention. Long polling releases operation/SQL locks while waiting;
 its wait_seconds bounds waits, not an already accepted RPC.
+
+HTTP admits positive-wait fetch/group-fetch calls into a shared floor(3 × handler
+capacity / 4) polling quota, returning 503 when full. The quota stays held through
+response writes and thread cleanup, leaving handler capacity for other operations.
+At capacity 1 the quota is zero: use wait_seconds=0 or increase capacity. Invalid
+wait values remain 400. This limits parsed polls, not all slow bodies/RPCs or
+arbitrary request scheduling; it does not establish general admission fairness.
 
 Processing stages and replicates all output batches, then atomically advances
 their high waters and input cursor in one SQLite transaction. txid/fingerprint

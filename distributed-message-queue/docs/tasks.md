@@ -1,7 +1,7 @@
 # Tasks: Distributed Message Queue
 
 Source: [System Design Interview.md](<../../System Design Interview.md>), chapter 20,
-starting at line 8020. Core review: 2026-10-26. Final test/performance evidence is in
+starting at line 8020. Latest review: 2026-11-04; core review: 2026-10-26. Evidence is in
 [validation](../benchmarks/results.md); coverage and remaining gaps are in
 [chapter review](chapter20-review.md). Historical 2026-10-20 results are preserved
 under their original date. No production-complete or commit/push claim is made.
@@ -30,6 +30,12 @@ under their original date. No production-complete or commit/push claim is made.
   for confirmed concurrency, durability, client and protocol issues.
 - [x] T11. Update English/Chinese READMEs/design and local requirements/tasks;
   link final executable evidence rather than reusing historical test totals.
+- [x] T12. Compare pinned Kafka/RocketMQ source and trace core protocols with
+  CodeGraph; document coordinator filtering and production boundaries.
+- [x] T13. Reproduce HTTP starvation by positive-wait fetches, reserve other handler
+  capacity, hold polling admission through cleanup and add five regression tests.
+- [x] T14. Run 121 strict-warning tests, both independent-process examples and the
+  dated 120-message measurement; synchronize bilingual docs and the reading guide.
 
 ## Acceptance criteria
 

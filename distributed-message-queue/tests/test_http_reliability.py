@@ -16,7 +16,7 @@ from urllib.error import HTTPError
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-from message_queue.common import rpc
+from message_queue.common import Error, rpc
 from message_queue.http import server
 from message_queue.lifecycle import Maintenance
 from message_queue.transport import endpoint, loads, seconds
@@ -119,6 +119,135 @@ def peer(action):
 
 
 class HTTPReliabilityTests(unittest.TestCase):
+    def test_long_polls_leave_capacity_for_publication_and_heartbeats(self):
+        for path in ("/fetch", "/group-fetch"):
+            with self.subTest(path=path):
+                entered, published = threading.Event(), threading.Event()
+
+                class WaitingQueue:
+                    def dispatch(self, target, body):
+                        if target in ("/fetch", "/group-fetch"):
+                            if body.get("wait_seconds", 0):
+                                entered.set()
+                                published.wait(2)
+                            return {"records": ["hello"] if published.is_set() else []}
+                        if target == "/produce":
+                            published.set()
+                        return {"done": True}
+
+                with running(WaitingQueue(), concurrency=2) as (_httpd, url):
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        first = executor.submit(
+                            rpc, url, path, {"wait_seconds": 5}, TOKEN, timeout=4
+                        )
+                        try:
+                            self.assertTrue(entered.wait(1))
+                            with self.assertRaises(HTTPError) as caught:
+                                rpc(url, path, {"wait_seconds": 5}, TOKEN, timeout=3)
+                            self.assertEqual(caught.exception.code, 503)
+                            caught.exception.close()
+                            self.assertEqual(
+                                self.available(url, path, {"wait_seconds": 0}),
+                                {"records": []},
+                            )
+                            for target in ("/heartbeat", "/produce"):
+                                self.assertEqual(
+                                    self.available(url, target), {"done": True}
+                                )
+                            self.assertEqual(first.result(2), {"records": ["hello"]})
+                        finally:
+                            published.set()
+                            first.result(4)
+
+    def available(self, url, path, body=None):
+        # A rejection response can arrive just before its handler releases its
+        # general HTTP slot; tolerate that short scheduling race, not a held poll.
+        for attempt in range(20):
+            try:
+                return rpc(url, path, body or {}, TOKEN)
+            except HTTPError as exc:
+                status = exc.code
+                exc.close()
+                if status != 503 or attempt == 19:
+                    raise
+                time.sleep(0.01)
+
+    def test_long_poll_capacity_recovers_after_dispatch_error(self):
+        class FailOnce:
+            def __init__(self):
+                self.failed = False
+
+            def dispatch(self, _path, _body):
+                if not self.failed:
+                    self.failed = True
+                    raise Error(409, "controlled dispatch failure")
+                return {"records": []}
+
+        with running(FailOnce(), concurrency=2) as (_httpd, url):
+            with self.assertRaises(HTTPError) as caught:
+                rpc(url, "/fetch", {"wait_seconds": 1}, TOKEN)
+            self.assertEqual(caught.exception.code, 409)
+            caught.exception.close()
+            self.assertEqual(
+                self.available(url, "/fetch", {"wait_seconds": 1}), {"records": []}
+            )
+
+    def test_single_handler_requires_nonwaiting_fetch(self):
+        with running(concurrency=1) as (_httpd, url):
+            for path in ("/fetch", "/group-fetch"):
+                with self.subTest(path=path):
+                    with self.assertRaises(HTTPError) as caught:
+                        rpc(url, path, {"wait_seconds": 1}, TOKEN)
+                    self.assertEqual(caught.exception.code, 503)
+                    caught.exception.close()
+                    self.assertEqual(
+                        self.available(url, path, {"wait_seconds": 0})["path"], path
+                    )
+
+    def test_invalid_poll_wait_is_400_even_when_polling_disabled(self):
+        with running(concurrency=1) as (_httpd, url):
+            for path in ("/fetch", "/group-fetch"):
+                for wait in (True, "1", -1, 6):
+                    with self.subTest(path=path, wait=wait):
+                        with self.assertRaises(HTTPError) as caught:
+                            self.available(url, path, {"wait_seconds": wait})
+                        self.assertEqual(caught.exception.code, 400)
+                        caught.exception.close()
+
+    def test_long_poll_capacity_is_held_through_response_write(self):
+        from message_queue.http import _Handler
+
+        responding, release = threading.Event(), threading.Event()
+        end_headers = _Handler.end_headers
+
+        def paused_response(handler):
+            if handler.path == "/fetch":
+                responding.set()
+                release.wait(2)
+            end_headers(handler)
+
+        with running(concurrency=2) as (_httpd, url):
+            with patch.object(_Handler, "end_headers", paused_response):
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    first = executor.submit(
+                        rpc, url, "/fetch", {"wait_seconds": 1}, TOKEN, timeout=4
+                    )
+                    try:
+                        self.assertTrue(responding.wait(1))
+                        with self.assertRaises(HTTPError) as caught:
+                            rpc(url, "/group-fetch", {"wait_seconds": 1}, TOKEN)
+                        self.assertEqual(caught.exception.code, 503)
+                        caught.exception.close()
+                        self.assertEqual(
+                            self.available(url, "/health")["path"], "/health"
+                        )
+                    finally:
+                        release.set()
+                        first.result(4)
+            self.assertEqual(
+                self.available(url, "/fetch", {"wait_seconds": 1})["path"], "/fetch"
+            )
+
     def test_rpc_round_trip_and_no_environment_proxy(self):
         with running() as (_httpd, url):
             with patch.dict(

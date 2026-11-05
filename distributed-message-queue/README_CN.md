@@ -12,14 +12,17 @@
 
 协调元数据仍由**一个持久化SQLite协调器**拥有；生产规模、共识及协调器HA尚未实现。
 
+[2026-11-04源码复核](docs/open-source-review_cn.md)对照Kafka和RocketMQ，修复长轮询
+耗尽HTTP容量的问题；121项严格警告测试及两个真实独立进程示例通过。
+
 ## 运行
 
 Python 3.10+，标准库，无第三方运行依赖。在本目录执行：
 
 ```powershell
-python -W error::ResourceWarning -m unittest discover -s tests -v
+python -W error -m unittest discover -s tests -v
 python examples/network_demo.py
-python examples/chapter_demo.py --output benchmarks/features-2026-10-26.json
+python examples/chapter_demo.py --output .runtime/chapter-features.json
 python tools/benchmark.py --output .runtime/benchmark.json
 ```
 
@@ -116,6 +119,10 @@ linger、最多1000条未完成消息；最大容量10000、linger最多5秒。`
 事务按统一顺序持有源/目标资源，保留清理失败持久重试并报告维护状态。
 
 HTTP默认32个活跃处理线程、128监听队列、10秒绝对I/O预算、32MiB请求/响应上限。
+`/fetch`与`/group-fetch`中正`wait_seconds`共享floor(3×concurrency/4)个长轮询名额，
+默认24个，超额返回503；名额持有到响应完成及异常清理，为写入/心跳保留普通处理容量。
+这只限制已解析长轮询，不保证所有慢请求的公平性。concurrency=1时正等待返回503，
+可使用wait_seconds=0或提高容量。
 CLI可设`--concurrency`（1..256）、`--request-timeout`（大于0且不超过3600秒）
 和`--maintenance-interval`（默认1秒）。正文前鉴权，拒绝重复framing/JSON字段和
 非有限数。RPC直接连接、不走环境代理或重定向，严格检查响应长度，HTTPS使用正常

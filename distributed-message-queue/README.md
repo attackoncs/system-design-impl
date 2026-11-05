@@ -13,14 +13,18 @@ uncertain-write recovery, group leave/partition growth, tag filters, scheduled
 delivery and long polling. The coordinator is one durable SQLite process;
 consensus metadata and production availability remain outside this reference.
 
+The [2026-11-04 source review](docs/open-source-review_cn.md) compares Kafka and
+RocketMQ and fixes HTTP capacity starvation by long polls. All 121 tests passed
+with warnings treated as errors; both independent-process examples passed.
+
 ## Run
 
 Python 3.10+, standard library only. From this directory:
 
 ```powershell
-python -W error::ResourceWarning -m unittest discover -s tests -v
+python -W error -m unittest discover -s tests -v
 python examples/network_demo.py
-python examples/chapter_demo.py --output benchmarks/features-2026-10-26.json
+python examples/chapter_demo.py --output .runtime/chapter-features.json
 python tools/benchmark.py --output .runtime/benchmark.json
 ```
 
@@ -186,7 +190,13 @@ Transactions hold their source/output resources in a consistent order.
 Retention failures are durably retried and visible as maintenance status.
 
 HTTP defaults: 32 active handlers, 128 listen backlog, 10s absolute I/O budget and
-32MiB request/response bounds. CLI options `--concurrency` (1..256),
+32MiB request/response bounds. Positive-wait `/fetch` and `/group-fetch` calls share
+at most floor(3 × concurrency / 4) long-poll slots (24 by default); excess calls
+return 503. Slots remain held through response completion/error cleanup. This
+leaves general handler capacity for publication/heartbeats when parsed long polls
+are busy, without promising fairness against other slow requests. With concurrency
+1, positive waits return 503; use zero-wait fetches or increase capacity.
+CLI options `--concurrency` (1..256),
 `--request-timeout` (0..3600, exclusive zero), and `--maintenance-interval`
 (default 1s) adjust local limits. Auth precedes body reads; duplicate framing/JSON
 fields, non-finite numbers and unsupported encodings fail. Direct RPC ignores

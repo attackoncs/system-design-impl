@@ -12,6 +12,7 @@ import threading
 import time
 
 from .common import Error, dumps
+from .coordinator_validation import finite_number
 from .transport import Deadline, MAX_BODY, length, loads, seconds, secret
 
 _LOG = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ class _Server(ThreadingHTTPServer):
         self.service, self.token, self.maintenance = service, token, maintenance
         self.request_timeout = seconds(request_timeout)
         self.slots = threading.BoundedSemaphore(concurrency)
+        self.poll_slots = threading.BoundedSemaphore(concurrency * 3 // 4)
         self.stopping, self._local = threading.Event(), threading.local()
         super().__init__(address, _Handler)
 
@@ -84,6 +86,7 @@ class _Server(ThreadingHTTPServer):
 
     def process_request_thread(self, request, address):
         cancelled = self._local.cancelled = threading.Event()
+        self._local.polling = False
         self._local.deadline = time.monotonic() + self.request_timeout
 
         def interrupt():
@@ -95,6 +98,9 @@ class _Server(ThreadingHTTPServer):
             with Deadline(self._local.deadline, interrupt, self.stopping):
                 super().process_request_thread(request, address)
         finally:
+            if self._local.polling:
+                self.poll_slots.release()
+            del self._local.polling
             del self._local.cancelled
             del self._local.deadline
             self.slots.release()
@@ -169,6 +175,16 @@ class _Handler(BaseHTTPRequestHandler):
         body = loads(data)
         if not isinstance(body, dict):
             raise ValueError("object required")
+        if self.path in ("/fetch", "/group-fetch"):
+            wait = finite_number(
+                body.get("wait_seconds", 0), 0, 5, "wait_seconds must be 0..5"
+            )
+            if wait:
+                if not self.server.poll_slots.acquire(False):
+                    raise Error(503, "long-poll capacity reached; retry later")
+                # Retain admission through response writes and deadline cleanup,
+                # so slow poll responses cannot occupy the reserved HTTP slots.
+                self.server._local.polling = True
         result = self.server.service.dispatch(self.path, body)
         if (
             self.path in ("/health", "/metadata")
