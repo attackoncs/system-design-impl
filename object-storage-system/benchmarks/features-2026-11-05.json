@@ -1,0 +1,22 @@
+{
+  "processes": 6,
+  "owner_buckets": 1,
+  "other_owner_buckets": 0,
+  "parallel_puts": 4,
+  "snapshot_common_prefixes": [
+    "CA/",
+    "NY/"
+  ],
+  "snapshot_objects": [
+    "federal.txt"
+  ],
+  "later_prefix_excluded_from_snapshot": true,
+  "recursive_prefix_matches": 2,
+  "parallel_parts": 2,
+  "concurrent_completions_same_version": true,
+  "completed_abort_status": 409,
+  "stale_collect_status": 409,
+  "download_matches": true,
+  "unrecoverable_chunks": 0,
+  "scope": "six localhost HTTP processes; no AWS/cloud credentials or external service"
+}

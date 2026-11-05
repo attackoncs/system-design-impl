@@ -17,8 +17,8 @@
 ```powershell
 $env:PYTHONPATH = 'src'
 python examples/network_demo.py
-python -m unittest discover -s tests -v
-python tools/benchmark.py --output benchmarks/results.json
+python -W error -m unittest discover -s tests -v
+python tools/benchmark.py --output .runtime/benchmark.json
 ```
 
 实验自动分配本机端口、生成私有凭据、启动并清理自有进程。忽略提交的 `.runtime/lab-*` 保留数据/日志。系统临时目录受限时创建 `.runtime/tmp`，将 `TEMP`/`TMP` 设为其绝对路径。见 [验证报告](benchmarks/results.md)。
@@ -82,7 +82,20 @@ python -m object_storage.cli api --config .runtime/secrets.json --port 9850
 
 生产边界：目录和元数据无复制/选主，普通操作在单协调器内有界并发，GC、删桶与列表快照受独占保护。无 AWS 签名、IAM、TLS、加密、纠删码、在线迁移或自动跨机修复；下载在内存组装，不是 GB 流式服务；凭据/历史元数据无自动归档。文件/目录故障注入和保留磁盘重启不能证明 100 PB、六个九耐久性或四个九可用性。详见 [设计文档](docs/design.md)。
 
-## 第25章工程复核（2026-10-26）
+## 开源与错误边界复核（2026-11-05）
+
+**138项测试通过，41.769秒**，启用 `-W error`，无跳过。结合CodeGraph，
+对照MinIO分段完成及SeaweedFS压缩恢复的实际源码。本次确认并修复：
+上游错误体JSON嵌套过深时，API异常处理自身失败并断开客户端连接；现在返回中性503。
+正常上游409仍保留，客户端无效JSON仍为400；不自动重放写请求，待确认发布意图保留供恢复。
+
+两个真实六进程示例通过，覆盖单节点离线读取、1,000,000字节分段上传、
+稳定列举及旧GC请求拒绝；40个基准对象全部逐字节读取校验通过。
+这些本地小样本不证明性能提升或生产耐久性。
+详见[源码对照](docs/open-source-review_cn.md)、[章节核对](docs/chapter25-review.md)
+和[实测报告](benchmarks/results.md)。
+
+## 历史工程复核（2026-10-26）
 
 新增 `GET /v1/buckets` 返回本人桶；`GET /v1/buckets/{bucket}/objects?delimiter=/`
 列出同层对象和 `common_prefixes`，默认空delimiter仍递归列举。对象与前缀共同计入页大小，

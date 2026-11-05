@@ -124,3 +124,31 @@ service was used, and no commit or push was made.
 
 Bucket deletion also rejects pending publication intents with409, preventing
 recovery from publishing an inaccessible version into an already removed bucket.
+
+## Upstream error-response review (2026-11-05)
+
+The chapter and pinned open-source implementations were compared with the local
+metadata, catalog, listing, multipart and publication paths; see the
+[source audit](open-source-review_cn.md). The confirmed defect was in HTTP error
+translation: decoding a deeply nested JSON body from an upstream `HTTPError`
+could raise `RecursionError` while handling that error, closing the connection
+without an HTTP response. The minimal fix catches it alongside malformed JSON,
+duplicate fields and non-finite values, returning a neutral 503 response instead.
+An ordinary valid upstream 409 remains 409; deeply nested client request JSON
+remains a client error (400). The neutral fallback does not expose the invalid
+peer error body.
+
+This change does not retry writes automatically or alter metadata/data concurrency.
+A publication with an unknown result retains its catalog intent for later
+idempotent recovery. The new regression uses a real Service, Catalog and HTTP API
+with a controlled metadata peer: deleting an object sends exactly one `/publish`
+request for its marker. That peer does not actually commit metadata, so this test
+is not evidence of recovery after a real lost publication acknowledgement.
+
+Baseline: 137 tests in 41.699 seconds. Final: **138 passed in 41.769 seconds**,
+with `-W error` and no skips. The HTTP suite has 20 tests (2.422 seconds), including
+one new test with six subcases; before the fix its deeply nested 409/503 cases
+failed with a connection error. These timings are observations, not a controlled
+speedup comparison. Earlier 2026-10-26 measurements remain historical. See the
+[validation report](../benchmarks/results.md) for current evidence and unchanged
+production limitations.

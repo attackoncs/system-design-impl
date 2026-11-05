@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
 import os
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -170,7 +171,13 @@ class HTTPReliabilityTests(unittest.TestCase):
             self.assertIn(b" 400 ", response.split(b"\r\n", 1)[0])
 
     def test_strict_json_duplicate_nonfinite_and_shape(self):
-        for body in (b"[]", b'{"key":1,"key":2}', b'{"x":NaN}', b'{"x":1e999}'):
+        for body in (
+            b"[]",
+            b'{"key":1,"key":2}',
+            b'{"x":NaN}',
+            b'{"x":1e999}',
+            b'{"x":' + b"[" * 4000 + b"0" + b"]" * 4000 + b"}",
+        ):
             with self.subTest(body=body):
                 raw = self.raw(
                     "/v1/buckets/bucket-test/uploads",
@@ -308,6 +315,79 @@ class HTTPReliabilityTests(unittest.TestCase):
             self.raw("/v1/buckets/bucket-test/objects"), store=service
         )
         self.assertIn(b" 502 ", response.split(b"\r\n", 1)[0])
+
+    def test_invalid_upstream_error_body_returns_503_without_replaying_write(self):
+        deep = b"[" * 4000 + b'"private"' + b"]" * 4000
+        for upstream_status, payload, expected_status in (
+            (409, b'{"error":"private"', 503),
+            (409, b'{"error":1,"error":"private"}', 503),
+            (409, b'{"error":NaN}', 503),
+            (409, deep, 503),
+            (503, deep, 503),
+            (409, b'{"error":"version conflict"}', 409),
+        ):
+            with (
+                self.subTest(status=upstream_status, size=len(payload)),
+                tempfile.TemporaryDirectory() as root,
+            ):
+                calls = []
+
+                class Peer(BaseHTTPRequestHandler):
+                    def log_message(self, *_args):
+                        pass
+
+                    def do_POST(self):
+                        self.rfile.read(int(self.headers["Content-Length"]))
+                        calls.append(self.path)
+                        self.send_response(upstream_status)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Content-Length", str(len(payload)))
+                        self.end_headers()
+                        self.wfile.write(payload)
+
+                with running(ThreadingHTTPServer(("127.0.0.1", 0), Peer)) as peer:
+                    config = {
+                        **CONFIG,
+                        "metadata_urls": [f"http://127.0.0.1:{peer.server_port}"],
+                        "data_urls": [],
+                        "continuation_secret": "secret",
+                    }
+                    service = Service(config, Catalog(Path(root) / "catalog.sqlite"))
+                    try:
+                        service.catalog.create("bucket-test", "alice")
+                        with running(
+                            server("api", config, service, "127.0.0.1", 0)
+                        ) as api:
+                            with self.assertRaises(HTTPError) as caught:
+                                http_json(
+                                    f"http://127.0.0.1:{api.server_port}/v1/buckets/bucket-test/object?key=key",
+                                    TOKEN,
+                                    method="DELETE",
+                                    headers={"Idempotency-Key": "delete-once"},
+                                )
+                            try:
+                                self.assertEqual(caught.exception.code, expected_status)
+                                value = json.loads(caught.exception.read())
+                                self.assertEqual(
+                                    value,
+                                    {
+                                        "error": "upstream failure"
+                                        if expected_status == 503
+                                        else "version conflict"
+                                    },
+                                )
+                            finally:
+                                caught.exception.close()
+                            self.assertEqual(
+                                http_json(
+                                    f"http://127.0.0.1:{api.server_port}/health", TOKEN
+                                )["role"],
+                                "api",
+                            )
+                        self.assertEqual(calls, ["/publish"])
+                        self.assertEqual(len(service.catalog.pending_publications()), 1)
+                    finally:
+                        service.close()
 
 
 class TransportReliabilityTests(unittest.TestCase):

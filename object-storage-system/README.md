@@ -17,8 +17,8 @@ From this directory:
 ```powershell
 $env:PYTHONPATH = 'src'
 python examples/network_demo.py
-python -m unittest discover -s tests -v
-python tools/benchmark.py --output benchmarks/results.json
+python -W error -m unittest discover -s tests -v
+python tools/benchmark.py --output .runtime/benchmark.json
 ```
 
 The lab picks localhost ports, creates private tokens and stops only its six owned processes. Ignored `.runtime/lab-*` retains data/logs. If system temp access is restricted, create `.runtime/tmp` and set `TEMP`/`TMP` to that absolute path. See [validation report](benchmarks/results.md).
@@ -110,7 +110,24 @@ Data-node `/status`, `/chunks/{hash}`, POST `/collect` and POST `/compact` requi
 
 Catalog and metadata shards have no replicas or election. One coordinator permits shared ordinary operations and exclusively gates GC, bucket deletion and listing capture. Downloads buffer bounded content, not GB streams. No AWS signatures, IAM, TLS, encryption, erasure coding, automatic multi-host repair or online resharding exists. Receipts/removed metadata lack automatic archival. Process/file fault tests do not establish 100 PB, six-nine durability or four-nine availability. Details: [design](docs/design.md).
 
-## Chapter 25 engineering review (2026-10-26)
+## Source and error-boundary review (2026-11-05)
+
+**138 tests passed in 41.769s**, with `-W error` and no skips. Reviewed actual
+MinIO multipart completion and SeaweedFS compaction/recovery source alongside
+CodeGraph's local call paths. The confirmed defect was an upstream error body
+with excessive JSON nesting escaping the API's error handler and closing the
+client connection. It now returns a neutral 503. Valid upstream 409 responses
+are preserved; invalid client JSON still returns 400. Writes are not automatically
+replayed and pending publication intents remain available for recovery.
+
+Both actual six-process examples passed, including a one-node-down read,
+1,000,000-byte multipart transfer, stable listing and stale-GC rejection.
+All 40 benchmark objects passed byte-for-byte reads. No performance improvement
+or production durability is inferred from this localhost sample.
+See [source comparison](docs/open-source-review_cn.md),
+[chapter review](docs/chapter25-review.md) and [measurements](benchmarks/results.md).
+
+## Historical engineering review (2026-10-26)
 
 Added `GET /v1/buckets` for the authenticated owner's buckets and
 `GET /v1/buckets/{bucket}/objects?delimiter=/` for same-level objects and

@@ -1,4 +1,83 @@
-# Engineering review — 2026-10-26
+# Source and error-boundary review — 2026-11-05
+
+Python3.13.9, Windows11 build26100, real localhost HTTP only. No AWS/cloud
+credentials or external storage services were used.
+[Chapter review](../docs/chapter25-review.md),
+[open-source audit](../docs/open-source-review_cn.md),
+[raw performance](review-2026-11-05.json),
+[raw feature evidence](features-2026-11-05.json).
+
+## Correctness and error handling
+
+Baseline137 tests passed41.699s; final **138 passed41.769s**, no skips, with
+`-W error`. One new regression contains six actual upstream HTTP cases. The
+two deeply nested409/503 cases disconnected before the fix; now they return
+neutral503. All20 HTTP tests passed2.422s. Valid upstream409 and invalid inbound
+JSON400 are preserved. The test uses real API/Service/Catalog and a controlled
+peer, verifies a single publication request and retained intent; it does not
+simulate an actual metadata commit. It is not a six-process fault benchmark.
+
+## Actual six-process examples
+
+Original demo: two metadata shards, three data nodes, write quorum2; historical
+version and one-node-down reads match, multipart1,000,000 bytes match, no
+unrecoverable chunks. Observed4067.54ms includes the writes, retained-node restart,
+multipart and maintenance; it is not an isolated upload latency.
+
+Feature demo: owner buckets1/other owner0; common prefixes CA/ and NY/, object
+federal.txt remain on the original one-item-page snapshot after a later ZZ/
+write. Recursive CA matches2; two parallel parts and two completions return the
+same version; aborting completed upload409, stale generation collection409,
+downloads match and unrecoverable chunks0.
+
+## Four-client object measurement
+
+| Metric | Observed |
+| --- | ---: |
+| Processes / metadata shards / data nodes / quorum | 6 / 2 / 3 / 2 |
+| Objects / clients / object bytes | 40 / 4 / 4105–4106 |
+| PUT seconds / operations per second | 1.039 / 38.51 |
+| PUT p50 / p95 milliseconds | 97.613 / 130.478 |
+| GET seconds / operations per second | 0.541 / 73.95 |
+| GET p50 / p95 milliseconds | 53.437 / 77.185 |
+| Verified exact object reads | 40 |
+| Sampled data-0 packed chunks / pack files / pack bytes | 40 / 1 / 166310 |
+| Sampled data-0 large files / maintenance unrecoverable chunks | 0 / 0 |
+
+The raw JSON's `*_per_node` pack fields are sampled from data-0, not independently
+measured on all three nodes. The healthy loopback configuration tries all three
+nodes; the publication threshold remains two valid durable receipts. p95 is
+sorted index37 of40 samples. Tests and examples completed before this benchmark;
+both examples and the benchmark ran sequentially. This short burst is not a
+controlled speedup comparison, sustained capacity, independent-failure-domain
+durability or100PB/six-nine/four-nine SLA proof. OS caches and other desktop
+activity can affect results. Owned lab processes stop, while private configs,
+disks and logs remain in ignored `.runtime/lab-*`.
+
+## Static and documentation checks
+
+Ruff E9/F passed for all project source and the changed HTTP test; both changed
+Python files pass formatting. All32 project Python files parse with Python3.10
+syntax rules. The16 reviewed Markdown files contain526 valid local links.
+All27 authored guides match generated output. All three chapter25 Mermaid
+diagrams rendered in an actual headless Edge browser; scoped `git diff --check`
+passed. Tests are runtime evidence; graph/source/document checks supplement them.
+
+## Reproduce without replacing historical evidence
+
+From the project directory with `PYTHONPATH=src`; set TEMP/TMP to an accessible
+private directory when needed:
+
+```powershell
+python -W error -m unittest discover -s tests -v
+python -W error examples/network_demo.py
+python -W error examples/listing_demo.py --output .runtime/features.json
+python -W error tools/benchmark.py --output .runtime/benchmark.json
+```
+
+---
+
+# Historical engineering review — 2026-10-26
 
 137 tests passed40.784s, no skips, `-W error`. Both actual six-process demos passed.
 Four-client40-object localhost measurement on Python3.13.9/Windows11:

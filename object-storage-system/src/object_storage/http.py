@@ -285,7 +285,7 @@ def server(role, config, store, host, port, *, concurrency=32, request_timeout=1
                     value, status = loads(exc.read(1024 * 1024)), exc.code
                     if not isinstance(value, dict):
                         value = {"error": "upstream failure"}
-                except (ValueError, OSError):
+                except (ValueError, OSError, RecursionError):
                     value, status = {"error": "upstream failure"}, 503
                 finally:
                     exc.close()

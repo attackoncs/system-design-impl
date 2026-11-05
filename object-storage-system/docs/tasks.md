@@ -2,7 +2,7 @@
 
 Source: Chapter 25 of `System Design Interview.md` in the project root, starting at line 11925.
 
-Status: core engineering review complete (2026-10-26);137 tests passed in40.784s. Production requirements remain explicitly incomplete.
+Status: source/error-boundary review complete (2026-11-05); 138 tests passed in 41.769s. Production requirements remain explicitly incomplete.
 
 ## Scope
 
@@ -34,7 +34,7 @@ Bucket management, object upload and download, versioning and listing; mixed sma
 - With 40 small objects (~4 KiB each), each node used only one aggregated pack file; PUT p95 79.572 ms, GET p95 70.359 ms. Measured numbers do not represent production scale.
 - API/metadata publish interruption can resume `completing`; logical scenarios with three corrupted/lost replicas can be repaired. See `../benchmarks/results.md` for details.
 - Single directory and metadata coordinator have no replication/leader election yet; no erasure coding, cross-datacenter failure domains, GB-scale streaming interface, or production SLA.
-- This chapter is completed locally and not yet committed; Chapter 24 was committed as `fb2a429` and not yet pushed.
+- This review does not commit or push changes; commit status is separate from chapter acceptance.
 
 ## 2026-10-26 review
 
@@ -46,3 +46,12 @@ Bucket management, object upload and download, versioning and listing; mixed sma
 - [x] 137 tests passed40.784s(-Werror); real six-process demos and four-client measurements.
 - [ ] Production placement/consensus, metadata HA, pack rotation/per-core streams,
       streaming GB objects, erasure coding, cloud security and 100PB/SLA validation.
+
+## 2026-11-05 source and error-boundary review
+
+- [x] Read the chapter, use CodeGraph, and inspect pinned MinIO/SeaweedFS source; document [mechanisms and scope](open-source-review_cn.md).
+- [x] Convert excessively nested upstream HTTP error JSON to a neutral 503; preserve valid upstream409 and invalid inbound JSON400.
+- [x] Add one real HTTP regression with six upstream cases: malformed/duplicate/NaN JSON, deep409/deep503, and valid409. Verify one publication attempt, retained intent and healthy subsequent requests; the controlled peer does not commit metadata.
+- [x] Strengthen the existing client JSON test with excessive nesting. Before the fix, two upstream-depth cases disconnected; all20 HTTP tests now pass in2.422s.
+- [x] Strict full suite:138 passed in41.769s, no skips. Both six-process examples and the40-object benchmark passed; see [measurements](../benchmarks/results.md).
+- [x] Synchronize bilingual documents, root indexes and the macro-to-source learning guide.
