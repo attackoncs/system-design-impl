@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import pathlib
+import sys
 import time
 import uuid
 
@@ -22,15 +23,17 @@ def test_unconfirmed_write_is_retryable_without_duplicate():
         pytest.skip("real Redis not configured")
 
     async def scenario():
-        backend = chat_system.redis_backend.RedisBackend.from_url(url, "test_wait_" + uuid.uuid4().hex)
+        backend = chat_system.redis_backend.RedisBackend.from_url(
+            url, "test_wait_" + uuid.uuid4().hex
+        )
         try:
             channel = await backend.create_channel("a", ["b"], "direct", 2)
-            backend.wait_replicas = 100  # Intentionally impossible in the disposable test environment.
+            backend.wait_replicas = (
+                100  # Intentionally impossible in the disposable test environment.
+            )
             backend.wait_timeout_ms = 25
             with pytest.raises(chat_system.redis_backend.WriteUncertainError):
-                await backend.append(
-                    channel.channel_id, "a", "uncertain", "same-key"
-                )
+                await backend.append(channel.channel_id, "a", "uncertain", "same-key")
             original = (await backend.sync("b"))[0]
             backend.wait_replicas = 0
             retried, created, _ = await backend.append(
@@ -41,10 +44,7 @@ def test_unconfirmed_write_is_retryable_without_duplicate():
             assert await backend.redis.xlen(backend.key("push")) == 1
         finally:
             keys = [
-                k
-                async for k in backend.redis.scan_iter(
-                    match=backend.prefix + "*"
-                )
+                k async for k in backend.redis.scan_iter(match=backend.prefix + "*")
             ]
             if keys:
                 await backend.redis.delete(*keys)
@@ -56,9 +56,7 @@ def test_unconfirmed_write_is_retryable_without_duplicate():
 def test_sentinel_promotes_replica_and_preserves_confirmed_messages():
     directory = os.environ.get("CHAT_TEST_REDIS_LAB")
     if not directory:
-        pytest.skip(
-            "CHAT_TEST_REDIS_LAB not configured; failover not exercised"
-        )
+        pytest.skip("CHAT_TEST_REDIS_LAB not configured; failover not exercised")
     root = pathlib.Path(directory)
     config = json.loads((root / "ready.json").read_text())
 
@@ -88,6 +86,39 @@ def test_sentinel_promotes_replica_and_preserves_confirmed_messages():
             a = await a_node.connect(token, "phone")
             b = await b_node.connect(await backend.issue("bob"), "phone")
             channel = await a_node.create_direct(a, "bob")
+            # A listening TCP socket is ready before Sentinel has discovered
+            # enough peers to elect a replacement. Do not kill the primary yet.
+            deadline = time.monotonic() + 15
+            while True:
+                try:
+                    replies = await asyncio.gather(
+                        *(
+                            sentinel.execute_command(
+                                "SENTINEL", "MASTER", "chat-primary"
+                            )
+                            for sentinel in backend._sentinel.sentinels
+                        )
+                    )
+                    states = [dict(zip(reply[::2], reply[1::2])) for reply in replies]
+                    if not all(
+                        int(state["num-other-sentinels"]) >= 2
+                        and int(state["num-slaves"]) >= 2
+                        for state in states
+                    ):
+                        raise RuntimeError("Sentinel peers/replicas are not ready")
+                    await asyncio.gather(
+                        *(
+                            sentinel.execute_command(
+                                "SENTINEL", "CKQUORUM", "chat-primary"
+                            )
+                            for sentinel in backend._sentinel.sentinels
+                        )
+                    )
+                    break
+                except Exception:
+                    if time.monotonic() > deadline:
+                        raise
+                    await asyncio.sleep(0.1)
             # Confirm both replicas before the deliberate primary crash.
             backend.wait_replicas = 2
             deadline = time.monotonic() + 15
@@ -112,9 +143,7 @@ def test_sentinel_promotes_replica_and_preserves_confirmed_messages():
             deadline = time.monotonic() + 30
             while True:
                 try:
-                    current = await backend._sentinel.discover_master(
-                        "chat-primary"
-                    )
+                    current = await backend._sentinel.discover_master("chat-primary")
                     if current != old:
                         after = await a_node.send(
                             a, channel.channel_id, "after crash", "after"
@@ -134,10 +163,7 @@ def test_sentinel_promotes_replica_and_preserves_confirmed_messages():
                 event = await asyncio.wait_for(
                     b.queue.get(), max(0.1, deadline - time.monotonic())
                 )
-                if (
-                    event.get("message", {}).get("message_id")
-                    == after.message_id
-                ):
+                if event.get("message", {}).get("message_id") == after.message_id:
                     break
             retry, created, _ = await backend.append(
                 channel.channel_id, "alice", "before crash", "stable"
@@ -158,9 +184,7 @@ def test_sentinel_promotes_replica_and_preserves_confirmed_messages():
 
             replicas = [
                 endpoint
-                for endpoint in await backend._sentinel.discover_slaves(
-                    "chat-primary"
-                )
+                for endpoint in await backend._sentinel.discover_slaves("chat-primary")
                 if endpoint != old
             ]  # Sentinel can briefly list the deliberately killed former primary.
             assert replicas
@@ -204,17 +228,28 @@ def test_sentinel_promotes_replica_and_preserves_confirmed_messages():
             report["unconfirmed_retry_rejected"] = True
             (root / "result.json").write_text(json.dumps(report, indent=2))
         finally:
-            for service in services:
-                await service.close()
-            keys = [
-                k
-                async for k in backend.redis.scan_iter(
-                    match=backend.prefix + "*"
-                )
-            ]
-            if keys:
-                await backend.redis.delete(*keys)
-            await backend.close()
+            failed = sys.exc_info()[0] is not None
+            closed = await asyncio.gather(
+                *(service.close() for service in services), return_exceptions=True
+            )
+            try:
+                for result in closed:
+                    if isinstance(result, Exception):
+                        raise result
+                keys = [
+                    k async for k in backend.redis.scan_iter(match=backend.prefix + "*")
+                ]
+                if keys:
+                    await backend.redis.delete(*keys)
+            except Exception:
+                if not failed:
+                    raise
+            finally:
+                try:
+                    await backend.close()
+                except Exception:
+                    if not failed:
+                        raise
 
     asyncio.run(scenario())
 
@@ -229,17 +264,11 @@ def test_indexed_admission_movement_and_bounded_expiry():
             url, "test_capacity_" + uuid.uuid4().hex
         )
         try:
-            assert await backend.renew_node(
-                "a", "epoch-a", "ws://a", "local", 32, 30
-            )
-            assert await backend.renew_node(
-                "b", "epoch-b", "ws://b", "local", 32, 30
-            )
+            assert await backend.renew_node("a", "epoch-a", "ws://a", "local", 32, 30)
+            assert await backend.renew_node("b", "epoch-b", "ws://b", "local", 32, 30)
             admissions = await asyncio.gather(
                 *(
-                    backend.admit(
-                        str(i), "phone", str(i), "a", "epoch-a", 30, 32
-                    )
+                    backend.admit(str(i), "phone", str(i), "a", "epoch-a", 30, 32)
                     for i in range(64)
                 )
             )
@@ -249,8 +278,7 @@ def test_indexed_admission_movement_and_bounded_expiry():
                 admitted, "phone", "moved", "b", "epoch-b", 30, 32
             )
             assert (
-                await backend.redis.zcard(backend.key("node_devices:a:epoch-a"))
-                == 31
+                await backend.redis.zcard(backend.key("node_devices:a:epoch-a")) == 31
             )
             assert await backend.admit(
                 "replacement", "phone", "new", "a", "epoch-a", 30, 32
@@ -277,17 +305,11 @@ def test_indexed_admission_movement_and_bounded_expiry():
                 is None
             )
             assert (
-                await backend.redis.zcard(
-                    backend.key("node_devices:a:epoch-next")
-                )
-                == 0
+                await backend.redis.zcard(backend.key("node_devices:a:epoch-next")) == 0
             )
         finally:
             keys = [
-                k
-                async for k in backend.redis.scan_iter(
-                    match=backend.prefix + "*"
-                )
+                k async for k in backend.redis.scan_iter(match=backend.prefix + "*")
             ]
             if keys:
                 await backend.redis.delete(*keys)

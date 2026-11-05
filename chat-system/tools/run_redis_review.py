@@ -53,7 +53,8 @@ def command(folder, port, password):
     if binary:
         return [binary, *options, "--dir", str(folder)]
     extracted = ROOT / ".runtime/extracted/usr/bin/redis-server"
-    if os.name != "nt" or not extracted.is_file():
+    # Linux package links may be executable in WSL but unstatable by Windows.
+    if os.name != "nt" or not os.path.lexists(extracted):
         raise RuntimeError(
             "set CHAT_REDIS_BINARY or install redis-server; no Redis mock is used"
         )

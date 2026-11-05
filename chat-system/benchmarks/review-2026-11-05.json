@@ -1,0 +1,21 @@
+{
+  "python": "3.13.9",
+  "platform": "Windows",
+  "redis_version": "8.0.5",
+  "warnings_as_errors": true,
+  "tests": 203,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 1,
+  "passed": 202,
+  "seconds": 6.612,
+  "pytest_exit_code": 0,
+  "skipped_cases": [
+    {
+      "name": "test_sentinel_promotes_replica_and_preserves_confirmed_messages",
+      "reason": "CHAT_TEST_REDIS_LAB not configured; failover not exercised"
+    }
+  ],
+  "scope": "Owned Redis with AOF/always and real loopback WebSockets; Sentinel primary-crash experiment excluded.",
+  "owned_redis_shutdown": true
+}
