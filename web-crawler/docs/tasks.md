@@ -1,6 +1,6 @@
 # Chapter 10 Implementation and Acceptance
 
-Updated against source and execution on 2026-11-01. See [requirements](requirements.md), [design](design.md) and the [book/source comparison](open-source-review_cn.md). Verified outcomes replace stale scaffolding and pending statuses.
+Updated against source and execution on 2026-11-05. See [requirements](requirements.md), [design](design.md) and the [book/source comparison](open-source-review_cn.md). The 2026-11-01 review is retained as history.
 
 ## Completed
 
@@ -18,7 +18,8 @@ Updated against source and execution on 2026-11-01. See [requirements](requireme
 - [x] Externally triggered adaptive recrawling, host ownership and durable routing contract.
 - [x] Sync/async hooks and replaceable fetcher; explicit external-side-effect idempotence.
 - [x] Close SQLite test connections and set async fixture loop scope; warnings treated as errors.
-- [x] Existing 213 plus 43 regressions, 256 tests; example and actual loopback/resumption checks.
+- [x] 2026-11-01: existing 213 plus 43 regressions, 256 tests; 2026-11-05 adds three repeated-cancellation cases, 259 tests, example and actual loopback/resumption checks.
+- [x] Drain accepted SQLite work and owned children under repeated cancellation; close ownership and reset running state on open/finish/close cancellation.
 - [x] Bilingual README/requirements/design/tasks, learning guide and [raw measurements](../benchmarks/REPORT.md).
 
 ## Deployment Extensions

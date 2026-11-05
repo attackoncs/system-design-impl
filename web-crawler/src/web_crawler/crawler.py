@@ -91,14 +91,24 @@ class Crawler:
         self._results: list[web_crawler.models.CrawlResult] = []
         self._pages_crawled = 0
 
-    async def _io(self, operation, *args, **kwargs):
-        """Drain an already-started database operation before releasing ownership."""
-        task = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
+    @staticmethod
+    async def _drain(task):
+        """Keep accepted work owned even if cancellation is requested repeatedly."""
         try:
             return await asyncio.shield(task)
         except asyncio.CancelledError:
-            await task
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    continue
+            task.result()
             raise
+
+    async def _io(self, operation, *args, **kwargs):
+        """Drain an already-started database operation before releasing ownership."""
+        task = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
+        return await self._drain(task)
 
     async def _queue_call(self, method, *args, **kwargs):
         operation = getattr(self._frontier, method)
@@ -156,11 +166,15 @@ class Crawler:
         finally:
             for task in tasks:
                 task.cancel()
-            if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
-            if self._state is not None and self._state._lock_file is not None:
-                await self._io(self._state.close)
-            self._running = False
+            try:
+                if tasks:
+                    await self._drain(asyncio.gather(*tasks, return_exceptions=True))
+            finally:
+                try:
+                    if self._state is not None and self._state._lock_file is not None:
+                        await self._io(self._state.close)
+                finally:
+                    self._running = False
         return list(self._results)
 
     async def _process_url(self, entry):

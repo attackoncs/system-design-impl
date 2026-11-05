@@ -1,5 +1,17 @@
 # 第10章：原书、开源实现与本地代码核对
 
+## 2026-11-05 固定源码复核
+
+重新检索GitHub的`scrapy crawler`，确认[scrapy/scrapy](https://github.com/scrapy/scrapy/tree/36a7e21239f4be2941ce2059400d79702d5d7986)，固定提交为`36a7e21239f4be2941ce2059400d79702d5d7986`。本次实际阅读以下源码，没有安装、复制、运行或压测上游：
+
+- [Scheduler.enqueue_request/next_request](https://github.com/scrapy/scrapy/blob/36a7e21239f4be2941ce2059400d79702d5d7986/scrapy/core/scheduler.py#L388-L437)：先按请求去重，再尝试磁盘队列、必要时回退内存；出队比较队列优先级。这不等于本地jobs/快照/指纹原子确认，也不保证外部内容Hook恰好一次。
+- [DownloaderAwarePriorityQueue](https://github.com/scrapy/scrapy/blob/36a7e21239f4be2941ce2059400d79702d5d7986/scrapy/pqueues.py#L412-L470)：选择活跃下载最少的slot，同负载轮转，再从该slot的优先队列取请求。本地仍按可用主机队首的严格优先级/FIFO选取，不能把这两种策略说成相同调度或概率公平性。
+- [RobotsTxtMiddleware.robot_parser](https://github.com/scrapy/scrapy/blob/36a7e21239f4be2941ce2059400d79702d5d7986/scrapy/downloadermiddlewares/robotstxt.py#L180-L218)：在途robots解析供调用者等待，但每个等待者有自己的Deferred，避免取消一个调用者影响其他等待者。本地内容认领与本轮数据库排空也需要明确“取消调用方”和“取消共享/已接受工作”的差别；没有移植Twisted实现。
+
+CodeGraph已核对`Crawler.crawl/_io/_drain/_process_url`、SQLite状态、frontier与内容认领。本轮发现连续取消会绕过原有单次取消排空，造成慢open迟到取得文件锁或close后running标记残留；修复和3项先失败后通过的回归见[本轮审查](chapter10-review.md)。最终259项/14.05秒及真实HTTP恢复证据见[验证报告](../benchmarks/REPORT.md)。未将上游组件或本地小样本当作每月十亿页、五年留存或分布式安全接管的证明。
+
+## 2026-11-01 历史对照
+
 日期：2026-11-01。原书范围为《System Design Interview.md》第10章。通过CodeGraph核对 `crawl → get → _process_url → _process_entry` 和持久完成/取消路径，并补齐上一轮尚未同步的文档与可复跑验证工具。
 
 ## GitHub与技术依据

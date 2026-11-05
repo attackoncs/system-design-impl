@@ -36,18 +36,18 @@ flowchart LR
 
 ## 六站源码阅读路线
 
-1. [Crawler.crawl](../src/web_crawler/crawler.py#L109)：批次入口，先看并发任务集合和max_pages的检查，知道一个批次何时结束。
-2. [Crawler._enqueue_url](../src/web_crawler/crawler.py#L336)：发现URL如何经过深度与过滤限制；持久模式先保存远端发现，再做后续路由移交。
+1. [Crawler.crawl](../src/web_crawler/crawler.py#L119)：批次入口，先看并发任务集合和max_pages的检查，知道一个批次何时结束。
+2. [Crawler._enqueue_url](../src/web_crawler/crawler.py#L350)：发现URL如何经过深度与过滤限制；持久模式先保存远端发现，再做后续路由移交。
 3. [SQLiteCrawlState.get](../src/web_crawler/state.py#L143)：从持久队列领取到期任务并保留主机；输出FrontierEntry给处理任务。
-4. [Crawler._process_entry](../src/web_crawler/crawler.py#L202)：robots、下载、重定向、HTML检查和发现链接集中在这里；先跟主页正常路径。
-5. [Crawler._claim_content](../src/web_crawler/crawler.py#L304)：跟child的重复内容分支，理解临时指纹拥有者与已提交指纹的区别。
-6. [SQLiteCrawlState.finish](../src/web_crawler/state.py#L217)：提交状态、内容和主机可用时间，最后回到 [Crawler._process_url](../src/web_crawler/crawler.py#L166) 的异常与取消补偿。
+4. [Crawler._process_entry](../src/web_crawler/crawler.py#L216)：robots、下载、重定向、HTML检查和发现链接集中在这里；先跟主页正常路径。
+5. [Crawler._claim_content](../src/web_crawler/crawler.py#L318)：跟child的重复内容分支，理解临时指纹拥有者与已提交指纹的区别。
+6. [SQLiteCrawlState.finish](../src/web_crawler/state.py#L217)：提交状态、内容和主机可用时间，最后回到 [Crawler._process_url](../src/web_crawler/crawler.py#L180) 的异常与取消补偿。
 
 未设置state_path时，第三站改读 [URLFrontier.get](../src/web_crawler/frontier.py#L57)。其他业务管线相同，但恢复能力和队列数据位置不同。
 
 ## 微观一：并发容量在创建任务前就受限制
 
-[crawler.py:130](../src/web_crawler/crawler.py#L130)
+[crawler.py:140](../src/web_crawler/crawler.py#L140)
 
 ```python
 while not await self._queue_call("is_empty") or tasks:
@@ -95,7 +95,7 @@ def _schedule(self, host: str, now: float) -> None:
 
 ## 微观二：内容重复，发现过程仍要继续
 
-[crawler.py:268](../src/web_crawler/crawler.py#L268)
+[crawler.py:282](../src/web_crawler/crawler.py#L282)
 
 ```python
 fingerprint = self._content_seen.compute_fingerprint(response.body)
@@ -136,7 +136,24 @@ flowchart TD
 
 ## 失败与取消：还没确认的URL要能重新领取
 
-`_process_url` 的finally处理“尚未完成确认”情形。持久模式把领取的任务归还；`crawl` 取消并等待自己创建的任务，再关闭持久状态。[Crawler._io](../src/web_crawler/crawler.py#L94) 使用shield并等待已经开始的同步数据库操作结束，避免外层取消后锁和连接先被释放。
+`_process_url` 的finally处理“尚未完成确认”情形。持久模式把领取的任务归还；`crawl` 取消并等待自己创建的任务，再关闭持久状态。[Crawler._io](../src/web_crawler/crawler.py#L108) 经[Crawler._drain](../src/web_crawler/crawler.py#L95)等待已经接受的同步数据库操作。每次取消都继续shield，直到工作完成再传播取消；子任务清理也使用同一规则。只在第一次取消时shield、随后直接await任务，第二次取消仍可能让数据库线程被遗弃。
+
+```mermaid
+sequenceDiagram
+  participant U as 调用方
+  participant C as crawl与drain
+  participant D as SQLite线程
+  C->>D: 开始open／finish／close
+  U->>C: cancel
+  C->>C: 保持shield并等待
+  U->>C: 再次cancel
+  C->>C: 继续拥有已接受工作
+  D-->>C: 同步操作结束
+  C->>C: 排空子任务、关闭owner、复位running
+  C-->>U: 传播CancelledError
+```
+
+为什么必须等慢open结束？线程不能随async任务被强杀；如果crawl先返回，线程稍后可能取得文件锁，留下“实例显示不忙、数据库却被占用”的状态。[test_repeated_cancellation_drains_database_and_releases_owner](../tests/test_cancellation_review.py#L25)用事件控制open/finish/close，连续取消两次，检查排空前不能返回，清理后旧实例和新owner都可使用。它验证的是生命周期所有权，不是强制中断SQL或DNS。
 
 `finish` 对ERROR且预算允许的任务安排指数延迟；成功或重复内容可按unchanged次数扩大重爬间隔。这里“本批结束”与“以后不再抓”是两个判断。
 

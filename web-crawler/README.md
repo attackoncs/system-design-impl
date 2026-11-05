@@ -6,7 +6,7 @@
 [Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
 <!-- LEARNING_GUIDE_END -->
 
-> Chapter 10 includes durable recovery, adaptive recrawling, host partition routing, DNS caching and bounded downloads. The latest [book/open-source review](docs/open-source-review_cn.md) records scheduler, robots and link-parser fixes with 256 passing tests and reproducible checks.
+> Chapter 10 includes durable recovery, adaptive recrawling, host partition routing, DNS caching and bounded downloads. The latest [book/open-source review](docs/open-source-review_cn.md) records scheduler, robots, link-parser and repeated-cancellation checks with 259 passing tests and reproducible evidence.
 
 An asyncio-based Python web crawler library implementing the design from System Design Interview Chapter 10 "Design A Web Crawler". Features a pipeline architecture with URL frontier (priority + politeness), robots.txt compliance, content deduplication, link extraction, and pluggable components — all with zero runtime dependencies (stdlib only).
 
@@ -45,6 +45,11 @@ on restart. `max_pages` bounds attempts per batch, including failed, duplicate
 and disallowed URLs. Results contain only that batch. Without `state_path`, the
 frontier remains in memory. Storage retention, replication and production-scale
 capacity require separate deployment work.
+
+Repeated cancellation also drains accepted database operations and child tasks before
+releasing the state-file owner. Cancellation during open, finish or close must not
+leave a late file lock or a permanently busy Crawler; the original instance can be
+used again after cleanup. This does not make arbitrary blocking I/O interruptible.
 
 For multiple workers, inject `ConsistentHashPartition` and a
 `route_url(owner, entry)` callback that acknowledges durable, idempotent acceptance.

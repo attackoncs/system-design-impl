@@ -38,7 +38,7 @@ results = await crawler.crawl(["https://example.org/"])
 results = await crawler.crawl([])
 ```
 
-一个文件只允许一个活动owner，OS文件锁在进程崩溃后释放。领取将任务置为inflight，启动恢复未确认任务。HTML快照、内容指纹、任务完成状态和主机可用时间一起提交。失败在持久预算内指数退避；取消归还未确认工作。阻塞数据库操作在线程执行，外层取消后等待已开始的操作结束才释放连接和锁。
+一个文件只允许一个活动owner，OS文件锁在进程崩溃后释放。领取将任务置为inflight，启动恢复未确认任务。HTML快照、内容指纹、任务完成状态和主机可用时间一起提交。失败在持久预算内指数退避；取消归还未确认工作。阻塞数据库操作在线程执行，外层取消后等待已开始的操作结束才释放连接和锁。`_drain`对已接受数据库工作和子任务清理保持shield，即使连续取消也先排空，再传播取消。嵌套finally保证关闭owner及复位`_running`；慢open不会在crawl已返回后泄漏文件锁，清理后的实例仍可复用。
 
 持久frontier只加载有限可用主机窗口，其余任务留在磁盘；没有另加周期写回缓冲。每个批次返回当前结果，未完成任务可在后续批次继续。到期重爬在每次crawl启动时激活；未变内容延长间隔至基础间隔16倍，变化时恢复基础间隔并提高优先级。
 
@@ -66,4 +66,5 @@ ConsistentHashPartition按主机稳定归属；远端发现先持久保存，再
 
 - [本轮回归](../tests/test_open_source_review.py)：复杂度、随机调度oracle、空闲槽补位、robots编码、base与坏链接。
 - [持久恢复](../tests/test_durable_crawl.py)、[生命周期](../tests/test_lifecycle.py)、[分片管线](../tests/test_partition_pipeline.py)、[真实下载](../tests/test_transport_review.py)。
-- [基准与HTTP复跑](../benchmarks/REPORT.md)：256项测试、相同负载调度对照，以及自有回环服务的下载/重启验证。
+- [连续取消回归](../tests/test_cancellation_review.py)：受控阻塞open/finish/close，确认排空前所有权仍保留、取消传播及实例可复用。
+- [基准与HTTP复跑](../benchmarks/REPORT.md)：259项测试、历史相同负载调度对照，以及本轮自有回环服务的下载/重启验证。

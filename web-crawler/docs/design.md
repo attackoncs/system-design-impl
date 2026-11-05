@@ -38,7 +38,7 @@ results = await crawler.crawl(["https://example.org/"])
 results = await crawler.crawl([])
 ```
 
-One state file has one active owner, enforced by an OS file lock released on process death. Claims become inflight; startup recovers unacknowledged jobs. HTML snapshots, fingerprints, acknowledgements and host readiness commit together. Errors retry within a durable budget; cancellation returns unfinished work. Blocking database I/O runs in threads and started operations drain before releasing the lock/connection.
+One state file has one active owner, enforced by an OS file lock released on process death. Claims become inflight; startup recovers unacknowledged jobs. HTML snapshots, fingerprints, acknowledgements and host readiness commit together. Errors retry within a durable budget; cancellation returns unfinished work. Blocking database I/O runs in threads and started operations drain before releasing the lock/connection. `_drain` shields accepted database work and child-task cleanup against repeated cancellation; cancellation is re-raised after completion. Nested finally blocks close the owner and reset `_running` even when cancellation arrives during shutdown, so late open threads cannot leak locks and a cleaned Crawler remains reusable.
 
 Only a bounded eligible-host window is loaded into memory. There is no extra periodic write-behind buffer. Each call returns its batch results and preserves pending work. Due recrawls activate on batch startup. Unchanged pages back off to at most 16 times the base interval; changed content restores the base interval and raises priority.
 
@@ -66,4 +66,5 @@ No membership service, message broker, automatic safe migration, database replic
 
 - [New regressions](../tests/test_open_source_review.py): complexity, randomized scheduling oracle, idle capacity, robots encoding and link parsing.
 - [Durability](../tests/test_durable_crawl.py), [lifecycle](../tests/test_lifecycle.py), [routing](../tests/test_partition_pipeline.py), [real transport](../tests/test_transport_review.py).
-- [Reproducible scheduler and HTTP checks](../benchmarks/REPORT.md): 256 tests, identical-workload comparison and owned loopback/resumption checks.
+- [Repeated-cancellation regressions](../tests/test_cancellation_review.py): controlled open/finish/close threads, ownership retained until completion, cancellation propagation and Crawler reuse.
+- [Reproducible scheduler and HTTP checks](../benchmarks/REPORT.md): 259 tests, historical identical-workload comparison and current owned loopback/resumption checks.

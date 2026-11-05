@@ -1,5 +1,24 @@
 # 第10章：调度基准与真实HTTP验证
 
+## 2026-11-05 本轮复验
+
+Windows/Python3.13.9，修改前 **256项/13.04秒**，修复后 **259项/14.05秒，-W error**。新增[3个连续取消场景](../tests/test_cancellation_review.py)使用真实SQLite和受控事件，分别阻塞open/finish/close；旧实现均提前返回，修复后排空线程与子任务、释放文件锁、传播取消并允许实例复用。没有通过增加重试限额或忽略错误来规避失败。
+
+```bash
+python -W error -m pytest tests -q
+python -W error tools/verify_http.py --output benchmarks/http-review-2026-11-05.json
+python examples/basic_crawl.py
+python tools/benchmark.py --output benchmarks/review-2026-11-05.json
+```
+
+[实际回环HTTP输出](http-review-2026-11-05.json)：SUCCESS2、DISALLOWED1，快照2份，重建Crawler后继续，禁止路径未请求且无未确认任务。请求为`/robots.txt`、`/index`、重建后的`/robots.txt`、`/assets/child`。这是本机真实HTTP；另一个basic_crawl示例使用MockFetcher，4页均SUCCESS，不冒称公网测试。
+
+[本轮调度样本](review-2026-11-05.json)仍是10000条已保留主机积压/100个其他主机，以及5000个独立主机，各3次；中位耗时分别0.158300毫秒、8.542500毫秒。只计内存frontier出队，排除入队、HTTP、robots、解析、SQLite和磁盘。样本在本项目整套测试之后顺序运行；同机其他章节可能有复查负载，不与历史样本宣称提速或退化，也不推导端到端吞吐量。
+
+源码与新增测试Ruff E9/F通过；新增测试格式检查通过。37个Python文件通过Python3.9语法解析，项目本地文档链接及JSON解析通过。随后加强3项回归：在手动兜底close之前验证自动释放owner及新实例接管，3项/0.45秒通过；生产代码未变。未改原有无关换行格式。保留以下历史对照与原始数据。
+
+## 2026-11-01 历史测量
+
 核对日期：2026-11-01，Python3.13.9、Windows。基准只衡量内存 `URLFrontier.get()`，不包含入队、HTTP、robots、解析、SQLite或磁盘，不代表爬虫端到端吞吐量。
 
 ## 同负载对照

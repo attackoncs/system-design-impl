@@ -283,5 +283,5 @@ A Python web crawler library implementing the design from System Design Intervie
 
 - **NFR-4.1**: The crawler SHALL use asyncio for concurrent downloads.
 - **NFR-4.2**: Bound task creation before semaphore-protected processing; recheck due hosts every 50 ms only with a free slot and remaining budget.
-- **NFR-4.3**: The frontier belongs to the event-loop thread; blocking downloads/durable I/O use threads and drain started work on cancellation.
+- **NFR-4.3**: The frontier belongs to the event-loop thread; blocking downloads/durable I/O use threads and drain started work even after repeated cancellation. Crawl cleanup drains owned child tasks, releases the state-file owner and resets the running flag before returning; cancellation remains observable.
 - **NFR-4.4**: The default fetcher wraps blocking HTTP with body/deadline/slot bounds; unresolved system DNS retains its bounded download slot.
