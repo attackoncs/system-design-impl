@@ -82,6 +82,42 @@ GET不是“拿到一个manifest就信任它”。实现检查回执的bucket、
 
 {{symbol:tests/test_publication_intents.py:PublicationIntentTests.test_prepare_is_durable_and_pending_contains_complete_replay_payload}}检查恢复负载完整；{{symbol:tests/test_publication_intents.py:PublicationIntentTests.test_corrupt_payload_or_checksum_blocks_recovery_and_collection}}检查损坏时不能继续恢复或冒险回收。
 
+## 微观三：失败回复本身也可能失败
+
+错误边界位于{{symbol:src/object_storage/http.py:server}}：内部RPC可能返回HTTP错误，
+API还需要解码它的JSON错误体。这里的“上游已经返回状态码”不代表错误体可信；
+语法错误、重复字段、NaN或过深嵌套都可能使解码失败。此时返回中性503，
+正常的JSON业务409则保留。客户端自身的无效JSON仍为400，不混成同一种失败。
+
+本图只展示发布操作的错误路径。JSON仅在相应接口解析；普通对象PUT传原始字节，
+本回归的删除标记请求没有JSON正文。
+
+```mermaid
+flowchart TD
+  U["已通过身份和路由校验的请求"] --> I{"适用的请求头和正文格式有效？"}
+  I -->|否| B["400；不执行发布"]
+  I -->|是| S["Service.publish先保存完整意图"]
+  S --> M["向元数据分片发送一次publish"]
+  M --> E["收到HTTP错误；解码上游错误体"]
+  E --> V{"错误JSON可解码？"}
+  V -->|是| C["保留业务状态，例如409"]
+  V -->|否| T["中性503；关闭上游响应"]
+  T --> P[("意图仍pending；未执行finish")]
+  P --> R["后续以原身份恢复发布，再扫描GC引用"]
+```
+
+关键是`except HTTPError`内部自己的异常处理：在该分支中发生的`RecursionError`，
+不会再被同一层后面的其他`except`捕获。修复将其纳入错误体解码的失败分支，
+`finally`继续关闭上游响应。API不会因此自动再次发送破坏性操作。
+
+{{symbol:tests/test_http_reliability.py:HTTPReliabilityTests.test_invalid_upstream_error_body_returns_503_without_replaying_write}}
+使用真实HTTP、Service与Catalog：发布删除标记前先有pending意图，再由受控元数据peer
+返回六种错误响应；测试断言状态、只调用一次`/publish`、意图保留及后续health正常。
+peer未实际提交元数据，不能将该回归说成“提交成功后丢应答”。
+{{symbol:tests/test_service_reliability.py:ServiceReliabilityTests.test_lost_metadata_ack_is_replayed_before_gc_and_survives_restart}}
+是另一个恢复阅读入口，应继续辨别其中真实持久状态与注入的RPC故障。
+完整开源差异与本次结果见{{file:docs/open-source-review_cn.md}}。
+
 ## 自查与练习
 
 - **块副本确认后客户端断开，能立刻GC吗？** 不行，可能存在未完成但需要恢复的发布意图或已发布引用。

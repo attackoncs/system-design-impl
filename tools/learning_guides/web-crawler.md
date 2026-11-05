@@ -86,7 +86,24 @@ flowchart TD
 
 ## 失败与取消：还没确认的URL要能重新领取
 
-`_process_url` 的finally处理“尚未完成确认”情形。持久模式把领取的任务归还；`crawl` 取消并等待自己创建的任务，再关闭持久状态。{{symbol:src/web_crawler/crawler.py:Crawler._io}} 使用shield并等待已经开始的同步数据库操作结束，避免外层取消后锁和连接先被释放。
+`_process_url` 的finally处理“尚未完成确认”情形。持久模式把领取的任务归还；`crawl` 取消并等待自己创建的任务，再关闭持久状态。{{symbol:src/web_crawler/crawler.py:Crawler._io}} 经{{symbol:src/web_crawler/crawler.py:Crawler._drain}}等待已经接受的同步数据库操作。每次取消都继续shield，直到工作完成再传播取消；子任务清理也使用同一规则。只在第一次取消时shield、随后直接await任务，第二次取消仍可能让数据库线程被遗弃。
+
+```mermaid
+sequenceDiagram
+  participant U as 调用方
+  participant C as crawl与drain
+  participant D as SQLite线程
+  C->>D: 开始open／finish／close
+  U->>C: cancel
+  C->>C: 保持shield并等待
+  U->>C: 再次cancel
+  C->>C: 继续拥有已接受工作
+  D-->>C: 同步操作结束
+  C->>C: 排空子任务、关闭owner、复位running
+  C-->>U: 传播CancelledError
+```
+
+为什么必须等慢open结束？线程不能随async任务被强杀；如果crawl先返回，线程稍后可能取得文件锁，留下“实例显示不忙、数据库却被占用”的状态。{{symbol:tests/test_cancellation_review.py:test_repeated_cancellation_drains_database_and_releases_owner}}用事件控制open/finish/close，连续取消两次，检查排空前不能返回，清理后旧实例和新owner都可使用。它验证的是生命周期所有权，不是强制中断SQL或DNS。
 
 `finish` 对ERROR且预算允许的任务安排指数延迟；成功或重复内容可按unchanged次数扩大重爬间隔。这里“本批结束”与“以后不再抓”是两个判断。
 

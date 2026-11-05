@@ -79,6 +79,36 @@ sequenceDiagram
 
 更容易漏掉的是支付调用过程中用户取消。{{symbol:tests/test_worker_reliability.py:WorkerSagaTests.test_cancel_during_payment_requires_compensation_without_confirming}}断言最终不能重新确认取消的预订，而应推进补偿。{{symbol:tests/test_store.py:StoreTests.test_multinight_atomicity_price_snapshot_idempotency}}则验证两晚报价、原子性和重复请求。
 
+## 微观三：坏响应为什么不能等同“预订失败”
+
+分片可能已经提交预订，但返回的JSON、长度或framing损坏。网关此时不知道最终结果，
+不能用400暗示用户只是填错请求，也不能自动重发写入。沿
+{{symbol:src/hotel_reservation/transport.py:request}}的响应校验异常，到
+{{symbol:src/hotel_reservation/http.py:_Handler.handle_request}}的503映射读一次。
+
+```mermaid
+flowchart TD
+  U["客户端提交预订与request_key"] --> G["网关校验身份、路由和JSON"]
+  G --> F["向分片转发一次"]
+  F --> R{"收到什么响应？"}
+  R -->|"有效成功／明确业务4xx"| B["返回业务结果或保留4xx"]
+  R -->|"损坏JSON／长度／framing"| E["503：结果未知，不自动重发"]
+  E --> K["客户端用原键和原内容重试"]
+  K --> D["分片幂等检查返回原订单当前状态"]
+```
+
+RPC只将已经收到的上游响应校验失败转为OSError；直接JSON解析、本地配置和请求编码
+错误仍保留ValueError。分片明确返回的409也不能被包装成“未知付款”。已有订单ID时
+可读详情；未拿到ID时，用原request_key重试才能恢复同一预订，不能先换新键。
+
+{{symbol:tests/test_http_reliability.py:HTTPTests.test_gateway_invalid_upstream_response_is_unknown_without_write_retry}}
+用真实网关PUT和受控HTTP分片验证5类坏响应、脱敏503及每次只转发一次；它不模拟实际
+预订提交。持久幂等、库存和退款另由前述Store测试及六进程示例验证。
+
+{{file:docs/open-source-review_cn.md}}给出DeathStarBench酒店预订与Eventuate订单Saga的
+固定源码链接。读前者时区分“先检查后逐晚写”和本地多夜事务；读后者时区分额度预留
+与真实扣款退款，不把同名Saga直接当作相同协议。
+
 ## 自查与练习
 
 - **为什么availability说有房，reserve仍可能409？** 查询后库存或价格会变化，写事务必须重新检查。

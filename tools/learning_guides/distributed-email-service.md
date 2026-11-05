@@ -78,6 +78,39 @@ sequenceDiagram
 
 扫描器暂时不可用与无效MIME是两种不同失败：前者保留队列重试，后者可永久rejected；未配置扫描器时默认进入隔离策略，不会假装已经安全扫描。对应配置与运行见{{file:README_CN.md}}。
 
+## 微观三：等待通知不能挡住产生通知的写入
+
+宏观上先看两个入口：网关转发请求，邮箱节点读取持久变更。两层各自有HTTP并发槽；
+如果全部用于长轮询，收信及CAS写入也无法进入，就没有新事件来唤醒等待者。
+{{symbol:src/distributed_email/server_runtime.py:Server.__init__}}为正等待通知限制
+`floor(3 * concurrency / 4)` 个配额：默认32槽中最多24个，其他请求仍共用总容量。
+
+```mermaid
+flowchart TD
+  R["认证并验证通知路由、有限wait 0..2"] --> W{"wait大于0？"}
+  W -->|否| N["普通请求槽：立即读取变更"]
+  W -->|是| Q{"通知配额可用？"}
+  Q -->|否| B["503；客户端稍后用原游标重试"]
+  Q -->|是| P["持有通知配额；读取日志并等待"]
+  O["保留的普通容量：收信或CAS写入"] --> C[("提交邮件、索引和变更日志")]
+  C --> P
+  P --> E["事件、到期或取消；结束回复"]
+  E --> F["HTTP线程finally归还通知配额和请求槽"]
+```
+
+{{symbol:src/distributed_email/http.py:server}}中找`poll_slots.acquire(False)`：
+它不排队等待配额，也不自动重发写请求。再进入
+{{symbol:src/distributed_email/server_runtime.py:Server.process_request_thread}}看`finally`：
+即使业务失败或socket关闭，也由拥有该请求的线程在回复结束后释放。
+并发数为1时正等待返回503，`wait=0`仍可查；这不是按用户限流或任意负载下的容量保证。
+
+{{symbol:tests/test_http_reliability.py:HTTPReliabilityTests.test_notifications_leave_capacity_for_mailbox_writes}}
+通过实际HTTP、真实SQLite邮箱和三个等待者验证：第四个正等待被拒绝，零等待仍可读，
+CAS写入成功后三个等待者都读到版本2。主库直连和经网关各执行一次；只在进入等待函数时
+用观察钩子同步线程，实际查询与写入没有替换。
+{{symbol:tests/test_http_reliability.py:HTTPReliabilityTests.test_notification_capacity_is_released_after_dispatch_error}}
+另外验证业务409之后配额可再次使用。源码对照与完整边界见{{file:docs/open-source-review_cn.md}}。
+
 ## 自查与练习
 
 - **SMTP应答丢失为什么不重建delivery？** 服务端可能已经提交，重建ID会把重试变成新邮件。

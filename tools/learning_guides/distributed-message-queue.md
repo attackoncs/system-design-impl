@@ -94,6 +94,37 @@ sequenceDiagram
 
 原因是遇到not_before尚未到期的头消息就break。与tags过滤不同，延迟头要保留分区投递顺序；过滤掉的标签消息则仍可能推进扫描位置。
 
+## 微观三：空队列为什么也可能把生产者堵在门外
+
+如果所有HTTP线程都在等空长轮询，produce进不来，就无法写入并唤醒消费者。
+先读{{symbol:src/message_queue/http.py:_Handler._dispatch}}中的等待值校验与名额获取，
+再读{{symbol:src/message_queue/http.py:_Server.process_request_thread}}的finally释放。
+
+默认32个handler，正等待的fetch/group-fetch共享24个名额。多出的长轮询返回503，
+零等待请求不占此名额。concurrency=1时正等待被禁用，需用wait_seconds=0或提高容量。
+名额不能在dispatch刚返回就释放：慢响应仍占着handler，会让新的长轮询绕过预留。
+
+```mermaid
+flowchart TD
+  R["鉴权、解析JSON、校验wait_seconds"] --> W{"fetch/group-fetch且正等待？"}
+  W -->|"否"| S["执行普通请求"]
+  W -->|"是"| Q{"长轮询名额可用？"}
+  Q -->|"否"| E["503，客户端稍后重试"]
+  Q -->|"是"| P["持有名额，执行拉取与有界等待"]
+  P --> O["写响应或处理异常"]
+  O --> F["handler退出时释放已获取的名额"]
+  S --> O
+  E --> O
+```
+
+这只控制已解析长轮询的占用，不保证慢正文、慢broker RPC或所有客户端之间的公平性。
+通知也不是可消费的证明：{{symbol:src/message_queue/coordinator.py:Coordinator._poll}}
+每次醒来都重查实际水位、延迟队首及组身份。标签过滤在协调器执行，客户端收到匹配项；
+内部broker读取仍传完整帧并验证hash。
+
+{{file:docs/open-source-review_cn.md}}给出Kafka批处理/重试及RocketMQ长轮询/过滤的
+固定源码链接。优先对照锁持有范围、未确认批次和醒后重查，不把本地单协调器视为上游完整架构。
+
 ## 两类失败不要混淆
 
 **生产响应丢失**：原批次可能已经提交，按原身份重试，receipt或pending负责收敛。
@@ -108,6 +139,8 @@ sequenceDiagram
 - {{symbol:tests/test_state.py:StateTests.test_delayed_head_preserves_order}}：10秒前为空，之后顺序为later、behind。
 - {{symbol:tests/test_cluster.py:ClusterTests.test_transport_partition_provisional_ack_and_quorum_recovery}}：区分leader暂存确认与quorum恢复后的提交。
 - {{symbol:tests/test_state.py:StateTests.test_retention_floor_receipt_expiry_and_new_append_chain}}：理解过期offset与已失效回执为何不能被随意复用。
+- {{symbol:tests/test_http_reliability.py:HTTPReliabilityTests.test_long_polls_leave_capacity_for_publication_and_heartbeats}}：并发2时额外长轮询503，零等待、心跳及写入仍可进行；写入唤醒原请求。
+- {{symbol:tests/test_http_reliability.py:HTTPReliabilityTests.test_long_poll_capacity_is_held_through_response_write}}：暂停响应阶段，确认长轮询名额仍未释放。
 
 ## 自查与练习
 

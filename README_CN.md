@@ -19,26 +19,27 @@
 | 07 | [Key-Value Store](./key-value-store/) | 核心已实现，[开源复审428项测试](key-value-store/docs/open-source-review_cn.md)；自动供给/安全下线未完成 | Dynamo 风格、LSM-tree 存储、仲裁交集、Gossip 协议、gRPC |
 | 08 | [Unique ID Generator](./unique-id-generator/) | 核心已实现，[开源复审122项测试](unique-id-generator/docs/open-source-review_cn.md)；身份/重启安全依赖部署 | Snowflake、位布局预计算、线程安全、精确UTC解析 |
 | 09 | [URL Shortener](./url-shortener/) | ✅ 完成 | CRC32/Base62、SQLite事务发号、只读去重、LRU与中文网址重定向；[开源对照](./url-shortener/docs/open-source-review_cn.md) |
-| 10 | [Web Crawler](./web-crawler/) | ✅ 完成 | 持久调度恢复、自适应重爬、主机分片路由、DNS 缓存与有界下载 |
+| 10 | [Web Crawler](./web-crawler/) | ✅ 核心已复审 | 固定Scrapy源码对照；连续取消时排空SQLite任务并释放文件锁；259项测试；[本轮记录](./web-crawler/docs/chapter10-review.md) |
 | 11 | [Notification System](./notification-system/) | ✅ 核心已复审 | 466项测试；有界批量受理、领取凭据隔离、事务内租约计时与Worker复用；[开源对照](./notification-system/docs/open-source-review_cn.md) |
-| 12 | [News Feed System](./news-feed-system/) | ✅ 核心已复审 | 282项测试；中英文需求/任务、有界并发组装、请求指标、推拉读取与可恢复发布outbox |
+| 12 | [News Feed System](./news-feed-system/) | ✅ 核心已复审 | 固定Stream-Framework源码对照；混合推拉/outbox与有界组装；深层JSON在发布前返回400；311项测试；[本轮记录](./news-feed-system/docs/chapter12-review.md) |
 | 13 | [Chat System](./chat-system/) | ✅ 完成 | 事务收件箱、Redis 路由与推送凭据校验、有界 WebSocket、授权消息查询及设备游标恢复 |
 | 14 | [Search Autocomplete](./search-autocomplete-system/) | ✅ 核心链路已核对 | 采样日志、不可变Top 5 Trie、有界副本切换与响应完整性；188项测试；[开源对照](./search-autocomplete-system/docs/open-source-review_cn.md) |
 | 15 | [Video Streaming](./video-streaming-system/) | ✅ 核心链路已核对 | 分片组装校验与修复、有界租约DAG、真实HLS/PostgreSQL/S3验证；覆盖164项；[开源核对](./video-streaming-system/docs/open-source-review_cn.md) |
 | 16 | [File Sync](./file-sync-system/) | ✅ 核心链路已核对 | 加密增量同步、冲突/权限/GC栅栏、响应完整性与游标恢复；122项测试；[开源核对](./file-sync-system/docs/open-source-review_cn.md) |
 | 17 | [附近商家服务](./proximity-service/) | ✅ 核心链路已核对 | geohash与距离、每日CAS发布、有界缓存/HTTP及副本切换；76项测试；[Tile38/Redis源码核对](./proximity-service/docs/open-source-review_cn.md) |
 | 18 | [附近好友](./nearby-friends-system/) | ✅ 核心链路已核对 | WS/Redis授权快照、TTL、有界工作与重订阅；76项测试、200/200投递；[开源源码核对](./nearby-friends-system/docs/open-source-review_cn.md) |
-| 19 | [地图系统](./maps-system/) | ✅ 核心链路已核对 | 导航指令/编码路径、分级路由瓦片、持久预生成、动态导航/SSE与有界HTTP；113项测试 |
-| 20 | [分布式消息队列](./distributed-message-queue/) | ✅ 核心链路已核对 | 有界攒批、分区并发、标签过滤、退组/扩容、定时长轮询与持久复制；116项测试；生产边界见章节记录 |
-| 21 | [监控与告警系统](./metrics-monitoring-system/) | ✅ 核心链路已核对 | 分区采集、静态发现归属、量规加权查询、增量降采样和隔离告警；108项测试；生产边界见章节记录 |
-| 22 | [广告点击事件聚合](./ad-click-aggregation-system/) | ✅ 核心链路已核对 | 有界查询并发、精确Top N、位点/重放校验、迟到修正与独立对账；76项测试；生产边界见章节记录 |
-| 23 | [酒店预订系统](./hotel-reservation-system/) | ✅ 核心链路已核对 | 滚动日历、房型日期查询、原子预订/价格快照及租约隔离模拟支付补偿；99项测试；生产边界见章节记录 |
-| 24 | [分布式邮件服务](./distributed-email-service/) | ✅ 核心链路已核对 | 持久化通知、文件夹统计、读屏障、租约隔离投递/复制及有界传输；96项测试；生产边界见章节记录 |
-| 25 | [类S3对象存储](./object-storage-system/) | ✅ 核心链路已核对 | 本人桶/同层前缀列举、有界并发I/O、持久发布恢复与GC/聚合文件栅栏；137项测试；生产边界见章节记录 |
-| 26 | [游戏排行榜](./gaming-leaderboard-system/) | ✅ 核心链路已核对 | 并发一致排名、分片/代际屏障、有界Redis/HTTP及版本资料缓存；72项测试 |
-| 27 | [支付系统](./payment-system/) | ✅ 核心链路已核对 | 多订单可信编排、账本/供应商身份校验、并发执行/对账租约栅栏；48项测试；全部模拟资金 |
-| 28 | [数字钱包](./digital-wallet-system/) | ✅ 核心已审查 | TCC输入/回执校验、一致快照与重放、并行日志仲裁/准确提交前缀、有界完成等待/HTTP生命周期；54项测试；Raft/账户副本待实现 |
-| 29 | [证券交易系统](./stock-exchange-system/) | ✅ 核心已审查 | 价格级FIFO索引、连续双边成交/时间查询、完整状态提升与严格行情摄入；56项测试；定序器HA/mmap待实现 |
+| 19 | [地图系统](./maps-system/) | ✅ 核心链路已核对 | 导航指令/编码路径、分级路由瓦片、持久预生成、动态导航/SSE；113项测试；[Valhalla/OSRM核对](./maps-system/docs/open-source-review_cn.md) |
+| 20 | [分布式消息队列](./distributed-message-queue/) | ✅ 核心链路已核对 | 有界攒批、分区并发、标签过滤、定时长轮询与HTTP容量预留；121项测试；[Kafka/RocketMQ核对](./distributed-message-queue/docs/open-source-review_cn.md) |
+| 21 | [监控与告警系统](./metrics-monitoring-system/) | ✅ 核心链路已核对 | 分区采集、加权查询、增量降采样、隔离告警与队列坏消息处理；112项测试；[Prometheus/Alertmanager核对](./metrics-monitoring-system/docs/open-source-review_cn.md) |
+| 22 | [广告点击事件聚合](./ad-click-aggregation-system/) | ✅ 核心链路已核对 | 有界查询、精确Top N、迟到修正、重放/对账及源损坏处理；78项测试；[PyFlink/Flink核对](./ad-click-aggregation-system/docs/open-source-review_cn.md) |
+| 23 | [酒店预订系统](./hotel-reservation-system/) | ✅ 核心链路已核对 | 滚动库存、原子预订/价格快照、模拟补偿及未知响应处理；100项测试；[开源源码核对](./hotel-reservation-system/docs/open-source-review_cn.md) |
+| 24 | [分布式邮件服务](./distributed-email-service/) | ✅ 核心链路已核对 | Stalwart/maddy源码对照；通知准入保留写入容量；持久去重、读屏障及副本重放；99项测试；生产边界见章节记录 |
+| 25 | [类S3对象存储](./object-storage-system/) | ✅ 核心链路已核对 | MinIO/SeaweedFS源码对照；上游错误响应边界、持久发布恢复与GC/聚合文件栅栏；138项测试；生产边界见章节记录 |
+| 26 | [游戏排行榜](./gaming-leaderboard-system/) | ✅ 核心链路已核对 | WB-Games/Redis8.0.5源码对照；共享排名快照、分片/代际屏障、重放与资料缓存；72项测试含真实Redis；生产边界已记录 |
+| 27 | [支付系统](./payment-system/) | ✅ 核心链路已核对 | Hyperswitch/TigerBeetle源码对照；可信checkout、账本/供应商身份、累计重试预算及对账租约栅栏；48项测试；全部模拟资金 |
+| 28 | [数字钱包](./digital-wallet-system/) | ✅ 核心已审查 | Formance/Seata源码对照；TCC/重放/日志多数派与有界等待；修复分片/账户审计身份、累计余额边界；59项测试；Raft/账户副本待实现 |
+| 29 | [证券交易系统](./stock-exchange-system/) | ✅ 核心已审查 | Exchange Core/CoinTossX源码对照；类型敏感重放/提升、坏投影阻断、行情身份与终态保护；64项测试；定序器HA/mmap待实现 |
+| 30 | [持续学习](./docs/chapter30-learning-continues_cn.md) | ✅ 阅读导航 | 收尾章节无新增业务服务；核实GitHub入口，补充宏观图→调用链→故障实验的学习路线 |
 
 ## 计划实现
 
@@ -59,7 +60,7 @@
 | 09 | [design](./url-shortener/docs/design.md) · [requirements](./url-shortener/docs/requirements.md) · [tasks](./url-shortener/docs/tasks.md) | [设计](./url-shortener/docs/design_cn.md) · [需求](./url-shortener/docs/requirements_cn.md) · [任务](./url-shortener/docs/tasks_cn.md) |
 | 10 | [design](./web-crawler/docs/design.md) · [requirements](./web-crawler/docs/requirements.md) · [tasks](./web-crawler/docs/tasks.md) | [设计](./web-crawler/docs/design_cn.md) · [需求](./web-crawler/docs/requirements_cn.md) · [任务](./web-crawler/docs/tasks_cn.md) |
 | 11 | [design](./notification-system/docs/design.md) · [requirements](./notification-system/docs/requirements.md) · [tasks](./notification-system/docs/tasks.md) | [设计](./notification-system/docs/design_cn.md) · [需求](./notification-system/docs/requirements_cn.md) · [任务](./notification-system/docs/tasks_cn.md) |
-| 12 | [design](./news-feed-system/docs/design.md) | [设计](./news-feed-system/docs/design_cn.md) |
+| 12 | [design](./news-feed-system/docs/design.md) · [requirements](./news-feed-system/docs/requirements.md) · [tasks](./news-feed-system/docs/tasks.md) | [设计](./news-feed-system/docs/design_cn.md) · [需求](./news-feed-system/docs/requirements_cn.md) · [任务](./news-feed-system/docs/tasks_cn.md) |
 | 13 | [design](./chat-system/docs/design.md) · [requirements](./chat-system/docs/requirements.md) · [tasks](./chat-system/docs/tasks.md) | [设计](./chat-system/docs/design_cn.md) · [需求](./chat-system/docs/requirements_cn.md) · [任务](./chat-system/docs/tasks_cn.md) |
 | 14 | [design](./search-autocomplete-system/docs/design.md) · [requirements](./search-autocomplete-system/docs/requirements.md) · [tasks](./search-autocomplete-system/docs/tasks.md) | [设计](./search-autocomplete-system/docs/design_cn.md) · [需求](./search-autocomplete-system/docs/requirements_cn.md) · [任务](./search-autocomplete-system/docs/tasks_cn.md) |
 | 15 | [design](./video-streaming-system/docs/design.md) · [requirements](./video-streaming-system/docs/requirements.md) · [tasks](./video-streaming-system/docs/tasks.md) | [设计](./video-streaming-system/docs/design_cn.md) · [需求](./video-streaming-system/docs/requirements_cn.md) · [任务](./video-streaming-system/docs/tasks_cn.md) |
