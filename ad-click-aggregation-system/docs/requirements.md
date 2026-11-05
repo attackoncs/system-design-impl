@@ -11,7 +11,7 @@ Based on Chapter 22 of《System Design Interview.md》in the root directory. The
 7. State explicitly that closed windows remain revisable; responses carry a checkpoint vector, watermark, backlog, and consistency boundaries; queries fail when any required partition is unavailable.
 8. Provide authentication, bounded request/candidate budgets, capacity backpressure, verification of failures in real independent processes, and measured benchmark reports.
 
-Core review: 2026-10-26, chapter lines9664–10506. Final executed validation is
+Latest review: 2026-11-04; core review: 2026-10-26, lines9664–10506. Validation is
 recorded in [benchmarks/results.md](../benchmarks/results.md), with book coverage
 in [chapter22-review.md](chapter22-review.md). Additional acceptance requirements:
 
@@ -26,6 +26,10 @@ in [chapter22-review.md](chapter22-review.md). Additional acceptance requirement
     starting the worker, surface sanitized retry errors and drain accepted work.
 12. Maintain English/Chinese READMEs, design, local requirements/tasks and reports
     when behavior changes. Historical counts are not current test evidence.
+13. Deep JSON in persisted raw rows must follow the source-corruption 503 path,
+    preserving data/head and refusing partial reads. Required source/worker decode
+    failures must return 503 for valid queries, not client-error 400. Invalid client
+    input remains 400; cleanup must allow the same query service to recover.
 
 The second output queue/database writer, physical distributed MapReduce DAG,
 external-sink exactly-once and production distributed batch engine remain outside

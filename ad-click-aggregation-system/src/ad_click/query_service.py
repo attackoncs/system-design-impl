@@ -135,6 +135,7 @@ class QueryService:
             KeyError,
             TypeError,
             OverflowError,
+            RecursionError,
             FutureTimeoutError,
         ):
             raise Error(503, "required source or worker unavailable") from None

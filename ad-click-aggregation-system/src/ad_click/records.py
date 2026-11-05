@@ -105,7 +105,7 @@ def parse_source_row(row):
         ):
             raise ValueError("source data mismatch")
         integer(row["seq"], "seq", 1, MAX_POSITION)
-    except (ValueError, TypeError, KeyError, OverflowError) as exc:
+    except (ValueError, TypeError, KeyError, OverflowError, RecursionError) as exc:
         raise Error(503, "persisted raw log validation failed") from exc
     return {
         "seq": row["seq"],

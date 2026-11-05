@@ -15,6 +15,11 @@ framing and deadlines, complete worker shutdown, verified replay positions and
 bounded administrative recovery. See the [chapter mapping](docs/chapter22-review.md)
 and [final verification](benchmarks/results.md); older measurements retain their dates.
 
+The [2026-11-04 source review](docs/open-source-review_cn.md) compares a PyFlink
+adtech example and Flink window internals. Deeply nested persisted/peer JSON now
+fails as required-source unavailability (503), retaining source data and query
+capacity cleanup. All 78 strict-warning tests and the six-process demo passed.
+
 ## Run and verify
 
 From this directory:
@@ -22,8 +27,8 @@ From this directory:
 ```powershell
 $env:PYTHONPATH = 'src'
 python examples/network_demo.py
-python -W error::ResourceWarning -m unittest discover -s tests -v
-python tools/benchmark.py --output benchmarks/review-2026-10-26.json
+python -W error -m unittest discover -s tests -v
+python tools/benchmark.py --output .runtime/benchmark.json
 ```
 
 The demo and network tests allocate unused localhost ports, create private credentials, launch their own six processes, and stop only those processes on exit. Logs/databases remain under ignored `.runtime/lab-*` for inspection. On environments with a restricted system temp directory, create `.runtime/tmp` and set `TEMP`/`TMP` to that absolute path before testing.

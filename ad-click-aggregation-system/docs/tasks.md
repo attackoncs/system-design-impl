@@ -2,7 +2,7 @@
 
 Source: Chapter 22 of `System Design Interview.md` in the root directory, chapter starting at line 9664.
 
-Core review: 2026-10-26. Current regression and measurement results are recorded
+Latest review: 2026-11-04; core review: 2026-10-26. Current results are recorded
 in [the verification report](../benchmarks/results.md); chapter coverage and
 production gaps appear in [chapter22-review.md](chapter22-review.md). The earlier
 2026-10-20 baseline had 11 tests and a six-process interrupted-transaction demo.
@@ -30,6 +30,12 @@ Count advertisement clicks over the past M minutes and per-minute Top N (default
   surface retry failures and drain accepted handlers/executors/polls on shutdown.
 - [x] T13. Bound independent reconciliation/replay and add meaningful storage,
   query/recovery, protocol and lifecycle regressions; update both documentation languages.
+- [x] T14. Compare pinned PyFlink adtech/Flink window source and trace local
+  persistence, event-time, exact global reduction and recovery with CodeGraph.
+- [x] T15. Reproduce persisted/required-peer deep JSON faults, preserve source
+  failure as 503 and query cleanup, and add two focused regression tests.
+- [x] T16. Run 78 strict-warning tests, six-process demo and the dated 3000-click
+  benchmark; synchronize bilingual documentation and the global Top N guide.
 
 ## Acceptance Criteria
 
@@ -41,7 +47,7 @@ Count advertisement clicks over the past M minutes and per-minute Top N (default
 
 ## Acceptance Evidence and Remaining Boundaries
 
-The 2026-10-26 final count, durations, independent-process results and raw
+The latest dated count, durations, independent-process results and raw
 measurement links live in [benchmarks/results.md](../benchmarks/results.md).
 The items below are historical **2026-10-20** evidence, not current measurements.
 

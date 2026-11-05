@@ -1,5 +1,14 @@
 # Ad Click Event Aggregation: reference design
 
+## Source re-review — 2026-11-04
+
+See the [pinned source comparison](open-source-review_cn.md) for the PyFlink
+example, Flink window behavior and local differences. Deep JSON in a persisted
+source row now follows the existing corruption path: 503, unchanged source data
+and no partial page. Source/worker response decode-depth failures likewise become
+503 for a valid query; invalid client input remains 400. Query cleanup still
+cancels/drains accepted work and permits subsequent queries after peer recovery.
+
 ## Core review — 2026-10-26
 
 Source: [chapter 22](<../../System Design Interview.md>), lines 9664–10506.
@@ -13,8 +22,9 @@ aggregator, `QueryService`, bounded recovery, and HTTP/lifecycle composition.
 Raw input normalization and page validation happen before writer transactions;
 already accepted positions are verified on replay rather than blindly skipped.
 Checkpoint files follow validated remote acknowledgements and preserve source
-identity, with atomic replacement and ownership locks. A stale lock after process
-death requires operator inspection; Windows directory-fsync/power-cut guarantees
+identity, with atomic replacement and ownership locks. OS ownership is released
+on process exit; a retained sidecar alone does not indicate a live owner.
+Windows directory-fsync/power-cut guarantees
 are not inferred from process tests.
 
 One query executor is owned by each API server, default workers/capacity/timeout

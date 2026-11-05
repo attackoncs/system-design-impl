@@ -14,6 +14,10 @@
 历史位置校验和有限恢复任务。逐项映射见[章节记录](docs/chapter22-review.md)，
 最终测试/测量见[验证报告](benchmarks/results.md)，历史结果保留原日期。
 
+[2026-11-04源码复核](docs/open-source-review_cn.md)对照PyFlink业务示例与Flink窗口源码。
+修复持久日志/必要上游深JSON的错误分类，统一报告503，保留源数据并正确释放查询容量。
+78项严格警告测试及六进程示例通过。
+
 ## 运行
 
 在本目录执行：
@@ -21,8 +25,8 @@
 ```powershell
 $env:PYTHONPATH = 'src'
 python examples/network_demo.py
-python -W error::ResourceWarning -m unittest discover -s tests -v
-python tools/benchmark.py --output benchmarks/review-2026-10-26.json
+python -W error -m unittest discover -s tests -v
+python tools/benchmark.py --output .runtime/benchmark.json
 ```
 
 实验自动选择本机端口、生成私有凭据、启动并清理自有的 6 个进程，日志保留在忽略提交的 `.runtime/lab-*`。若系统临时目录受限，先创建 `.runtime/tmp`，把 `TEMP` 和 `TMP` 设置到该目录的绝对路径。
@@ -91,6 +95,10 @@ CLI可设`--concurrency`（1..256）与`--request-timeout`（大于0且最多360
 HTTPS保持正常证书校验。socket期限不能强杀已接受的DNS/SQLite/CPU工作，容量保留到其退出。
 关闭先排空handler再释放查询执行器；聚合worker绑定成功后才启动，退出join已接收轮询。
 失败写通用重试日志并保留持久消费位置，不把私有异常正文暴露为worker状态。
+
+持久原始行损坏或必要source/worker响应过深无法解析时返回503，不将有效查询误报400。
+损坏源不跳过、不删除，也不返回部分页或部分排名；修复数据后可重试。客户端参数校验
+仍为400，上游错误清理后同一QueryService可以继续使用。
 
 - 事件 ID 去重和原始数据不自动过期。IP 统一规范化，国家码统一大写。不会把一个用户的正常多次点击合并掉。
 - 热门广告按事件 ID 哈希分散到多个分区；每个分区返回全部候选计数，再全局按广告求和、排序，不能先截断局部 Top N。

@@ -14,7 +14,7 @@ from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from ad_click.common import http_json
+from ad_click.common import dumps, http_json
 from ad_click.http import server
 from ad_click.transport import endpoint, loads, seconds
 
@@ -126,6 +126,68 @@ def peer(action):
 
 
 class HTTPReliabilityTests(unittest.TestCase):
+    def test_deep_required_peer_response_is_503_and_query_capacity_recovers(self):
+        deep = b"[" * 4000 + b"0" + b"]" * 4000
+        metadata = {"lineage": "source", "heads": {"0": 1}}
+        totals = {
+            "totals": {"hot": 1},
+            "checkpoint": {
+                "lineage": "source",
+                "partition": 0,
+                "seq": 1,
+                "watermark": 1000,
+            },
+        }
+
+        def respond(sock, value):
+            payload = value if isinstance(value, bytes) else dumps(value).encode()
+            sock.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
+                + str(len(payload)).encode()
+                + b"\r\n\r\n"
+                + payload
+            )
+
+        for broken_source in (True, False):
+            with self.subTest(broken_source=broken_source):
+                broken = threading.Event()
+                broken.set()
+                with (
+                    peer(
+                        lambda sock: respond(
+                            sock,
+                            deep if broken.is_set() and broken_source else metadata,
+                        )
+                    ) as ingress,
+                    peer(
+                        lambda sock: respond(
+                            sock,
+                            deep if broken.is_set() and not broken_source else totals,
+                        )
+                    ) as worker,
+                ):
+                    config = {**CONFIG, "ingress_url": ingress, "worker_urls": [worker]}
+                    httpd = server(
+                        "api", config, None, "127.0.0.1", 0, query_capacity=1
+                    )
+                    thread = threading.Thread(
+                        target=httpd.serve_forever, kwargs={"poll_interval": 0.01}
+                    )
+                    thread.start()
+                    url = "http://127.0.0.1:" + str(httpd.server_port) + "/query"
+                    try:
+                        with self.assertRaises(HTTPError) as caught:
+                            http_json(url, TOKEN, {"from": 600, "to": 660})
+                        self.assertEqual(caught.exception.code, 503)
+                        caught.exception.close()
+                        broken.clear()
+                        result = http_json(url, TOKEN, {"from": 600, "to": 660})
+                        self.assertEqual(result["ads"], [{"ad_id": "hot", "count": 1}])
+                    finally:
+                        httpd.shutdown()
+                        httpd.server_close()
+                        thread.join()
+
     def test_real_round_trip_ignores_environment_proxy(self):
         ingress = Ingress()
         with (

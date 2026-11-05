@@ -109,6 +109,43 @@ flowchart TD
 
 接着读[PersistenceReliabilityTests.test_same_event_at_a_later_compatible_position_is_not_counted_twice](../tests/test_persistence_reliability.py#L190)：不同seq并不必然意味着不同业务点击。最后看[CoreTests.test_late_revision_watermark_and_filters](../tests/test_core.py#L119)，检查晚到事件确实可以修订统计。
 
+## 微观三：分散热点后为什么不能只拿局部Top 1
+
+四个分区各有hot=6，另外各自不同的local广告=9。如果每片只返回Top 1，hot会在
+所有分片被丢弃；真实全局结果却是hot=24，大于每个local的9。
+
+沿[QueryService.aggregate](../src/ad_click/query_service.py#L80)到
+[QueryService._reduce](../src/ad_click/query_service.py#L159)，先检查每个必需分区的
+lineage/位置/计数，再用Counter按广告求和，最后heap选择Top N。按ad_id独占分区
+与按event_id分散热点是不同前提，不能直接套用另一种路由下的局部排名优化。
+
+```mermaid
+flowchart TD
+  P["读取全部必需分区的完整候选"] --> V{"身份、位置、计数有效？"}
+  V -->|"否／缺分区"| E["503，不返回部分排名"]
+  V -->|"是"| S["按ad_id合并所有计数"]
+  S --> B{"全局候选超过10000？"}
+  B -->|"是"| L["422，缩小范围或过滤条件"]
+  B -->|"否"| H["heap选择全局Top N，同计数按广告ID排序"]
+```
+
+先手算hot的24，再读
+[QueryTests.test_exact_global_top_n_never_truncates_each_worker_first](../tests/test_service_reliability.py#L52)。
+这里的向量位置是多个分区快照的组合，不是跨分区原子快照。
+
+## 源损坏与坏客户端请求要分开
+
+[parse_source_row](../src/ad_click/records.py#L95)发现持久原始行深JSON损坏时返回503，
+不跳过、删除或返回半页。必要source/worker响应深到无法解码时，QueryService也应
+返回503；这是源不可用，有效客户端请求不应被误报400。源恢复后，同一查询服务应可复用。
+
+对照[AggregationSourceReviewTests.test_deep_persisted_json_fails_as_storage_unavailable_after_reopen](../tests/test_aggregation_source_review.py#L14)
+和[HTTPReliabilityTests.test_deep_required_peer_response_is_503_and_query_capacity_recovers](../tests/test_http_reliability.py#L129)：
+前者使用真实SQLite损坏记录，后者使用真实HTTP及受控坏上游，分别验证保留源数据和释放查询容量。
+
+[open-source-review_cn.md](../docs/open-source-review_cn.md)提供已读的PyFlink业务示例及Flink窗口源码。
+本地closed后仍允许迟到修正，Flink还涉及allowedLateness及窗口清理；两者不是同一状态生命周期。
+
 ## 学完应能回答
 
 - **为什么不能只保存最后消费偏移？** 重放时还要识别业务事件重复与历史内容变化。

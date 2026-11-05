@@ -1,6 +1,99 @@
 # Validation and local measurements
 
-## Core review — 2026-10-26 (Asia/Shanghai)
+## Source re-review — 2026-11-04 (Asia/Shanghai)
+
+Re-read chapter 22 and inspected raw storage/aggregation, tailer/checkpoints,
+recovery and query/HTTP via CodeGraph. The [source comparison](../docs/open-source-review_cn.md)
+links actual pinned PyFlink adtech and Flink window code, and distinguishes their
+join/dedup/late-state semantics from the local reference.
+
+Two minimal fixes classify deep JSON faults as 503: persisted raw-row corruption
+retains the data/head and refuses a partial page; required source/worker response
+decode-depth errors no longer become client-error 400. Query finally still drains
+accepted work/releases admission, and the same service recovers with a healthy
+peer. Invalid client input remains 400.
+
+### Strict regression
+
+Python 3.13.9 / Windows 11 build 26100, standard library/SQLite. Real HTTP/process
+and OS-lock/hard-link tests used approved unrestricted execution and workspace
+temporary paths. From this project with PYTHONPATH=src:
+
+```powershell
+python -W error -m unittest discover -s tests -v
+```
+
+Before changes, **76 tests passed in 68.043s**. New tests reproduced persisted
+decode RecursionError and valid HTTP queries returning 400 for deep source/worker
+responses. After the fixes, **78 tests passed in 38.131s, no skips, all warnings
+treated as errors**. The historical groups below remain, with storage/file tests
+increasing from 30 to 31 and HTTP from 14 to 15.
+
+The storage regression uses real SQLite corruption/reopen and confirms retained
+data/head with no partial read. The HTTP regression uses actual sockets/API and
+controlled source/worker responses, then confirms capacity=1 recovers on the same
+query service. Original independent-process fault tests still cover pre-commit
+exit, restart, Top N and reconciliation. These scopes remain distinct.
+
+### Actual six-process example
+
+```powershell
+python -W error examples/network_demo.py
+```
+
+Passed with **100 unique clicks / 100 duplicate receipts**, hot=80 / other=20,
+all 4 partition lag estimates zero and matching independent reconciliation.
+Push, duplicate push and query took **498.17ms**, a single observation rather
+than a percentile. Owned services stopped; diagnostics remain ignored under
+`.runtime/lab-*`. No external broker/cloud service was used.
+
+### Small pipeline/query observation
+
+```powershell
+python -W error tools/benchmark.py --output benchmarks/review-2026-11-04.json
+```
+
+The final benchmark followed regression/example without concurrent tests or graph
+builds. [Raw report](review-2026-11-04.json):
+
+| Measurement | Observed |
+| --- | ---: |
+| Processes / partitions | 6 / 4 |
+| Unique clicks / hot-ad share | 3000 / 70% |
+| Accepted events per second | 2391.23 |
+| Publish duration / all processed duration | 1.255 / 1.578s |
+| Batch acceptance p95, 15 sequential batches | 121.473ms |
+| Query requests / clients | 40 / 4 |
+| Query p50 / p95 | 94.116 / 125.561ms |
+| Queries per second | 39.78 |
+| Partition counts | 751 / 738 / 745 / 766 |
+| SQLite bytes at measurement | 1,724,472 |
+| Query totals and independent complete-dimension audit | Matched |
+
+Every query is checked against all 3000 events. Queries use a fixed range without
+a query cache, with warm OS pages. Query p95 is sorted index 37 of 40 samples;
+batch p95 is index max(0,floor(0.95×n)−1) of 15 samples. Acceptance throughput is
+not end-to-end processing throughput. The fixes concern fault boundaries, with
+no speedup or production-capacity claim. Initial baseline/specialist checks may
+share host resources; historical samples and their timing are not a controlled
+before/after comparison, sustained SLA or power-loss test.
+
+### Static, graph and documentation checks
+
+Ruff E9/F passed for `src` and both changed/new test files; all 4 changed Python
+files passed formatting. All 27 project Python files parsed with Python 3.10
+syntax rules. Local checks validated 528 links in 16 Markdown files and parsed
+benchmark JSON. All 27 authored guides matched generated output; the chapter's
+3 Mermaid diagrams rendered in a headless browser. Scoped `git diff --check` passed.
+
+Graph refresh re-parsed 3 files, updating 59 nodes/694 edges without errors.
+Two-file scoped direct impact reported 21 file nodes, 74 impacted nodes and 13
+additional files, showing 60 impacted nodes and omitting 14; 253 edges were
+truncated and 764 calls unresolved. Source/execution checks supplement these
+structural hints and the new untracked regression; the graph is not a complete
+dynamic-dispatch/test-coverage proof. See the source comparison for reviewed paths.
+
+## Historical core review — 2026-10-26 (Asia/Shanghai)
 
 Python 3.13.9 / Windows 11 build 26100; standard library only. Real localhost
 fixtures and Windows OS-lock/hard-link tests used approved unrestricted processes.
