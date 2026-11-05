@@ -244,6 +244,37 @@ class HTTPTests(unittest.TestCase):
             self.assertNotIn(b"private body", response)
             self.assertEqual(forward.call_count, 1)
 
+    def test_gateway_invalid_upstream_response_is_unknown_without_write_retry(self):
+        for payload, extra_length in (
+            (b'{"private":', 0),
+            (b'{"private":1,"private":2}', 0),
+            (b'{"private":NaN}', 0),
+            (b"[" * 4000 + b"0" + b"]" * 4000, 0),
+            (b"{}", 8),
+        ):
+            with self.subTest(size=len(payload), extra_length=extra_length):
+                calls = []
+
+                def respond(sock):
+                    calls.append(True)
+                    sock.sendall(
+                        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
+                        + str(len(payload) + extra_length).encode()
+                        + b"\r\n\r\n"
+                        + payload
+                    )
+
+                with (
+                    peer(respond) as upstream,
+                    running(role="gateway") as (httpd, url),
+                ):
+                    httpd.config["shard_urls"] = [upstream]
+                    status, response = raw(url, request())
+                    self.assertEqual(status, 503)
+                    self.assertIn(b"same key", response)
+                    self.assertNotIn(b"private", response)
+                    self.assertEqual(len(calls), 1)
+
     def test_server_copies_configuration(self):
         config = json.loads(json.dumps(CONFIG))
         httpd = server("shard", config, Store(), "127.0.0.1", 0, calendar=Mock())
@@ -383,7 +414,7 @@ class HTTPTests(unittest.TestCase):
         for response in responses:
             with (
                 peer(lambda sock: sock.sendall(response)) as url,
-                self.assertRaises((ValueError, OSError)),
+                self.assertRaises(OSError),
             ):
                 http_json(url, USER)
 
@@ -415,6 +446,8 @@ class HTTPTests(unittest.TestCase):
                 result.result(1)
 
     def test_numeric_url_and_json_configuration_validation(self):
+        with self.assertRaises(ValueError):
+            http_json("http://127.0.0.1:1", USER, {"value": float("nan")}, "POST")
         for value in (float("nan"), float("inf"), True, 0, 10**1000):
             with self.assertRaises(ValueError):
                 seconds(value)

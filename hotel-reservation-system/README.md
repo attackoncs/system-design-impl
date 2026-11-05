@@ -17,6 +17,10 @@ and remaining book gaps: [validation](benchmarks/results.md),
 [chapter mapping](docs/chapter23-review.md). Historical 2026-10-20 figures retain
 their dates and are not the final review result.
 
+The [2026-11-04 source review](docs/open-source-review_cn.md) compares DeathStarBench
+and an Eventuate Saga example, and fixes invalid upstream responses being reported
+as client errors. All 100 strict-warning tests and both six-process demos passed.
+
 ## Run
 
 From this directory:
@@ -24,8 +28,8 @@ From this directory:
 ```powershell
 $env:PYTHONPATH = 'src'
 python examples/network_demo.py
-python -m unittest discover -s tests -v
-python tools/benchmark.py --output benchmarks/results.json
+python -W error -m unittest discover -s tests -v
+python tools/benchmark.py --output .runtime/benchmark.json
 ```
 
 The lab chooses localhost ports, generates private credentials, launches six independent processes and stops only those it owns. Ignored `.runtime/lab-*` retains data/logs for inspection. If system temporary-directory access is restricted, create `.runtime/tmp` and set `TEMP`/`TMP` to its absolute path before running tests. See [validation report](benchmarks/results.md).
@@ -131,6 +135,11 @@ accepted DNS/SQL/CPU work; capacity and shutdown wait for real work to exit.
 Maintenance starts after a successful HTTP bind, reports sanitized errors through
 health/status, retries, and is drained on exit. Payment workers likewise own their
 non-daemon lifetime and use a per-round RPC deadline/cancellation boundary.
+
+Validation failures of an already received upstream response become OSError,
+so the gateway returns 503 with same-key retry guidance. It does not retry writes
+or invent a decline. Explicit business HTTP 4xx is preserved; direct JSON/local
+configuration/request encoding errors retain ValueError.
 
 On shard servers, internal/admin credentials can access `GET /internal/status`
 (unfinished jobs, errors, expired holds and maintenance errors),

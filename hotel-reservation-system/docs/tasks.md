@@ -1,7 +1,7 @@
 # Tasks: Hotel Reservation System
 
 Source: chapter 23 of [System Design Interview.md](<../../System Design Interview.md>),
-lines 10507–11226. Core review 2026-10-26. Final executed counts and measurements
+lines 10507–11226. Latest review 2026-11-04; core review 2026-10-26. Counts/measurements
 are in [validation](../benchmarks/results.md); [chapter mapping](chapter23-review.md)
 records production gaps. The 2026-10-20 result remains historical.
 
@@ -27,6 +27,12 @@ records production gaps. The 2026-10-20 result remains historical.
   faults; retain independent six-process integration and actual process-exit cases.
 - [x] Update English/Chinese README/design and local requirements/tasks; link final
   current evidence rather than presenting historical test counts as current.
+- [x] Compare pinned DeathStarBench/Eventuate source and trace inventory, calendar,
+  Saga/payment and HTTP/RPC boundaries with CodeGraph.
+- [x] Reproduce five invalid-peer-response cases, normalize the response-stage
+  failure family and preserve business/local errors plus single write forwarding.
+- [x] Run 100 strict-warning tests, both six-process demos and hot-hotel contention;
+  synchronize bilingual documentation and the same-key retry reading guide.
 
 ## Remaining production work
 

@@ -15,6 +15,9 @@
 [验证报告](benchmarks/results.md)，原书映射和未完成项见
 [章节记录](docs/chapter23-review.md)。2026-10-20数据仅保留历史日期。
 
+[2026-11-04源码复核](docs/open-source-review_cn.md)对照DeathStarBench和Eventuate Saga，
+修复坏上游响应误报客户端错误的问题；100项严格警告测试、两个六进程示例通过。
+
 ## 运行
 
 在本目录执行：
@@ -22,8 +25,8 @@
 ```powershell
 $env:PYTHONPATH = 'src'
 python examples/network_demo.py
-python -m unittest discover -s tests -v
-python tools/benchmark.py --output benchmarks/results.json
+python -W error -m unittest discover -s tests -v
+python tools/benchmark.py --output .runtime/benchmark.json
 ```
 
 实验自动选用本机端口、生成私有凭据、启动并清理自有进程；数据与日志保留在忽略提交的 `.runtime/lab-*`。若系统临时目录访问受限，创建 `.runtime/tmp`，将 `TEMP` 和 `TMP` 设为其绝对路径。详见 [验证报告](benchmarks/results.md)。
@@ -102,6 +105,10 @@ CLI可设`--concurrency`（1..256）和`--request-timeout`（大于0且不超过
 保持原身份且不盲目重试写入。RPC直连，不走环境代理/重定向，HTTPS正常验证证书。
 socket期限不能强杀DNS/SQL/CPU，名额保留到实际退出。HTTP绑定成功后才启动维护，
 关闭排空handler和自有线程；失败用脱敏状态/日志报告并重试。
+
+已经收到的上游响应若存在JSON/深度、framing或长度校验错误，RPC将其归为OSError，
+网关返回503并提示原键重试，不误报400，不自动重发写入，也不转为明确拒付。
+上游明确返回409等业务4xx仍保留；直接JSON解析及本地配置/请求序列化错误仍为ValueError。
 
 分片 `/internal/status` 提供未完成任务、重试错误、待清理占用及维护错误；
 `/internal/events?after=0`提供分页持久化事件；内部POST接口为`/internal/sweep`、

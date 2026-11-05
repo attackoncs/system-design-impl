@@ -1,6 +1,104 @@
 # Validation and measurements
 
-## Core review — 2026-10-26 (Asia/Shanghai)
+## Source re-review — 2026-11-04 (Asia/Shanghai)
+
+Re-read chapter 23, compared pinned DeathStarBench/Eventuate code and inspected
+inventory/calendar, Saga/payment, worker and HTTP/RPC through CodeGraph. See the
+[source comparison](../docs/open-source-review_cn.md) for actual read paths and
+the unchanged production boundaries. All payments are local simulations.
+
+One confirmed fix classifies validation/depth failures of an already received
+upstream response as sanitized OSError. The gateway uses its existing 503/same-key
+retry path instead of 400; it never adds an automatic write retry. Explicit HTTP
+business 4xx and local configuration/request ValueError remain distinct. Existing
+connection/response/deadline cleanup and unknown-payment retries are preserved.
+
+### Strict regression
+
+Python 3.13.9 / Windows 11 build 26100, standard library/SQLite. Real socket/process
+checks used approved unrestricted execution with workspace-isolated temporary
+paths. From this project with PYTHONPATH=src:
+
+```powershell
+python -W error -m unittest discover -s tests -v
+```
+
+Before changes, **99 tests passed in 68.935s**. New actual HTTP regression first
+reproduced 5 cases returning 400: malformed JSON, duplicate fields, non-finite
+values, deep JSON and truncated Content-Length. After the fix, **100 tests passed
+in 33.604s, no skips, all warnings treated as errors**. The seven historical test
+groups below remain, with HTTP/RPC increasing from 17 to 18.
+
+The new test uses a real gateway PUT with a controlled TCP HTTP peer, checking
+sanitized 503 and exactly one upstream forwarding attempt. It does not simulate a
+committed reservation. Existing Store/process tests separately cover durable
+idempotency, inventory, payment/compensation and retained-disk restart. Local invalid
+request encoding remains ValueError; direct invalid responses now assert OSError.
+
+### Actual six-process examples
+
+```powershell
+python -W error examples/network_demo.py
+python -W error examples/chapter_demo.py --output benchmarks/features-2026-11-04.json
+```
+
+Both passed. The original demo returned the same booking ID on retry, confirmed
+two nights at 20000 cents in a single **409.51ms** observation, then refunded with
+2 unique simulated operations and restored availability to 11.
+
+The [feature report](features-2026-11-04.json) validates background fill of a
+730-day horizon for each of 2 room types, policy authorization/idempotency,
+hotel-wide quantity filtering, preserved manual 12000-cent night, 44000-cent
+booking snapshot, same-ID retry and final REFUNDED/availability=11. Disabled
+policies retain inventory. No real funds/provider/cloud service was used. Owned
+processes stopped; diagnostics remain ignored under `.runtime/lab-*`.
+
+### Short hot-hotel contention observation
+
+```powershell
+python -W error tools/benchmark.py --output benchmarks/review-2026-11-04.json
+```
+
+The final run followed regression and both examples, without concurrent tests
+or graph builds. [Raw report](review-2026-11-04.json):
+
+| Measurement | Observed |
+| --- | ---: |
+| Processes / hotel shards | 6 / 2 |
+| HTTP attempts / clients | 100 / 16 |
+| Physical rooms / overbooking / nights | 20 / 10% / 2 |
+| Accepted bookings / expected capacity conflicts | 22 / 78 |
+| Reserved units per night | 22 / 22 |
+| Unique simulated charges | 22 |
+| Admission / all settled duration | 1.765 / 2.698s |
+| Attempt requests per second | 56.65 |
+| Successful bookings per second through settlement | 8.15 |
+| All-request p50 / p95 | 51.072 / 921.567ms |
+| Approximate SQLite physical bytes sampled | 245760 |
+
+All accepted bookings were independently read back as CONFIRMED. Latencies include
+78 expected capacity conflicts; attempt rate is not successful booking throughput.
+P95 is sorted index 94 from 100 requests. One hotel uses one shard; the other shard
+is configured but idle in this burst, so this is not a cross-shard scaling test.
+Disk bytes are a non-atomic approximate sample. The fix concerns error semantics,
+with no performance improvement claim; initial baseline/specialist checks may share
+host resources, and historical samples do not form a controlled before/after test.
+
+### Static, graph and documentation checks
+
+Ruff E9/F passed for `src` and the changed HTTP test; both changed Python files
+passed formatting. All 31 project Python files parsed with Python 3.10 syntax
+rules. Local checks validated 534 links in 16 Markdown files and parsed benchmark
+JSON. All 27 authored guides matched generated output; the chapter's 3 Mermaid
+diagrams rendered in a headless browser. Scoped `git diff --check` passed.
+
+Graph refresh re-parsed 3 files, updating 91 nodes/1097 edges without errors.
+Transport-scoped direct impact reported 17 file nodes, 46 impacted nodes and 22
+additional files, with 109 edges truncated and 558 calls unresolved. These are
+structural hints; dynamic dispatch, protocol behavior and existing chapters'
+changes require source/execution context rather than coverage claims from counts.
+
+## Historical core review — 2026-10-26 (Asia/Shanghai)
 
 Python 3.13.9 / Windows 11 build 26100, standard library only. All payments are
 simulated operations in an owned local ledger; no real funds/provider was used.

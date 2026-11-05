@@ -1,7 +1,7 @@
 # 任务：酒店预订系统
 
 来源：[System Design Interview.md](<../../System Design Interview.md>)第23章10507–11226行。
-核心审查2026-10-26，最终测试/性能见[验证报告](../benchmarks/results.md)，原书覆盖/缺口见
+最新复核2026-11-04，前次核心审查2026-10-26；测试/性能见[验证报告](../benchmarks/results.md)，覆盖/缺口见
 [章节记录](chapter23-review.md)。2026-10-20结果保留历史日期。
 
 ## 已完成参考工作
@@ -17,6 +17,9 @@
 - [x] 网关显式method/path/query、正文前鉴权、严格JSON/framing、有界直连RPC和准入/关闭拥有权。
 - [x] 对确认的持久化/并发/支付/网络缺陷增加行为回归，保留六进程和真实事务前退出验证。
 - [x] 同步中英文README/design、本地requirements/tasks，最终执行数据统一引用报告。
+- [x] 对照固定版本DeathStarBench/Eventuate源码，通过CodeGraph追踪库存、日历、Saga/支付及HTTP边界。
+- [x] 复现5类坏上游响应，统一响应阶段错误分类，保持业务/本地错误及单次写转发。
+- [x] 运行100项严格警告测试、两个六进程示例和热点酒店并发测量，同步双语文档及原键重试导读。
 
 ## 未完成生产扩展
 

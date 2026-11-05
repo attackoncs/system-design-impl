@@ -1,7 +1,7 @@
 # Requirements: Hotel Reservation System
 
 Source: [System Design Interview.md](<../../System Design Interview.md>), chapter
-23, lines 10507–11226. Review date 2026-10-26. Final evidence and unimplemented
+23, lines 10507–11226. Latest review 2026-11-04; prior core review 2026-10-26. Evidence and remaining
 book extensions: [validation](../benchmarks/results.md),
 [chapter review](chapter23-review.md).
 
@@ -36,6 +36,10 @@ book extensions: [validation](../benchmarks/results.md),
 12. Use independent HTTP processes and actual local disks for integration evidence;
     controlled fault/provider tests remain labeled. Do not equate local results
     with production scale, bank correctness or replicated durability.
+13. Classify validation failures of an already received upstream response as peer
+    OSError/503, retaining unknown-result/same-key retry and single write forwarding.
+    Preserve explicit HTTP business 4xx, local configuration/request ValueError,
+    sanitized messages and complete connection/deadline cleanup.
 
 Production extensions remain replication/HA, online resharding, distributed cache/
 CDC, global guest indexing, real payment integration, hotel-local policies/taxes/

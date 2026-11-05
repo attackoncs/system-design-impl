@@ -247,6 +247,10 @@ def request(
         # Match urllib's connection-failure family for existing retry/failover
         # callers; never include endpoint credentials or peer-controlled text.
         raise OSError("RPC peer protocol failed") from None
+    except (ValueError, RecursionError):
+        if response is None:
+            raise
+        raise OSError("RPC peer response validation failed") from None
     finally:
         if response is not None:
             response.close()

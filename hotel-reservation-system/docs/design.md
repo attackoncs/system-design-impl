@@ -1,8 +1,16 @@
 # Hotel reservation design — Chapter 23
 
-Core review: 2026-10-26. [Chapter mapping](chapter23-review.md) and
+Latest review: 2026-11-04; core review: 2026-10-26. [Chapter mapping](chapter23-review.md) and
 [executed evidence](../benchmarks/results.md) distinguish implemented behavior
 from the book's production targets. Standard library, Python 3.10+.
+
+The [source comparison](open-source-review_cn.md) records DeathStarBench/Eventuate
+mechanisms and local differences. Once an upstream response exists, framing,
+length, type, JSON or decode-depth validation failures become sanitized OSError,
+which the gateway reports as 503 with same-key retry guidance. No write is
+automatically replayed and no payment decline is invented. HTTPError business
+4xx remains distinct; direct JSON/local configuration/request encoding failures
+retain ValueError. Response/connection/deadline cleanup still runs.
 
 ## Boundaries and routing
 

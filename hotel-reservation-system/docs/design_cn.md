@@ -1,7 +1,12 @@
 # 酒店预订设计：第23章
 
-核心审查日期2026-10-26。功能映射见[章节记录](chapter23-review.md)，实际执行证据见
+最新复核2026-11-04，前次核心审查2026-10-26。功能映射见[章节记录](chapter23-review.md)，执行证据见
 [验证报告](../benchmarks/results.md)；Python 3.10+标准库参考，全部支付为模拟。
+
+[源码对照](open-source-review_cn.md)记录DeathStarBench/Eventuate机制与本地差异。
+已收到的上游响应若framing/长度/类型/JSON或深度校验失败，统一转为脱敏OSError，
+网关返回503并提示原键重试；不自动重发写入、不伪造拒付。HTTPError业务4xx保持，
+直接JSON解析及本地配置/请求编码的ValueError保持，连接/响应/期限线程清理继续执行。
 
 ## 服务和分片
 
