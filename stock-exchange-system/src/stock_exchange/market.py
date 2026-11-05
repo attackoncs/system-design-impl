@@ -128,6 +128,22 @@ class Market(Database):
             for order in batch["orders"]:
                 if order["symbol"] not in value["books"]:
                     raise ValueError("unknown order symbol")
+                previous = value["orders"].get(order["order_id"])
+                if previous is None:
+                    if order["seq"] != batch["seq"]:
+                        raise ValueError("new order sequence differs from batch")
+                elif (
+                    any(
+                        order[key] != previous[key]
+                        for key in order
+                        if key not in {"remaining", "filled", "status", "reason"}
+                    )
+                    or order["filled"] < previous["filled"]
+                    or order["remaining"] > previous["remaining"]
+                    or previous["status"] in {"FILLED", "CANCELED"}
+                    and order != previous
+                ):
+                    raise ValueError("order update changed identity or regressed state")
             for symbol, sides in batch["books"].items():
                 for side, changes in sides.items():
                     for price, quantity in changes.items():

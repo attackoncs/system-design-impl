@@ -10,7 +10,7 @@ from .common import checksum, encode
 
 
 def compatible(actual, expected):
-    if actual == expected:
+    if checksum(actual) == checksum(expected):
         return True
     if any(
         key in actual
@@ -22,7 +22,7 @@ def compatible(actual, expected):
         legacy.pop(key)
     for trade in legacy["trades"]:
         trade.pop("execution_seq")
-    return actual == legacy
+    return checksum(actual) == checksum(legacy)
 
 
 def publish(path, payload):

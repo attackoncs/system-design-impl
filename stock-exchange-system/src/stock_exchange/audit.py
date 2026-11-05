@@ -4,6 +4,23 @@
 def audit(state):
     settings = state["settings"]
     errors = []
+    numbers = [state["execution_seq"], state["last_seq"], state["last_timestamp"]]
+    numbers.extend(state["daily"].values())
+    for account in state["accounts"].values():
+        for balance in (account["cash"], *account["positions"].values()):
+            numbers.extend(balance.values())
+    for order in state["orders"].values():
+        numbers.extend(
+            order[key]
+            for key in ("price", "quantity", "remaining", "filled", "seq", "timestamp")
+        )
+    for trade in state["trades"]:
+        numbers.extend(
+            trade[key]
+            for key in ("price", "quantity", "execution_seq", "seq", "timestamp")
+        )
+    if any(type(value) is not int for value in numbers):
+        errors.append("non-integer monetary, quantity or sequence value")
     cash = sum(sum(account["cash"].values()) for account in state["accounts"].values())
     expected_cash = sum(value["cash"] for value in settings["accounts"].values())
     if cash != expected_cash:

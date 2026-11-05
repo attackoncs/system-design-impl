@@ -2,7 +2,7 @@
 
 Source: Chapter 29 of `System Design Interview.md` in the root directory, starting at line 15039.
 
-Status: Reference implementation complete; 56 tests, 4-process demo, and p99 measurement passed. Simulated accounts/market data only; asynchronous primary/backup matching and manual epoch switching verified, sequencer remains a single point, no automatic leader election or production-scale proof.
+Status: Reference implementation complete; 64 tests, 4-process demo, and p99 measurement passed. Simulated accounts/market data only; asynchronous primary/backup matching and manual epoch switching verified, sequencer remains a single point, no automatic leader election or production-scale proof.
 
 ## Scope
 
@@ -37,3 +37,10 @@ Limit-order equity new/cancel, real-time fills and order books, trading session 
 - [x] Concurrent reads, rate/capacity/protocol/deadlines, owned polling shutdown, 56 tests and recorded measurements.
 - [ ] Raft/elections/sequencer replicas, cross-host recovery and separate outbound event bus.
 - [ ] mmap/SBE/FIX, multicast fairness/L3, CPU pinning, snapshot acceleration/compaction and production scale.
+
+## 2026-11-05 replay and market history review
+
+- [x] Replace Python scalar-coercing state equality with canonical checksums in promotion, replay/projection audit and current/legacy snapshot compatibility; preserve object-key order independence and legacy upgrades.
+- [x] Preserve retained order identity/intent, monotonic fill progress and terminal history; require new order sequence to match the publishing batch.
+- [x] Reject projection numeric type drift before further matching; keep the applied sequence unchanged and resume the original command after replay rebuild.
+- [x] Verify conflicting updates roll back cursor, fingerprints, public changes and private reports together; add eight regression tests, with 64 strict tests passing including five actual four-process integrations.

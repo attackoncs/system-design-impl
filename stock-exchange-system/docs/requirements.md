@@ -1,6 +1,6 @@
 # Chapter 29 Securities Trading System Requirements
 
-Source: Chapter 29 of `System Design Interview.md` in the root directory. Simulated limit-order equity trading only, not connected to real trading venues; the original book's targets of ten billion daily orders, sub-millisecond p99, and four-nines availability remain unvalidated goals.
+Source: Chapter 29 of `System Design Interview.md` in the root directory. Simulated limit-order equity trading only, not connected to real trading venues; the original book's targets of one billion daily orders, millisecond-level round-trip latency with particular focus on p99, and four-nines availability remain unvalidated goals.
 
 - Integer USD cent prices and integer share quantities; static synthetic accounts/positions; identity, session, and risk checks remain abstract.
 - Idempotent new/cancel commands, totally ordered sequencing, price-time priority, resting-price execution, partial fills, self-trade prevention.
@@ -19,3 +19,10 @@ Does not include real timezone/holiday calendar, production KYC/compliance certi
 - Atomically persist market cursor/fingerprints/reports; reject rollback/conflicts/invalid quantities; upgrade legacy snapshots/projections; concurrent reads with bounded protocol/lifetimes.
 
 Open: mmap/SBE/FIX/CPU pinning, equal-time multicast, Raft/elections/sequencer replication, separate outbound event bus, L3 subscriptions and production/real settlement.
+
+## 2026-11-05 replay and market-update integrity
+
+- Compare canonical state checksums for promotion, replay/projection equality and current/legacy snapshot compatibility. Equal-valued JSON booleans, floats and integers are distinct; dictionary insertion order is irrelevant.
+- Audit monetary values, quantities and sequence counters as strict integers before further matching; even an equal-valued float projection drift blocks new commands until replay rebuilds the state.
+- Retained orders keep their original identity and intent. Only remaining/filled/status/reason may change, with nondecreasing fills, nonincreasing remaining quantities and immutable terminal orders; a newly published order must originate in the current batch sequence.
+- Reject conflicting updates before committing the market cursor, public changes, duplicate fingerprint or private reports; retain the previous projection on failure. These checks do not add sequencer redundancy or automatic election.

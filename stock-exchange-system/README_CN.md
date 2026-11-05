@@ -24,7 +24,7 @@ python examples/network_demo.py
 python tools/benchmark.py --pairs 20 --clients 4
 ```
 
-56项测试含5项独立进程HTTP测试。演示验证同价FIFO、部分成交与价差返还，停主后提升已追平的备机，再撤销剩余卖单并核验现金/股份守恒、行情与报告。实验只清理自己启动的进程及临时数据库。
+64项测试含5项独立进程HTTP测试。演示验证同价FIFO、部分成交与价差返还，停主后提升已追平的备机，再撤销剩余卖单并核验现金/股份守恒、行情与报告。实验只清理自己启动的进程及临时数据库。
 
 如需持久运行，先执行 `python tools/init_config.py`，在四个终端设置 `PYTHONPATH=src` 后分别执行：
 
@@ -101,7 +101,9 @@ python -m stock_exchange.cli market --config .runtime/private-config.json
 
 ## 实测与边界
 
-详见[设计](docs/design.md)、[测试/压测报告](benchmarks/REPORT.md)和[本轮样本](benchmarks/review-2026-10-27.json)与[历史样本](benchmarks/latest.json)。预置20笔卖单后，4个并发客户端提交20笔买单，本轮实测约 **17.11笔成交主动单/秒**，提交至成交 **p99 377.02毫秒**。这是含HTTP和客户端轮询的小样本端到端指标；20个观测的最近秩p99就是最大值，不能代表稳定尾延迟。
+详见[设计](docs/design.md)、[测试/压测报告](benchmarks/REPORT.md)、[本轮样本](benchmarks/review-2026-11-05.json)与[恢复演示](benchmarks/features-2026-11-05.json)。保留[此前审查样本](benchmarks/review-2026-10-27.json)和[初始样本](benchmarks/latest.json)。预置20笔卖单后，4个并发客户端提交20笔买单，本轮实测约 **21.63笔成交主动单/秒**，提交至成交 **p99 273.18毫秒**。这是含HTTP和客户端轮询的小样本端到端指标；20个观测的最近秩p99就是最大值，不能代表稳定尾延迟或受控提速结论。
+
+[2026-11-05章节审查](docs/chapter29-review.md)与[Exchange Core/CoinTossX固定源码对照](docs/open-source-review_cn.md)记录本轮修复：提升/快照/投影比对区分JSON中的`false`、`0`、`0.0`，坏数值投影阻断撮合，原日志重建后恢复；行情增量保持订单身份、成交进度单调和终态不变，新单创建序号须属于本批次。新增8项回归保护这些边界。
 
 未实现定序器复制、自动选主、跨机耐久性、真实资金、真实交易日历、生产KYC/合规、清算结算、卖空、手续费、市价单或FIX。最多100个账户/100只股票、1000条指令，使用完整JSON状态复制与价格级/FIFO索引（仍有全量复制与审计成本），保留全部历史。原书每日十亿订单、低毫秒尾延迟和99.99%可用性均未证明。
 

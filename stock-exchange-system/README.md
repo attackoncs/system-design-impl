@@ -24,7 +24,7 @@ python examples/network_demo.py
 python tools/benchmark.py --pairs 20 --clients 4
 ```
 
-56 tests include five actual HTTP multi-process tests. The demo matches two FIFO sells against one buy, refunds price improvement, stops the primary, promotes the caught-up backup and cancels the remaining sell quantity. It verifies cash/share conservation, reporting and candles. Temporary labs stop only their own processes and remove their databases on exit.
+64 tests include five actual HTTP multi-process tests. The demo matches two FIFO sells against one buy, refunds price improvement, stops the primary, promotes the caught-up backup and cancels the remaining sell quantity. It verifies cash/share conservation, reporting and candles. Temporary labs stop only their own processes and remove their databases on exit.
 
 For persistent use, run `python tools/init_config.py` once, then launch four terminals with `PYTHONPATH=src` and this directory as working directory:
 
@@ -101,7 +101,9 @@ Snapshots are fsynced and atomically replaced. Startup checks the entire command
 
 ## Measured limits
 
-See [design](docs/design.md), [verification report](benchmarks/REPORT.md) and [current sample](benchmarks/review-2026-10-27.json) and [historical sample](benchmarks/latest.json). A 20-taker/4-client sample measured **17.11 filled taker orders/s**, submit-to-fill **p99 377.02 ms**. It includes HTTP and client polling, not a standalone matching-engine latency measurement; with 20 observations, nearest-rank p99 is the maximum sample.
+See [design](docs/design.md), [verification report](benchmarks/REPORT.md), [current sample](benchmarks/review-2026-11-05.json) and [recovery demo](benchmarks/features-2026-11-05.json). Earlier [review](benchmarks/review-2026-10-27.json) and [initial](benchmarks/latest.json) samples remain available. The current 20-taker/4-client sample measured **21.63 filled taker orders/s**, submit-to-fill **p99 273.18 ms**. It includes HTTP and client polling, not a standalone matching-engine latency measurement; with 20 observations, nearest-rank p99 is the maximum sample. This is not a controlled speedup comparison.
+
+The [2026-11-05 review](docs/chapter29-review.md) and [fixed Exchange Core/CoinTossX source comparison](docs/open-source-review_cn.md) cover typed state integrity and market transitions. Promotion/snapshot/projection checks distinguish JSON `false`, `0` and `0.0`; malformed numeric projections block matching until replay rebuilds them. Market batches cannot change existing order identity, reverse fill progress, reopen terminal orders or assign an old creation sequence to a new order. Eight new regression tests protect these cases.
 
 The reference has no sequencer replication, automatic failover, independent-host durability, production KYC/compliance, trading calendar, settlement/clearing, real funds, shorting, fees, market orders or FIX. It bounds configuration to 100 symbols/100 accounts and history to 1,000 commands, uses full JSON state copies and price-level/FIFO indexes with full-state copying/auditing, and retains all command history. The book's billion orders/day, low-millisecond tail latency and 99.99% availability are unproven targets.
 

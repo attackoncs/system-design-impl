@@ -196,7 +196,7 @@ class Sequencer(Log):
             expected = {}
             for row in rows:
                 expected = reduce_command(expected, row["event"])
-            if replica["state"] != expected:
+            if replica["state_hash"] != checksum(expected):
                 raise Error(
                     409, "candidate state differs from independent sequencer replay"
                 )
@@ -417,6 +417,6 @@ class Engine(Log):
                 raise Error(503, "engine not ready")
             return {
                 "seq": len(rows),
-                "projection_matches": replay == projected,
+                "projection_matches": checksum(replay) == checksum(projected),
                 **audit(replay),
             }

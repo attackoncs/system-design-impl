@@ -19,6 +19,15 @@ flowchart TB
 
 主备撮合可人工切换，但定序器仍是单点；不要把两套独立重放理解为自动共识选主。
 
+| 想先弄明白什么 | 阅读入口 | 手算或验证的结果 |
+|---|---|---|
+| 一笔买单为什么分两次成交 | 下方案例 → `reduce_command` → `OrderBook.best` | 5＋3股，按maker价格100结算 |
+| 崩溃后为什么不重复成交 | `Sequencer.submit` → `Engine.apply` → `Engine.replay` | 相同请求不生成新命令，相同日志行不再次应用 |
+| 什么时候可以提升备机 | 提升检查图 → `Sequencer.promote` | 完整前缀与类型敏感状态均相同才切换epoch |
+| 行情怎样防止订单被改写 | `Market.apply` → 行情回归测试 | 原身份保持，成交进度不倒退，已撤订单不能复活 |
+
+章节覆盖和剩余架构见[chapter29-review.md](../docs/chapter29-review.md)；上游Exchange Core、CoinTossX的实际源码差异见[open-source-review_cn.md](../docs/open-source-review_cn.md)。
+
 ## 先认清数据层次
 
 | 数据 | 关键字段 | 在案例中的作用 |
@@ -106,6 +115,41 @@ sequenceDiagram
 [SafetyTests.test_command_rollback_keeps_projection_events_and_batches_together](../tests/test_safety.py#L188)检查事务中途失败不会留下“有成交但没行情”或相反的部分结果。[MatchingTests.test_storage_replay_snapshot_tail_immutability_and_gap](../tests/test_matching.py#L147)检查日志重放、快照与缺口。
 
 真实的恢复不是拿旧snapshot就信任它：快照必须与日志前缀及状态校验一致，再应用尾部。行情增量保留窗口以外的消费者要重新拉快照，而不是静默跳过丢失的book变化。
+
+## 微观三：同序号、同链头还不够
+
+```mermaid
+flowchart TD
+  R["候选备机：seq、head、state、state_hash"] --> P{"完整定序日志前缀一致？"}
+  P -->|否| E["拒绝提升，保持当前epoch"]
+  P -->|是| V["候选状态自校验＋定序日志独立重放"]
+  V --> H{"规范化状态hash相同？"}
+  H -->|否| E
+  H -->|是| A["事务内切换active并提升epoch"]
+  A --> F["发布前后及消费端核验epoch和前缀"]
+```
+
+[storage.py:196](../src/stock_exchange/storage.py#L196)
+
+```python
+    expected = {}
+    for row in rows:
+        expected = reduce_command(expected, row["event"])
+    if replica["state_hash"] != checksum(expected):
+        raise Error(
+            409, "candidate state differs from independent sequencer replay"
+        )
+    current = db.execute("SELECT active FROM control").fetchone()[0]
+    if node != current:
+        db.execute("UPDATE control SET epoch=epoch+1,active=?", (node,))
+return self.control()
+```
+
+Python认为`False == 0 == 0.0`，但它们是三种不同的JSON数据。提升、快照和投影核验比较规范化校验和，使错误类型无法靠值相等通过；字典插入顺序不影响规范化结果。[ReplayIntegrityTests.test_promotion_rejects_equal_python_values_with_different_json_types](../tests/test_replay_integrity.py#L13)直接保护这个边界。
+
+发现坏投影也不能继续撮合。[audit](../src/stock_exchange/audit.py#L4)检查余额、数量和序号的严格整数类型；[ReplayIntegrityTests.test_non_integer_balance_blocks_matching_until_rebuild](../tests/test_replay_integrity.py#L45)把现金改成整值浮点数，验证新命令被拒绝、日志应用序号不推进，原日志重建后可以继续。
+
+行情投影只接收合法的订单演进：已有订单的属主、意图和创建序号不变，filled只能增加、remaining只能减少，FILLED/CANCELED终态不能改写，新订单的seq必须等于本批次。[MarketTransitionTests.test_unfilled_order_cannot_change_owner_in_later_batch](../tests/test_replay_integrity.py#L71)和[MarketTransitionTests.test_canceled_order_cannot_reopen_even_with_matching_book_levels](../tests/test_replay_integrity.py#L83)验证即使L2总量能对上，也不能改写身份或复活订单；失败会回滚游标、公开增量和私有报告。
 
 ## 自查与练习
 
