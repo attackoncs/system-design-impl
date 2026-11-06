@@ -18,9 +18,10 @@
 
 ## 运行
 
-Python 3.10及以上，仅标准库。本目录PowerShell执行：
+Python 3.10及以上，运行时仅标准库；完整测试需安装包含pytest的可选依赖。在本目录PowerShell执行：
 
 ```powershell
+python -m pip install -e ".[test]"
 $env:PYTHONPATH = 'src'
 New-Item -ItemType Directory -Force .runtime/tmp | Out-Null
 $env:TEMP = (Resolve-Path .runtime/tmp).Path
@@ -88,7 +89,7 @@ worker使用持久任务、五秒租约（Store.claim直接调用的兼容默认
 
 ## 验证与限制
 
-详见[设计](docs/design.md)、[验证及实测](benchmarks/REPORT.md)和[本轮样本](benchmarks/review-2026-10-27.json)与[历史样本](benchmarks/latest.json)。小流量下新增网络层可能更慢，实验观察其开销及主库资料读取减少，不预设分层一定提速。
+详见[设计](docs/design.md)、[验证及实测](benchmarks/REPORT.md)、[2026-10-27性能样本](benchmarks/review-2026-10-27.json)与[2026-10-21历史样本](benchmarks/latest.json)。2026-11-06复核未重测性能。小流量下新增网络层可能更慢，实验观察其开销及主库资料读取减少，不预设分层一定提速。
 
 固定SHA256用户分片，没有在线迁移。主库、会话库、负载均衡及各单实例服务仍有单点；未挂 `Fence` 时，主库停机影响该分片的鉴权、写入和强读。未验证跨机耐久性、默认阶段的自动主库切换、真实CDN、真实GeoDNS服务、多地域部署、百万用户负载、生产TLS/身份或自动伸缩。每主库限制1000条资料变更和1000个有效会话，保留完整历史。后续章节组件可用于深入学习，但未冒充已经集成为本实验的生产基础设施。
 

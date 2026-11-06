@@ -18,9 +18,10 @@ The edge cache is an explicit local **CDN model**, not a real CDN or GeoDNS serv
 
 ## Run
 
-Python 3.10+, no third-party runtime dependencies. From this directory in PowerShell:
+Python 3.10+, no third-party runtime dependencies. Install the test extra for pytest, then run from this directory in PowerShell:
 
 ```powershell
+python -m pip install -e ".[test]"
 $env:PYTHONPATH = 'src'
 New-Item -ItemType Directory -Force .runtime/tmp | Out-Null
 $env:TEMP = (Resolve-Path .runtime/tmp).Path
@@ -92,7 +93,7 @@ Use the admin token for `GET /admin/status` on a specific service. Available met
 
 ## Limits and evidence
 
-See [design](docs/design.md), [verification/measurements](benchmarks/REPORT.md) and [current sample](benchmarks/review-2026-10-27.json) and [historical sample](benchmarks/latest.json). Adding tiers creates network cost at small scale; the benchmark measures that tradeoff and primary profile-read reduction without assuming a speedup.
+See [design](docs/design.md), [verification/measurements](benchmarks/REPORT.md), the [2026-10-27 performance sample](benchmarks/review-2026-10-27.json) and the [2026-10-21 historical sample](benchmarks/latest.json). Performance was not remeasured in the 2026-11-06 review. Adding tiers creates network cost at small scale; the benchmark measures that tradeoff and primary profile-read reduction without assuming a speedup.
 
 Shard routing is fixed SHA256(user) modulo count. There is no online resharding. Primaries, balancer, session stores, worker and cache/edge instances remain individual services; primary failure stops authentication and strong reads for that shard unless a `Fence` has promoted profile writes. Replicas support profile-read fallback without a fence. No cross-host durability, automatic database failover of the default stages, real CDN, real GeoDNS service, geographic deployment, million-user load, production identity/TLS or autoscaling has been verified. Each primary retains at most1000 profile changes and1000 live sessions; complete history is kept for replay. Related later chapters provide deeper standalone components, not automatically integrated infrastructure here.
 
