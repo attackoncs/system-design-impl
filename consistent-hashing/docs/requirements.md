@@ -2,7 +2,7 @@
 
 ## Overview
 
-A Python consistent hashing library implementing the hash ring algorithm with virtual nodes for balanced key distribution across servers. Supports dynamic server addition/removal with minimal key redistribution, suitable for distributed systems like caches, databases, and load balancers.
+A Python consistent hashing library implementing a virtual-node hash ring and routing changes when servers are added or removed. Uniform hashes and sufficient samples can improve balance and reduce expected remapping; arbitrary inputs have no fixed balance or migration-ratio guarantee. The library plans ownership changes for caches, databases and load balancers, without physically moving or replicating data.
 
 ## Functional Requirements
 
@@ -24,8 +24,8 @@ A Python consistent hashing library implementing the hash ring algorithm with vi
 
 ### FR-3: Server Management
 
-- **FR-3.1**: The system shall support adding a server to the ring at runtime, placing its virtual nodes on the ring and redistributing only the affected keys.
-- **FR-3.2**: The system shall support removing a server from the ring at runtime, removing its virtual nodes and redistributing only the affected keys to the next clockwise server.
+- **FR-3.1**: Support adding a server at runtime and publishing its virtual nodes; only affected keys change routing ownership. Moving stored bytes is the caller's responsibility.
+- **FR-3.2**: Support removing a server at runtime and publishing the remaining virtual nodes; affected keys route to the next clockwise owner without performing data transfer.
 - **FR-3.3**: Adding a server with N virtual nodes shall only affect keys that fall between the new virtual node positions and their preceding nodes on the ring.
 - **FR-3.4**: Removing a server shall only affect keys that were assigned to that server — they move to the next clockwise server.
 - **FR-3.5**: The system shall provide a method to query which keys would be redistributed when adding or removing a server.
