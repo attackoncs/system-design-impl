@@ -1,0 +1,73 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Kiro/Claude
+.kiro/
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# System Design Interview.md
+System Design Interview.md
+
+# Isolated repository test runner
+.test-tmp/
+
+# Runtime environments (contains broken symlinks on Windows)
+.runtime/
+**/.runtime/**
+
+# Added by code-review-graph
+.code-review-graph/
+
+# Added by codegraph
+.codegraph/
+
+# Sub-project SQLite databases
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+
+# Sub-project secrets and tokens
+secrets.json
+tokens.json
+*private-config.json
+*.key
+
+# Sub-project environment files
+.env
+.env.*
+!.env.example
+
+# Sub-project runtime state files
+chat-cursor.txt
+chat-cursor.txt.tmp
+
+# Sub-project .gitignore files (rules merged into root)
+**/.gitignore
+!/.gitignore
