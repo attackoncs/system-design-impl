@@ -30,6 +30,9 @@ Monthly-season scoring, +1 per match win, Top 10 and personal ranking; tied user
 
 ## Acceptance Results and Boundaries
 
+The test and latency figures below are historical **2026-10-21** evidence. Current
+72-test results and measurements are in [the validation report](../benchmarks/results.md).
+
 - 5 authoritative-journal tests + 3 real Redis network tests pass (51.802 seconds); after cleaning up failing HTTP responses, related network cases were re-verified.
 - Throughput with all 60 matches fully projected is 2.87/s; at 4 concurrent clients, Top 10 p95 is 2043.169 ms and personal/neighbor p95 is 3662.957 ms, which does not meet the book's production performance targets.
 - Real primary hard exit, manual promotion, AOF recovery with projection stopped, and journal rebuild have been verified. See ../benchmarks/results.md.
