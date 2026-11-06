@@ -21,6 +21,8 @@ flowchart LR
 
 虚线表示后台推进；SQL主库写入不等待副本追赶。GeoDNS、提升租约和缓存集群是进一步的故障处理层，先读通这里的单分片版本路径再扩展。
 
+本轮章节复核见{{file:docs/chapter02-review.md}}，其中补齐了租约并发边界；HAProxy/Redis固定源码对照见{{file:docs/open-source-review_cn.md}}，区分组件借鉴与整章部署能力。注意本地实验不代表真实多地域HA。
+
 ## 主数据和派生状态放在哪里
 
 | 状态 | 字段或内容 | 对案例的意义 |
@@ -57,6 +59,8 @@ flowchart LR
 
 generation与floor解决不同问题：前者阻止失效前已经开始的读，后者阻止失效后从落后副本新读出的旧值。
 
+`put`还应在修改任何旧项前校验调用方TTL；{{symbol:tests/test_cache_safety.py:CacheSafetyTests.test_invalid_update_ttl_preserves_existing_value_and_accounting}}以五种无效TTL验证拒绝后旧值和统计不变。这是输入失败的完整性，与缓存是否过期、是否最新是不同问题。
+
 ```mermaid
 sequenceDiagram
   participant A as Alice
@@ -79,6 +83,38 @@ sequenceDiagram
 ```
 
 ## 失败后应看到什么
+
+### 微观三：不能检查完租约就把它放下
+
+{{symbol:src/scale_from_zero/leadership.py:Fence.writing}}把Fence写事务所有权保持到资料事务及游标发布完成。{{symbol:src/scale_from_zero/profiles.py:ProfileMixin.update}}按Fence→资料库顺序取锁，在资料事务内调用保护内publisher，正常流程是资料先提交、Fence后提交。
+
+```mermaid
+sequenceDiagram
+  participant O as 旧主写入
+  participant F as 共享Fence事务
+  participant P as 资料SQLite
+  participant N as 候选副本
+  O->>F: writing，检查并持有写入权
+  O->>P: BEGIN IMMEDIATE，可能等待资料写锁
+  N->>F: promote(cursor=0)
+  Note over F,N: Fence仍被旧写拥有，提升必须等待
+  alt 等待后租约已过期
+    O->>F: publisher重新检查当前时钟
+    F-->>O: 403
+    O->>P: ROLLBACK，资料与恢复记录不变
+    O->>F: 回滚并释放
+    F-->>N: 租约过期且游标0可提升
+  else 资料写入及发布检查有效
+    O->>F: 暂存cursor=1
+    O->>P: COMMIT
+    O->>F: COMMIT并释放
+    F-->>N: 最新cursor=1，拒绝落后cursor=0
+  end
+```
+
+{{symbol:tests/test_leadership_safety.py:LeadershipSafetyTests.test_expiry_while_waiting_for_profile_writer_cannot_commit_old_data}}实际占住SQLite写锁，再推进时钟；旧主不能先写资料再靠403掩盖变化。{{symbol:tests/test_leadership_safety.py:LeadershipSafetyTests.test_promotion_waits_for_commit_and_rejects_its_old_cursor}}验证提交中的写阻挡提升，醒来仍必须检查最新游标。
+
+这仍是两个SQLite文件，不是跨库崩溃原子事务：进程可在资料提交、Fence提交之间退出，留下未确认写；保留原盘恢复和默认拓扑未挂Fence的边界见设计文档。
 
 缓存故障时更新已经可能提交主库；`App.update` 记录缓存错误并返回已经确认的写结果。若主库响应没有达到 `min_version`，`App.get` 返回409，而不是伪称读到了新版本。需要严格主库读取时使用 `strong=True`，它会跳过缓存和副本。
 

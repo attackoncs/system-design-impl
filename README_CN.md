@@ -6,15 +6,17 @@
 [跟着一个案例读懂系统：架构、状态变化与关键代码详解](docs/learning-guide_cn.md)。
 <!-- LEARNING_GUIDE_END -->
 
-本项目是《System Design Interview》书中各章节系统设计的 Python 实现。每个章节作为独立的子项目，包含完整的设计文档、源代码、测试和使用示例。
+本仓库提供《System Design Interview》的27个Python参考子项目，包含设计文档、源代码、测试、使用示例及明确的部署边界。
 
 ## 已实现
 
+[复审覆盖清单](docs/review-coverage_cn.md)汇总逐章证据、历史验证与本轮补查范围。
+
 | 章节 | 主题 | 状态 | 说明 |
 |------|------|------|------|
-| 02 | [从零扩容](./scale-from-zero/) | ✅ 核心已复审 | 源绑定复制、缓存栅栏、在线Web池、租约任务、本地GeoDNS故障切换与租约隔离的资料主库提升；73项测试；生产级多地域HA仍待实现 |
-| 03 | [容量估算](./capacity-estimation/) | ✅ 参考实现完成 | 显式单位Decimal QPS/存储/带宽/缓存/节点/可用性预算、场景CLI与敏感性分析；14项测试 |
-| 05 | [Rate Limiter](./rate-limiter/) | ✅ 核心复审完成 | 249项测试；文件规则/稳定身份/时钟水位/有界FIFO；真实4进程Redis及双HTTP验证 |
+| 02 | [从零扩容](./scale-from-zero/) | ✅ 核心已复审 | HAProxy/Redis源码对照；资料提交与主库提升互斥、非法TTL保留旧缓存；77项测试；生产级多地域HA仍待实现 |
+| 03 | [容量估算](./capacity-estimation/) | ✅ 核心已复审 | napkin-math源码对照；显式单位Decimal预算、精确节点取整与备用数量；16项测试；[本轮记录](./capacity-estimation/docs/chapter03-review.md) |
+| 05 | [Rate Limiter](./rate-limiter/) | ✅ 核心复审完成 | 265项测试；文件规则/稳定身份/时钟水位/有界FIFO；真实4进程Redis及双HTTP验证 |
 | 06 | [Consistent Hashing](./consistent-hashing/) | ✅ 核心复审完成 | 163项测试；GitHub源码对照、迁移局部性/统计属性、未变状态O(1)规划；四进程一致性验证 |
 | 07 | [Key-Value Store](./key-value-store/) | 核心已实现，[开源复审428项测试](key-value-store/docs/open-source-review_cn.md)；自动供给/安全下线未完成 | Dynamo 风格、LSM-tree 存储、仲裁交集、Gossip 协议、gRPC |
 | 08 | [Unique ID Generator](./unique-id-generator/) | 核心已实现，[开源复审122项测试](unique-id-generator/docs/open-source-review_cn.md)；身份/重启安全依赖部署 | Snowflake、位布局预计算、线程安全、精确UTC解析 |
@@ -22,7 +24,7 @@
 | 10 | [Web Crawler](./web-crawler/) | ✅ 核心已复审 | 固定Scrapy源码对照；连续取消时排空SQLite任务并释放文件锁；259项测试；[本轮记录](./web-crawler/docs/chapter10-review.md) |
 | 11 | [Notification System](./notification-system/) | ✅ 核心已复审 | 466项测试；有界批量受理、领取凭据隔离、事务内租约计时与Worker复用；[开源对照](./notification-system/docs/open-source-review_cn.md) |
 | 12 | [News Feed System](./news-feed-system/) | ✅ 核心已复审 | 固定Stream-Framework源码对照；混合推拉/outbox与有界组装；深层JSON在发布前返回400；311项测试；[本轮记录](./news-feed-system/docs/chapter12-review.md) |
-| 13 | [Chat System](./chat-system/) | ✅ 完成 | 事务收件箱、Redis 路由与推送凭据校验、有界 WebSocket、授权消息查询及设备游标恢复 |
+| 13 | [Chat System](./chat-system/) | ✅ 核心已复审 | Tinode/Zulip源码对照；持久收件箱、多设备恢复与Redis隔离；修复WSL验证脚本及Sentinel就绪判断；主套202项＋独立切主1项通过；[本轮记录](./chat-system/docs/chapter13-review.md) |
 | 14 | [Search Autocomplete](./search-autocomplete-system/) | ✅ 核心链路已核对 | 采样日志、不可变Top 5 Trie、有界副本切换与响应完整性；188项测试；[开源对照](./search-autocomplete-system/docs/open-source-review_cn.md) |
 | 15 | [Video Streaming](./video-streaming-system/) | ✅ 核心链路已核对 | 分片组装校验与修复、有界租约DAG、真实HLS/PostgreSQL/S3验证；覆盖164项；[开源核对](./video-streaming-system/docs/open-source-review_cn.md) |
 | 16 | [File Sync](./file-sync-system/) | ✅ 核心链路已核对 | 加密增量同步、冲突/权限/GC栅栏、响应完整性与游标恢复；122项测试；[开源核对](./file-sync-system/docs/open-source-review_cn.md) |
@@ -78,8 +80,6 @@
 | 27 | [design](./payment-system/docs/design.md) · [requirements](./payment-system/docs/requirements.md) · [tasks](./payment-system/docs/tasks.md) | [设计](./payment-system/docs/design_cn.md) · [需求](./payment-system/docs/requirements_cn.md) · [任务](./payment-system/docs/tasks_cn.md) |
 | 28 | [design](./digital-wallet-system/docs/design.md) · [requirements](./digital-wallet-system/docs/requirements.md) · [tasks](./digital-wallet-system/docs/tasks.md) | [设计](./digital-wallet-system/docs/design_cn.md) · [需求](./digital-wallet-system/docs/requirements_cn.md) · [任务](./digital-wallet-system/docs/tasks_cn.md) |
 | 29 | [design](./stock-exchange-system/docs/design.md) · [requirements](./stock-exchange-system/docs/requirements.md) · [tasks](./stock-exchange-system/docs/tasks.md) | [设计](./stock-exchange-system/docs/design_cn.md) · [需求](./stock-exchange-system/docs/requirements_cn.md) · [任务](./stock-exchange-system/docs/tasks_cn.md) |
-
-第 12 章当前仅提供设计文档，尚未补充 requirements 与 tasks。
 
 ## 项目结构
 
@@ -205,9 +205,9 @@ sdi-implement/
 每个子项目遵循以下原则：
 
 1. **独立可运行** — 每个子项目有自己的 `pyproject.toml`，可独立安装和测试
-2. **完整测试覆盖** — 使用 pytest，包含单元测试和集成测试
+2. **回归验证** — 单元和集成测试分别记录，明确真实服务前提与跳过项
 3. **文档齐全** — README、架构文档、设计规格
-4. **生产级质量** — 类型注解、错误处理、性能考虑
+4. **工程化约束** — 类型注解、错误处理、有界资源及明确的一致性/持久性边界
 5. **忠于原书** — 实现书中描述的核心概念和算法
 
 ## 一次性安装全部依赖
@@ -225,7 +225,7 @@ pip install -e ".[all]"
 pip install -r requirements-all.txt
 ```
 
-完成后可直接在任意子目录运行 `pytest`，或执行 `python examples/xxx.py`。其中 `key-value-store` 依赖本地包 `consistent-hashing`，`requirements-all.txt` 已将其排在前面优先安装。
+完成后按各子项目文档运行测试或示例；真实服务测试仍需对应章节的服务和配置。其中 `key-value-store` 依赖本地包 `consistent-hashing`，`requirements-all.txt` 已将其排在前面优先安装。
 
 ## 快速开始
 
@@ -236,8 +236,8 @@ cd rate-limiter
 # 安装依赖
 pip install -e ".[dev]"
 
-# 运行测试
-pytest
+# 使用当前解释器运行测试
+python -W error -m pytest tests -q
 
 # 运行示例
 python examples/basic_usage.py
@@ -245,8 +245,8 @@ python examples/basic_usage.py
 
 ## 环境要求
 
-- Python >= 3.9
-- 各子项目可能有额外依赖（见各自的 pyproject.toml）
+- 汇总环境要求Python >= 3.10，与根目录 `pyproject.toml` 一致
+- 单独运行章节时，以该章节 `pyproject.toml` 和README的版本及依赖要求为准
 
 ## License
 
@@ -254,6 +254,6 @@ MIT
 
 ## 工程质量
 
-工程组织与验证约定见 [CONTRIBUTING.md](CONTRIBUTING.md)，本轮检查、修复、性能取舍及待办见 [ENGINEERING_REVIEW.md](ENGINEERING_REVIEW.md)。可运行 `python tools/audit_code.py` 生成源码检查报告。
+当前证据见[复审覆盖清单](docs/review-coverage_cn.md)和[章节进度](DEEP_REVIEW_PROGRESS.md)，工程组织与验证约定见[CONTRIBUTING.md](CONTRIBUTING.md)。[ENGINEERING_REVIEW.md](ENGINEERING_REVIEW.md)保留注明日期的全仓基础审查，并链接最新记录。可运行 `python tools/audit_code.py` 生成源码检查报告。
 
-本轮工程审查覆盖全部 27 个子项目，报告包含逐项目修改、并发回归测试与未验证的集成环境。安装各章节依赖后，运行 `python tools/run_project_tests.py --jobs 2 --output .test-tmp/review`，即可在独立进程中执行各章节测试。
+27个子项目均有章节复审记录，记录来自不同日期和执行批次，不代表本次重新运行了全仓测试。安装各章节依赖后，可用 `python tools/run_project_tests.py --jobs 2 --output .test-tmp/review` 在独立进程中执行各章测试；选择性重跑的结果保留方式与真实服务前提见CONTRIBUTING。

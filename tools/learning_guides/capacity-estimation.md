@@ -52,17 +52,32 @@ flowchart LR
 
 ## 微观一：先厘清乘法顺序
 
-{{excerpt:src/capacity_estimation/model.py:estimate:2:15}}
+{{excerpt:src/capacity_estimation/model.py:estimate:2:11}}
 
 `dau` 和 `writes` 先把“每人每天”变成“全系统每天”。`average_record` 体现只有 `media_fraction` 比例的记录携带媒体。`daily_bytes` 再乘保留天数得到逻辑存储；压缩、副本和索引依次作用到这个量。这里的索引开销作用在每一份压缩副本上，所以案例是 `2000 × 0.5 × 3 × 1.2`。
 
-最后两行改在计算节点数：峰值请求乘安全系数，再除以单节点基准能力及目标利用率，然后向上取整。存储副本数没有进入这个QPS公式；这种模型取舍在返回值的 `notes` 中明确记录。
+节点预算另从校验后的原始需求、安全系数和能力计算精确比值，再向上取整。存储副本数没有进入这个QPS公式；这种模型取舍在返回值的 `notes` 中明确记录。
 
 ## 微观二：为什么线程调用不会互相改变精度
 
 {{symbol:src/capacity_estimation/quantities.py:arithmetic_context}} 建立独立数值上下文。`estimate` 与单位转换在上下文里计算，调用者设置的精度、舍入和异常陷阱不会泄漏进模型；调用结束也不会改写调用者的设置。
 
 可用 {{symbol:tests/test_engineering.py:test_model_is_independent_of_callers_decimal_context}} 理解这个边界：测试故意把外部精度降到3并启用 `Inexact` 陷阱，模型结果仍与默认调用一致。
+
+## 微观三：展示精度不能决定需要几台机器
+
+```mermaid
+flowchart LR
+  I[校验后的原始Decimal输入] --> D[80位Decimal计算]
+  D --> Q[展示QPS、存储、带宽预算]
+  I --> R[Fraction精确需求／能力比值]
+  R --> C[math.ceil向上取整为整数]
+  C --> T[整数相加：服务节点＋备用节点]
+```
+
+{{symbol:tests/test_precision.py:test_tiny_excess_over_one_server_still_requires_two}}给出一个精度边界：令`a=1e-30`，合法输入的需求/能力可等于`1+4a³/(1-3a)`。这个值严格大于1，80位展示却可能看起来等于1。{{symbol:src/capacity_estimation/model.py:estimate}}因此用标准库Fraction保留原始输入比值，再用math.ceil取2台，不复用展示QPS取整。
+
+{{symbol:tests/test_precision.py:test_large_node_count_and_spare_are_exact_integers}}还验证176位服务数量加1台备用，整数总数仍准确。高精度展示与离散配置决策是两个需求；计算器没有新增线程或后台服务。原书覆盖见{{file:docs/chapter03-review.md}}，上游实读范围见{{file:docs/open-source-review_cn.md}}。
 
 ## 改变一个假设，应该影响什么
 

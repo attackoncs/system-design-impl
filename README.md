@@ -6,17 +6,19 @@
 [Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
 <!-- LEARNING_GUIDE_END -->
 
-Production-quality Python implementations of system design concepts from the book *System Design Interview* by Alex Xu. Each chapter is a self-contained sub-project with full documentation, source code, tests, and usage examples.
+Executable Python reference implementations of system design concepts from the book *System Design Interview* by Alex Xu. The 27 implemented chapter projects include documentation, source code, tests, examples, and explicit deployment limits.
 
 > 中文版本请参阅 [README_CN.md](./README_CN.md)
 
 ## Completed
 
+See the [review coverage inventory](docs/review-coverage_cn.md) for chapter evidence, historical validation and the scope of the current follow-up.
+
 | Chapter | Topic | Status | Description |
 |---------|-------|--------|-------------|
-| 02 | [Scale From Zero](./scale-from-zero/) | ✅ Core reviewed | Source-bound replication, cache fences, live Web pool, leased outbox, local GeoDNS failover and fenced profile promotion; 73 tests; production multi-region HA remains open |
-| 03 | [Capacity Estimation](./capacity-estimation/) | ✅ Reference done | Explicit-unit Decimal QPS/storage/bandwidth/cache/node/SLO budgets, scenario CLI and sensitivity analysis; 14 tests |
-| 05 | [Rate Limiter](./rate-limiter/) | ✅ Core reviewed | 249 tests; file rules, stable identities, clock fencing, bounded FIFO; real4-process Redis and2HTTP validation |
+| 02 | [Scale From Zero](./scale-from-zero/) | ✅ Core reviewed | HAProxy/Redis source comparison; profile commits fenced against promotion, invalid TTL preserves cached data; 77 tests; production multi-region HA remains open |
+| 03 | [Capacity Estimation](./capacity-estimation/) | ✅ Core reviewed | napkin-math source comparison; explicit-unit Decimal budgets, exact rational node ceilings and integer spares; 16 tests; [review](./capacity-estimation/docs/chapter03-review.md) |
+| 05 | [Rate Limiter](./rate-limiter/) | ✅ Core reviewed | 265 tests; file rules, stable identities, clock fencing, bounded FIFO; real4-process Redis and2HTTP validation |
 | 06 | [Consistent Hashing](./consistent-hashing/) | ✅ Core reviewed | 163 tests; GitHub source comparison, exact locality/statistics properties, O(1) unchanged-state plans; four-process validation |
 | 07 | [Key-Value Store](./key-value-store/) | Core implemented; [open-source review: 428 tests](key-value-store/docs/open-source-review_cn.md); provisioning/drain unfinished | Dynamo-style, LSM-tree storage, quorum intersection, gossip protocol, gRPC |
 | 08 | [Unique ID Generator](./unique-id-generator/) | Core implemented; [open-source review: 122 tests](unique-id-generator/docs/open-source-review_cn.md); identity/restart safety depends on deployment | Snowflake, precomputed layout fields, thread safety, exact UTC parsing |
@@ -24,7 +26,7 @@ Production-quality Python implementations of system design concepts from the boo
 | 10 | [Web Crawler](./web-crawler/) | ✅ Core reviewed | Fixed Scrapy source comparison; repeated cancellation drains owned SQLite work and releases file locks; 259 tests; [review](./web-crawler/docs/chapter10-review.md) |
 | 11 | [Notification System](./notification-system/) | ✅ Core reviewed | 466 tests; bounded batch admission, isolated receipts, transaction-timed leases and reusable workers; [source review](./notification-system/docs/open-source-review_cn.md) |
 | 12 | [News Feed System](./news-feed-system/) | ✅ Core reviewed | Fixed Stream-Framework comparison; hybrid feed/outbox and bounded hydration; rejects excessive JSON nesting before publication; 311 tests; [review](./news-feed-system/docs/chapter12-review.md) |
-| 13 | [Chat System](./chat-system/) | ✅ Done | Transactional inboxes, fenced Redis routing/push, bounded WebSockets, authorized message lookup and safe device cursor recovery |
+| 13 | [Chat System](./chat-system/) | ✅ Core reviewed | Tinode/Zulip source comparison; durable inboxes, device recovery and fenced Redis routing; owned Redis/WSL runner and Sentinel readiness fixed; 202 suite cases plus 1 separate failover case passed; [review](./chat-system/docs/chapter13-review.md) |
 | 14 | [Search Autocomplete](./search-autocomplete-system/) | ✅ Core reviewed | Sampled logs, immutable top-five trie, bounded replica failover and response integrity; 188 tests; [source review](./search-autocomplete-system/docs/open-source-review_cn.md) |
 | 15 | [Video Streaming](./video-streaming-system/) | ✅ Core reviewed | Verified part assembly/repair, bounded leased DAG, real HLS/PostgreSQL/S3 tests; 164 distinct cases; [source review](./video-streaming-system/docs/open-source-review_cn.md) |
 | 16 | [File Sync](./file-sync-system/) | ✅ Core reviewed | Encrypted delta sync, conflict/ACL/GC fences, response integrity and cursor recovery; 122 tests; [source review](./file-sync-system/docs/open-source-review_cn.md) |
@@ -80,8 +82,6 @@ Each sub-project's `docs/` directory holds design, requirements, and task specif
 | 27 | [design](./payment-system/docs/design.md) · [requirements](./payment-system/docs/requirements.md) · [tasks](./payment-system/docs/tasks.md) | [design](./payment-system/docs/design_cn.md) · [requirements](./payment-system/docs/requirements_cn.md) · [tasks](./payment-system/docs/tasks_cn.md) |
 | 28 | [design](./digital-wallet-system/docs/design.md) · [requirements](./digital-wallet-system/docs/requirements.md) · [tasks](./digital-wallet-system/docs/tasks.md) | [design](./digital-wallet-system/docs/design_cn.md) · [requirements](./digital-wallet-system/docs/requirements_cn.md) · [tasks](./digital-wallet-system/docs/tasks_cn.md) |
 | 29 | [design](./stock-exchange-system/docs/design.md) · [requirements](./stock-exchange-system/docs/requirements.md) · [tasks](./stock-exchange-system/docs/tasks.md) | [design](./stock-exchange-system/docs/design_cn.md) · [requirements](./stock-exchange-system/docs/requirements_cn.md) · [tasks](./stock-exchange-system/docs/tasks_cn.md) |
-
-Chapter 12 currently ships only the design document; requirements and tasks are not yet available.
 
 ## Project Structure
 
@@ -208,9 +208,9 @@ sdi-implement/
 Each sub-project follows these principles:
 
 1. **Self-contained** — Each has its own `pyproject.toml` and can be installed/tested independently
-2. **Fully tested** — pytest with unit and integration tests
+2. **Regression verification** — Unit and integration tests, with real-service prerequisites and skipped cases reported explicitly
 3. **Well documented** — README, architecture docs, design specs
-4. **Production quality** — Type hints, error handling, performance considerations
+4. **Engineering discipline** — Type hints, error handling, bounded resources and explicit consistency/durability limits
 5. **Faithful to the book** — Implements the core concepts and algorithms described in each chapter
 
 ## Install All Dependencies
@@ -228,7 +228,7 @@ pip install -e ".[all]"
 pip install -r requirements-all.txt
 ```
 
-Afterwards you can run `pytest` in any sub-project directory, or execute `python examples/xxx.py`. Note that `key-value-store` depends on the local package `consistent-hashing`; `requirements-all.txt` installs it first.
+Afterwards you can run the documented test or example commands in each sub-project. Real-service tests still require their chapter-specific services and configuration. Note that `key-value-store` depends on the local package `consistent-hashing`; `requirements-all.txt` installs it first.
 
 ## Quick Start
 
@@ -239,8 +239,8 @@ cd rate-limiter
 # Install dependencies
 pip install -e ".[dev]"
 
-# Run tests
-pytest
+# Run tests in the active interpreter
+python -W error -m pytest tests -q
 
 # Run examples
 python examples/basic_usage.py
@@ -248,8 +248,8 @@ python examples/basic_usage.py
 
 ## Requirements
 
-- Python >= 3.9
-- Additional dependencies vary by sub-project (see each `pyproject.toml`)
+- Python >= 3.10 for the aggregate environment, as declared in the root `pyproject.toml`
+- Standalone chapter requirements and additional dependencies are declared in each chapter's `pyproject.toml` and README
 
 ## License
 
@@ -257,6 +257,6 @@ MIT
 
 ## Engineering quality
 
-See [engineering guidelines](CONTRIBUTING.md) and the [review and validation record](ENGINEERING_REVIEW.md). Run `python tools/audit_code.py` for a dependency-free source inventory and review signals.
+See the [current review coverage](docs/review-coverage_cn.md), [chapter progress](DEEP_REVIEW_PROGRESS.md), and [engineering guidelines](CONTRIBUTING.md). [ENGINEERING_REVIEW.md](ENGINEERING_REVIEW.md) preserves the dated repository baseline and links to current evidence. Run `python tools/audit_code.py` for a dependency-free source inventory and review signals.
 
-The engineering review covers all 27 projects, with per-project changes, concurrency regressions and explicit integration-test limits. Use `python tools/run_project_tests.py --jobs 2 --output .test-tmp/review` to run chapter suites in isolated interpreters after installing their dependencies.
+All 27 projects have chapter review records; those records come from different runs and dates, not one newly rerun repository-wide suite. Use `python tools/run_project_tests.py --jobs 2 --output .test-tmp/review` to run chapter suites in isolated interpreters after installing their dependencies. See CONTRIBUTING for selective-run result retention and real-service setup.

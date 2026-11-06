@@ -1,8 +1,8 @@
 # 27个子项目的GitHub编码实现对照
 
-检索日期：**2026-10-30**。本表按本仓库的27个子项目分别检索，记录包含实际代码的同类业务项目、算法库、核心组件和教学案例。仓库链接同时是对应范围说明的来源。
+初次索引日期：**2026-10-30**。本表按本仓库的27个子项目分别检索，记录包含实际代码的同类业务项目、算法库、核心组件和教学案例；另列第30章的阅读资料入口，不计入27个实现项目。后续源码实读、修复与验证日期以各行链接的章节记录为准。
 
-这些项目不一定按照《System Design Interview》的章节逐项复刻。“找到同类实现”也不代表整章需求已全部覆盖。本次核查依据GitHub仓库页面、README和可见代码目录，未逐一部署、运行测试或审计实现质量。维护状态记录的是检索时的情况。
+这些项目不一定按照《System Design Interview》的章节逐项复刻。“找到同类实现”也不代表整章需求已全部覆盖。初次索引依据仓库页面、README和可见代码目录；已补充实际源码阅读的行会链接到对应审查。未逐一部署、运行上游测试或审计其全部质量，维护状态只代表检索时的情况。
 
 ## 按章节查找
 
@@ -10,8 +10,8 @@
 
 | 章节与本地导读 | GitHub编码实现 | 主要语言 | 对应范围 | 适合对照阅读的内容与边界 |
 |---|---|---|---|---|
-| [02 从零扩容](../scale-from-zero/docs/learning-guide_cn.md) | [haproxy/haproxy](https://github.com/haproxy/haproxy) | C | 核心组件 | 负载均衡、健康检查、连接管理；不能代替从单机到缓存、复制及分片的整章演进案例。 |
-| [03 容量估算](../capacity-estimation/docs/learning-guide_cn.md) | [sirupsen/napkin-math](https://github.com/sirupsen/napkin-math) | Rust、Go等 | 估算辅助与测量代码 | 性能测量代码、数量级和估算依据；不是与本地项目相同的QPS／存储预算计算器。 |
+| [02 从零扩容](../scale-from-zero/docs/learning-guide_cn.md) | [haproxy/haproxy](https://github.com/haproxy/haproxy)、[redis/redis](https://github.com/redis/redis) | C | 负载均衡/缓存组件 | 已读加权轮询、失败重试、淘汰/过期预算的[固定源码](../scale-from-zero/docs/open-source-review_cn.md)；不能代替本地资料复制/租约或整章生产HA。 |
+| [03 容量估算](../capacity-estimation/docs/learning-guide_cn.md) | [sirupsen/napkin-math](https://github.com/sirupsen/napkin-math) | Rust | 估算依据与测量代码 | 已读网络及持久写测量的[固定源码](../capacity-estimation/docs/open-source-review_cn.md)；区分SI/IEC、估算/实测，本地精确节点取整来自独立回归，不冒称相同预算计算器。 |
 | [05 限流器](../rate-limiter/docs/learning-guide_cn.md) | [uber-go/ratelimit](https://github.com/uber-go/ratelimit)、[envoyproxy/ratelimit](https://github.com/envoyproxy/ratelimit)、[go-redis/redis_rate](https://github.com/go-redis/redis_rate) | Go | 算法库／限流服务 | 分别对照等待式漏桶、规则与共享Redis、GCRA及Lua脚本复用；2026-10-31补充[源码对照与本地覆盖](../rate-limiter/docs/open-source-review_cn.md)，不能将任一仓库等同于本章所有能力。 |
 | [06 一致性哈希](../consistent-hashing/docs/learning-guide_cn.md) | [ultrabug/uhashring](https://github.com/ultrabug/uhashring)、[stathat/consistent](https://github.com/stathat/consistent)、[buraksezer/consistent](https://github.com/buraksezer/consistent) | Python、Go | 算法库 | 对照虚拟节点、权重、严格顺时针边界、并发和碰撞；固定分区加负载约束属于不同路由方案。2026-10-31补充[源码对照与章节覆盖](../consistent-hashing/docs/open-source-review_cn.md)。 |
 | [07 键值存储](../key-value-store/docs/learning-guide_cn.md) | [voldemort/voldemort](https://github.com/voldemort/voldemort)；[google/leveldb](https://github.com/google/leveldb) | Java；C++ | 分布式KV；本地LSM引擎 | Voldemort对照副本与因果版本，README说明已停止开发；LevelDB参考日志同步失败后停止写入。[2026-10-31源码对照与本地修复](../key-value-store/docs/open-source-review_cn.md)。 |
@@ -20,7 +20,7 @@
 | [10 网页爬虫](../web-crawler/docs/learning-guide_cn.md) | [scrapy/scrapy](https://github.com/scrapy/scrapy)、[apache/nutch](https://github.com/apache/nutch) | Python / Java | 爬虫框架/系统 | 本轮实读Scrapy调度、下载slot与robots等待隔离的[固定源码](../web-crawler/docs/open-source-review_cn.md)，修复本地连续取消的数据库排空；Nutch保留为此前项目入口，未冒称本轮实读。 |
 | [11 通知系统](../notification-system/docs/learning-guide_cn.md) | [novuhq/novu](https://github.com/novuhq/novu)、[notifo-io/notifo](https://github.com/notifo-io/notifo) | TypeScript / C# | 通知基础设施 | 已读队列重试、幂等说明与调度通道源码；固定提交及本地取舍见[核对记录](../notification-system/docs/open-source-review_cn.md)。 |
 | [12 新闻动态](../news-feed-system/docs/learning-guide_cn.md) | [tschellenbach/Stream-Framework](https://github.com/tschellenbach/Stream-Framework) | Python | Feed框架 | 已实读发布/扇出、RedisFeed与时间线窗口的[固定提交源码](../news-feed-system/docs/open-source-review_cn.md)；本地正文源与Feed ID分离，进程内outbox分发不等于持久worker确认。 |
-| [13 聊天系统](../chat-system/docs/learning-guide_cn.md) | [tinode/chat](https://github.com/tinode/chat) | Go | 聊天平台 | 服务端及配套客户端、WebSocket／gRPC、会话、频道和消息协议；协议与本地实现不同。 |
+| [13 聊天系统](../chat-system/docs/learning-guide_cn.md) | [tinode/chat](https://github.com/tinode/chat)、[zulip/zulip](https://github.com/zulip/zulip) | Go / Python | 聊天平台 | 已读先持久后广播、事务收件记录及事件投递的[固定源码对照](../chat-system/docs/open-source-review_cn.md)；本地协议/Redis路由与上游不同，真实供应商推送和五千万DAU未验证。 |
 | [14 自动补全](../search-autocomplete-system/docs/learning-guide_cn.md) | [valeriansaliou/sonic](https://github.com/valeriansaliou/sonic)、[RediSearch/RediSearch](https://github.com/RediSearch/RediSearch) | Rust / C | 搜索后端 | 已读建议执行器、Trie排名堆与子树上界；排序语义和本地取舍见[固定提交核对](../search-autocomplete-system/docs/open-source-review_cn.md)。 |
 | [15 视频流媒体](../video-streaming-system/docs/learning-guide_cn.md) | [Chocobozzz/PeerTube](https://github.com/Chocobozzz/PeerTube)、[mediacms-io/mediacms](https://github.com/mediacms-io/mediacms) | TypeScript、Python等 | 视频平台 | 已阅读上传、HLS依赖、转码重试/取消源码；[固定版本与本地核对](../video-streaming-system/docs/open-source-review_cn.md)。联邦/P2P及逐块编码等设计与本项目不同。 |
 | [16 文件同步](../file-sync-system/docs/learning-guide_cn.md) | [syncthing/syncthing](https://github.com/syncthing/syncthing)、[haiwen/seafile](https://github.com/haiwen/seafile) | Go、C等 | 文件同步系统/同步守护进程 | 已阅读块校验、晚编辑和冲突替换源码；[固定版本与本地核对](../file-sync-system/docs/open-source-review_cn.md)。设备间同步与中心式网盘架构有差异。 |

@@ -100,6 +100,12 @@ sequenceDiagram
 - {{symbol:tests/test_service_reliability.py:test_cancelled_commit_finishes_before_send_lock_is_released}}：用事件暂停append，然后取消send。观察测试为何先确认锁仍受保护，再释放底层线程。
 - {{symbol:tests/test_client_reliability.py:test_acknowledgement_must_match_the_complete_received_page}}：同步页的确认必须匹配收到的整页，不能随意跳过未处理消息。
 
+## 从业务恢复走到基础设施故障实验
+
+上面的消息/游标回归验证客户端恢复；Redis主库崩溃是另一层。{{symbol:tests/test_ha.py:test_sentinel_promotes_replica_and_preserves_confirmed_messages}}先等待三个哨兵各自发现两个同伴和两个副本并通过quorum，再确认消息复制、终止自建主库、等待新主，并检查恢复后重试不重复。端口能连接不等于哨兵拓扑已就绪，错误的实验起点会被误读为业务故障。
+
+{{symbol:tests/test_review_runner.py:test_wsl_runtime_existence_does_not_follow_linux_symlink}}保护Windows/WSL运行时识别边界；最终仍须启动真实Redis，不能只凭这个工具回归宣称网络验证通过。本轮203个不同用例由主套202项和独立Sentinel补测1项组成，精确范围见{{file:benchmarks/results.md}}；Tinode/Zulip的真实源码差异见{{file:docs/open-source-review_cn.md}}。
+
 ## 自查与练习
 
 **Bob在线就不需要持久化吗？** 仍需要。实时发送可能因断线、队列溢出或未确认而丢失，inbox提供恢复依据。
