@@ -30,6 +30,9 @@ Bucket management, object upload and download, versioning and listing; mixed sma
 
 ## Acceptance Results and Boundaries
 
+The test and latency figures below are historical **2026-10-20** evidence. Current
+138-test results and measurements are in [the validation report](../benchmarks/results.md).
+
 - 6 core + 4 network tests passed (29.924 seconds); after diagnostic fixes, the related replica-repair cases passed again (6.295 seconds).
 - With 40 small objects (~4 KiB each), each node used only one aggregated pack file; PUT p95 79.572 ms, GET p95 70.359 ms. Measured numbers do not represent production scale.
 - API/metadata publish interruption can resume `completing`; logical scenarios with three corrupted/lost replicas can be repaired. See `../benchmarks/results.md` for details.
