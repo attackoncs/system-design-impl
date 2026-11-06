@@ -123,14 +123,14 @@ Task 1 (Project Scaffolding)
 - [x] 3.3 Implement `MonotonicClock`
   - File: `unique-id-generator/src/unique_id/clock.py`
   - Anchors `time.monotonic()` to `time.time()` at initialization
-  - `current_millis()` returns: `anchor_system_ms + (current_monotonic - anchor_monotonic)`
-  - Guarantees monotonically increasing values
+  - `current_millis()` returns: `anchor_system_ms + int(time.monotonic() * 1000) - anchor_monotonic_ms`; both anchor and elapsed terms are milliseconds
+  - Values do not decrease during this clock object's lifetime; repeated reads within a millisecond can be equal
 
 - [x] 3.4 Write clock tests
   - File: `unique-id-generator/tests/test_clock.py`
   - Test: `SystemClock.current_millis()` returns reasonable value (within last few seconds of `time.time() * 1000`)
   - Test: `MonotonicClock.current_millis()` returns reasonable value
-  - Test: `MonotonicClock` values are monotonically increasing over multiple calls
+  - Test: `MonotonicClock` values are nondecreasing over multiple calls
   - Test: `SystemClock` values are approximately equal to system time
   - Test: both clocks implement the `Clock` interface
 

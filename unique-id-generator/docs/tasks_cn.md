@@ -123,14 +123,14 @@
 - [x] 3.3 实现 `MonotonicClock`
   - 文件：`unique-id-generator/src/unique_id/clock.py`
   - 在初始化时将 `time.monotonic()` 锚定到 `time.time()`
-  - `current_millis()` 返回：`anchor_system_ms + (current_monotonic - anchor_monotonic)`
-  - 保证单调递增的值
+  - `current_millis()`返回：`anchor_system_ms + int(time.monotonic() * 1000) - anchor_monotonic_ms`；锚点与经过时间均使用毫秒
+  - 本时钟对象生命周期内返回值不递减；同一毫秒的多次读取可以相等
 
 - [x] 3.4 编写时钟测试
   - 文件：`unique-id-generator/tests/test_clock.py`
   - 测试：`SystemClock.current_millis()` 返回合理值 (与 `time.time() * 1000` 最近几秒内一致)
   - 测试：`MonotonicClock.current_millis()` 返回合理值
-  - 测试：多次调用 `MonotonicClock` 返回值单调递增
+  - 测试：多次调用`MonotonicClock`返回值不递减
   - 测试：`SystemClock` 的值与系统时间近似相等
   - 测试：两种时钟均实现了 `Clock` 接口
 

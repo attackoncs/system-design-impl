@@ -262,7 +262,7 @@ All strategies implement the `IDGenerator` abstract base class with `generate()`
 ```python
 from unique_id import UUIDGenerator, TimestampRandomGenerator
 
-# UUID v4: 128-bit random, globally unique, no coordination
+# UUID v4: 122 random bits in a 128-bit value; probabilistic uniqueness, no coordination
 uuid_gen = UUIDGenerator()
 uuid_str = uuid_gen.generate()  # "550e8400-e29b-41d4-a716-446655440000"
 
@@ -293,7 +293,7 @@ gen = SnowflakeGenerator(clock=clock)
 |---------|-----------|---------|------------------|
 | **Size** | 64-bit int | 128-bit string (36 chars) | 64-bit int |
 | **Time-sortable** | ✓ | ✗ | Partially (same ms unordered) |
-| **Strictly monotonic** | ✓ | ✗ | ✗ |
+| **Strictly increasing within one instance** | ✓ | ✗ | ✗ |
 | **Uniqueness** | Conditional on layout/epoch/identity/restart discipline | Probabilistic (2^122 space) | Probabilistic (2^22 random) |
 | **Coordination** | Per machine (dc+machine ID) | None needed | None needed |
 | **Configuration** | Required (dc/machine ID) | None | Optional (epoch) |

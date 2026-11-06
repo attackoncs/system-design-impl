@@ -84,7 +84,7 @@ These are workload-dependent targets, not latency/availability guarantees. Recor
 ### NFR-2: Uniqueness Guarantee
 
 - **NFR-2.1**: No duplicate IDs shall be generated within the same generator instance (same datacenter + machine).
-- **NFR-2.2**: No duplicate IDs shall be generated across different generators when datacenter/machine ID combinations are unique.
+- **NFR-2.2**: Across generators in the same layout/epoch namespace, IDs remain unique when active datacenter/machine identities are distinct and no identity/time/sequence state is reused after restart.
 - **NFR-2.3**: Lifetime uniqueness requires no identity/time/sequence reuse across instances or restarts. Distributed leases and persisted high-water marks are not implemented.
 
 ### NFR-3: Monotonicity
