@@ -10,22 +10,22 @@ A self-contained Decimal calculator for workload QPS, peak traffic, logical/phys
 
 ## Run
 
-Python 3.10+, standard library only. In this directory:
+Python 3.10+, standard library only at runtime. The full test suite also requires pytest. In this directory:
 
 ```powershell
 $env:PYTHONPATH = 'src'
-python -m unittest discover -s tests -v
+python -W error -m pytest tests -q
 python -m capacity_estimation.cli estimate --scenario examples/social-media.json
 python -m capacity_estimation.cli estimate --scenario examples/read-heavy.json --sweep peak_factor=2,5,10
 python -m capacity_estimation.cli units "1 MiB"
 python -m capacity_estimation.cli availability 99.99
 ```
 
-Nine tests verify formulas, units, invalid assumptions, rounding and real CLI JSON output. Installation via `pip install -e .` also exposes `capacity-estimate`.
+Sixteen tests verify formulas, units, invalid assumptions, exact node ceilings, decimal-context isolation and real CLI JSON output. Installation via `pip install -e .` also exposes `capacity-estimate`.
 
 ## Scenarios and units
 
-JSON inputs accept known fields only; omitted fields use defaults exposed in output `assumptions`. Decimal strings are recommended. CLI decimal JSON literals are parsed directly to decimal strings; the Python API rejects binary floats and booleans. Calculations use 80 significant Decimal digits, so repeating fractions are rounded at that precision. Outputs are decimal strings except integral node counts.
+JSON inputs accept known fields only; omitted fields use defaults exposed in output `assumptions`. Decimal strings are recommended. CLI decimal JSON literals are parsed directly to decimal strings; the Python API rejects binary floats and booleans. Displayed estimates use 80 significant Decimal digits and may round at that precision. Discrete node ceilings instead use the exact rational values of validated inputs; node totals use integer addition. Outputs are decimal strings except integral node counts.
 
 Sizes require explicit, case-sensitive units: `B`, `KB`…`PB` use powers of 1000, while `KiB`…`PiB` use powers of 1024. `1 MB = 1000000 B`; `1 MiB = 1048576 B`. Lowercase `b` denotes bits and is rejected by the byte-size parser. Fractional quantities must resolve to whole bytes (`0.5 KiB` is valid; `0.1 B` is not). Bandwidth output uses **bits per second**, multiplying payload bytes by eight.
 
@@ -48,7 +48,7 @@ The default `social-media.json` reproduces the chapter's hypothetical media-only
 
 Storage applies compression to logical retained bytes, then multiplies by replicas and `(1 + index_overhead_ratio)`. Cache holds a fraction of retained write records at the supplied item size; it has no implicit replication/compression factor. Network uses uncompressed application payloads and excludes TLS/protocol overhead, replication, backups, cache traffic and retransmission.
 
-Serving nodes are rounded **up** from peak mixed-workload QPS, supplied per-node QPS, utilization and safety factor; explicit spare nodes are added afterward. The supplied QPS must come from a relevant benchmark before this estimate is operationally useful. No linear scalability or failure-domain guarantee is inferred.
+Serving nodes are rounded **up** from the exact input ratio for mixed-workload demand, supplied per-node QPS, utilization and safety factor; explicit spare nodes are added afterward as integers. Even an excess smaller than the displayed Decimal precision requires another node. The supplied QPS must come from a relevant benchmark before this estimate is operationally useful. No linear scalability or failure-domain guarantee is inferred.
 
 Concurrency uses assumed peak arrival rate × **mean** latency, not p99. Availability uses a30-day month/365-day year and no SLA exclusions; 99.99% yields8.64 seconds/day and3153.6 seconds/year. Neither a replica multiplier nor this arithmetic proves achieved availability.
 
@@ -56,4 +56,4 @@ The book's old operation-latency table is historical context, not a current hard
 
 ## Numerical isolation and module responsibilities
 
-`quantities.py` owns explicit units and decimal validation; `scenario.py` validates scenario fields; `model.py` calculates estimates. Existing public imports remain supported. Each calculation uses an independent 80-digit decimal context with half-even rounding, unaffected by caller/thread rounding, precision or traps. Sensitivity sweeps require a scenario dict and a list/tuple of values. The deep-review suite passes 14 tests, including concurrent callers with different numeric settings. See [review progress](../DEEP_REVIEW_PROGRESS.md).
+`quantities.py` owns explicit units and decimal validation; `scenario.py` validates scenario fields; `model.py` calculates estimates. Existing public imports remain supported. Decimal calculations use an independent 80-digit context with half-even rounding, unaffected by caller/thread rounding, precision or traps; node ceilings use standard-library `Fraction` and `math.ceil`. Sensitivity sweeps require a scenario dict and a list/tuple of values. The suite passes 16 tests, including concurrent callers and two rounding-boundary regressions. See the [chapter review](docs/chapter03-review.md), [fixed-source comparison](docs/open-source-review_cn.md) and [CLI evidence](benchmarks/review-examples-2026-11-06.json).

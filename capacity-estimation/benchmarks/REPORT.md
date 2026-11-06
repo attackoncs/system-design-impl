@@ -1,4 +1,28 @@
-# 第3章验证记录
+# 第3章验证记录（2026-11-06）
+
+Python3.13.9、Windows11。基线 **14 passed/0.28秒**，最终 **16 passed/0.52秒，-W error，无跳过**。原有9项unittest加5项pytest数值隔离回归，本轮增加2项离散精度测试；旧README的unittest命令只覆盖9项，现改为完整pytest入口。
+
+```powershell
+$env:PYTHONPATH = 'src'
+python -W error -m pytest tests -q
+python -m capacity_estimation.cli estimate --scenario examples/social-media.json
+python -m capacity_estimation.cli estimate --scenario examples/read-heavy.json
+python -m capacity_estimation.cli estimate --scenario examples/read-heavy.json --sweep peak_factor=2,5,10
+python -m capacity_estimation.cli units "1 MiB"
+python -m capacity_estimation.cli availability 99.99
+```
+
+新增回归先验证旧实现的两处失败：严格大于1但80位Decimal舍入成1的节点需求会少算一台；176位服务节点加1台备用会丢失整数单位。修复仅将服务节点决策转为原始校验输入的精确有理数ceil，并将总数改为整数相加；展示估算仍使用隔离的80位Decimal上下文。
+
+静态验证：8个Python文件通过Python3.10语法解析，源码与新增测试Ruff E9/F、两个修改Python文件格式检查通过；本地Markdown链接、JSON解析及diff空白检查通过。学习原稿增加精确离散决策图，由主代理统一生成和渲染。
+
+[本轮实际CLI输出](review-examples-2026-11-06.json)包含六次执行及参数：原书媒体/读多写少/敏感性/MiB/可用性/临界节点。断言媒体五年保留54750000000000000B，读多写少4服务＋1备用，MiB=1048576B，99.99%日停机预算8.64秒，临界节点需求给出2台。这些输出是公式预算，不是硬件或服务吞吐测量；未运行无关压测。
+
+[章节复审](../docs/chapter03-review.md)与[固定源码参考](../docs/open-source-review_cn.md)列明原书覆盖、单位/测量口径及生产边界。历史结果原样保留：
+
+---
+
+# 2026-10-21历史验证
 
 2026-10-21，Python3.13.9，Windows11。**9项测试通过，0.314秒**；包含真实CLI子进程。验证的是估算算术与输入规则，不是系统吞吐。
 

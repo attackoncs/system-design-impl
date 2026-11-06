@@ -1,6 +1,8 @@
 """Pure capacity calculations over validated, explicit-unit scenarios."""
 
-from decimal import Decimal, ROUND_CEILING
+from decimal import Decimal
+from fractions import Fraction
+from math import ceil
 
 from .quantities import arithmetic_context, number, parse_bytes as parse_bytes, text
 from .scenario import DEFAULTS as DEFAULTS, parse_scenario
@@ -39,9 +41,16 @@ def estimate(inputs):
         compressed = retained_bytes * n["compression_ratio"]
         physical = compressed * n["replicas"] * (1 + n["index_overhead_ratio"])
         peak_qps = (writes + reads) / 86400 * n["peak_factor"]
-        baseline_nodes = (
-            peak_qps * n["safety_factor"] / (n["server_qps"] * n["utilization"])
-        ).to_integral_value(rounding=ROUND_CEILING)
+        # Rounded QPS can hide a tiny excess above a whole-node boundary.
+        required_nodes = (
+            Fraction(n["monthly_active_users"])
+            * Fraction(n["daily_active_ratio"])
+            * (Fraction(n["writes_per_dau"]) + Fraction(n["reads_per_dau"]))
+            * Fraction(n["peak_factor"])
+            * Fraction(n["safety_factor"])
+            / (86400 * Fraction(n["server_qps"]) * Fraction(n["utilization"]))
+        )
+        baseline_nodes = ceil(required_nodes)
         ingress = daily_bytes * 8 / 86400
         egress = reads * sizes["read_response_size"] * 8 / 86400
         quantities = {
@@ -81,7 +90,7 @@ def estimate(inputs):
             "nodes": {
                 "serving": int(baseline_nodes),
                 "spare": int(n["spare_nodes"]),
-                "total": int(baseline_nodes + n["spare_nodes"]),
+                "total": baseline_nodes + int(n["spare_nodes"]),
             },
             "availability": availability(n["availability_percent"]),
             "notes": [
@@ -91,6 +100,7 @@ def estimate(inputs):
                 "Cache holds a fraction of retained write records at explicit cache-item size; no cache replication multiplier.",
                 "Network uses uncompressed average write/read payloads, excluding protocol, replication and cache traffic.",
                 "Node count assumes a supplied mixed-workload QPS benchmark; spare nodes are explicit, not an availability proof.",
+                "Serving-node ceilings use the exact validated input ratio; node totals use integer addition.",
                 "Inflight estimate applies Little's law to assumed peak arrival rate and mean latency, not p99.",
             ],
         }

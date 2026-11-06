@@ -10,18 +10,18 @@
 
 ## 运行
 
-Python 3.10及以上，仅标准库。在本目录执行：
+Python 3.10及以上，运行时仅标准库，完整测试另需pytest。在本目录执行：
 
 ```powershell
 $env:PYTHONPATH = 'src'
-python -m unittest discover -s tests -v
+python -W error -m pytest tests -q
 python -m capacity_estimation.cli estimate --scenario examples/social-media.json
 python -m capacity_estimation.cli estimate --scenario examples/read-heavy.json --sweep peak_factor=2,5,10
 python -m capacity_estimation.cli units "1 MiB"
 python -m capacity_estimation.cli availability 99.99
 ```
 
-9项测试覆盖公式、边界、单位、节点向上取整、敏感性分析及真实CLI调用。也可通过 `pip install -e .` 安装 `capacity-estimate` 命令。
+16项测试覆盖公式、边界、单位、精确节点向上取整、数值上下文隔离、敏感性分析及真实CLI调用。也可通过 `pip install -e .` 安装 `capacity-estimate` 命令。
 
 ## 单位与输入
 
@@ -29,7 +29,7 @@ python -m capacity_estimation.cli availability 99.99
 - 大小必须写明单位，支持B及KB至PB、KiB至PiB；大小写严格，字节解析拒绝小写b。带宽结果统一是bits/s，字节乘8。
 - `0.5 KiB` 可解析为512字节，`0.1 B` 因不是整字节被拒绝。
 - 场景JSON建议使用十进制字符串；CLI也将JSON小数直接解析为字符串，不先经过二进制浮点。Python API拒绝float和bool。
-- Decimal按80位有效数字计算，循环小数会在此精度舍入。结果以十进制字符串输出，节点数为整数。
+- 展示的Decimal估算按80位有效数字计算，可能在此精度舍入；节点离散决策则使用校验输入的精确有理数比值，总节点数直接做整数加法。结果以十进制字符串输出，节点数为整数。
 - 拒绝未知字段、非有限数、负需求、越界比例、零利用率/节点QPS、非整数副本数及极端指数。
 
 | 参数组 | 输入字段 |
@@ -53,12 +53,12 @@ python -m capacity_estimation.cli availability 99.99
 
 存储先计算逻辑保留量，再压缩、乘副本数及索引倍率。缓存按“保留记录数×热点比例×缓存项大小”，不隐含缓存复制。网络使用未压缩应用载荷，不含TLS、协议、复制、备份、缓存流量或重传。
 
-节点数按混合峰值QPS、安全系数、实测单节点QPS与利用率向上取整，再加显式备用节点。调用者必须给出有依据的单节点指标；模型不证明线性扩容或故障域可用性。并发量使用Little定律的平均延迟，不用p99替代均值。
+节点数按混合负载、安全系数、单节点QPS与利用率的精确输入比值向上取整，再用整数加上显式备用节点。即使超出整台节点的部分小于展示精度，也不能少算一台。调用者必须给出有依据的单节点指标；模型不证明线性扩容或故障域可用性。并发量使用Little定律的平均延迟，不用p99替代均值。
 
 停机预算采用30天月、365天年，不计SLA排除条款。99.99%对应每天8.64秒、每年3153.6秒；这些是算术预算，不是已达到的可用性。原书旧延迟表仅作历史说明，工具不将其作为当前硬件常量，`mean_latency_ms` 应由调用者测量后提供。
 
 详见[设计](docs/design.md)与[验证报告](benchmarks/REPORT.md)。
 
-## Numerical isolation and module responsibilities
+## 数值隔离与模块职责
 
-`quantities.py` owns explicit units and decimal validation; `scenario.py` validates scenario fields; `model.py` calculates estimates. Existing public imports remain supported. Each calculation uses an independent 80-digit decimal context with half-even rounding, unaffected by caller/thread rounding, precision or traps. Sensitivity sweeps require a scenario dict and a list/tuple of values. The deep-review suite passes 14 tests, including concurrent callers with different numeric settings. See [review progress](../DEEP_REVIEW_PROGRESS.md).
+`quantities.py`负责显式单位和Decimal校验，`scenario.py`校验场景字段，`model.py`计算预算，保留原有公开导入路径。Decimal使用独立的80位、半偶数舍入上下文，不受调用方或线程的精度、舍入和异常陷阱影响；节点上取整使用标准库`Fraction`与`math.ceil`。敏感性输入必须是场景字典和list/tuple。16项测试覆盖并发上下文隔离及两项取整边界回归，详见[章节审查](docs/chapter03-review.md)、[固定源码对照](docs/open-source-review_cn.md)和[实际CLI输出](benchmarks/review-examples-2026-11-06.json)。
