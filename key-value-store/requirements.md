@@ -2,7 +2,9 @@
 
 ## Overview
 
-A distributed key-value store implemented in Python, based on the design principles from "System Design Interview" Chapter 7. The system distributes data across multiple nodes using consistent hashing, provides tunable consistency via quorum consensus, handles failures through gossip protocol and hinted handoff, and uses an LSM-tree-based storage engine (Commit Log → MemTable → SSTable) for persistence. Nodes communicate via gRPC and the system reuses the existing `consistent-hashing` library from this repository.
+A distributed key-value store implemented in Python, based on the design principles from "System Design Interview" Chapter 7. The system distributes data across multiple nodes using consistent hashing, provides tunable consistency via quorum reads/writes, handles failures through gossip protocol and hinted handoff, and uses an LSM-tree-based storage engine (Commit Log → MemTable → SSTable) for persistence. Quorum intersection is not a topology or leader consensus protocol. Nodes communicate via gRPC and the system reuses the existing `consistent-hashing` library from this repository.
+
+See the [chapter/source comparison](docs/open-source-review_cn.md) for current coverage and the [verification report](benchmarks/REPORT.md) for recorded results. The parallel [docs copy](docs/requirements.md) retains the same requirement numbers.
 
 ## Functional Requirements
 
@@ -11,7 +13,7 @@ A distributed key-value store implemented in Python, based on the design princip
 - **FR-1.1**: The system shall provide a `put(key, value)` operation to insert or update a key-value pair.
 - **FR-1.2**: The system shall provide a `get(key)` operation to retrieve the value(s) associated with a key.
 - **FR-1.3**: The system shall provide a `delete(key)` operation using tombstone markers.
-- **FR-1.4**: Keys shall be strings (max 256 bytes); values shall be opaque byte sequences (max 10 KB).
+- **FR-1.4**: Keys shall be strings (max 256 UTF-8 bytes); values shall be opaque byte sequences (max 10 KiB, 10,240 bytes).
 - **FR-1.5**: The client API shall return metadata including vector clock version and conflict status.
 
 ### FR-2: Data Partitioning (Consistent Hashing)
@@ -28,11 +30,11 @@ A distributed key-value store implemented in Python, based on the design princip
 - **FR-3.3**: Replication shall be asynchronous — the coordinator returns after W acknowledgments.
 - **FR-3.4**: Replicas should be placed in distinct data centers when configured for multi-datacenter mode.
 
-### FR-4: Tunable Consistency (Quorum Consensus)
+### FR-4: Tunable Consistency (Quorum Reads/Writes)
 
 - **FR-4.1**: The system shall support configurable N (replica count), W (write quorum), and R (read quorum) parameters.
 - **FR-4.2**: A write operation shall be considered successful after receiving W acknowledgments from replicas.
-- **FR-4.3**: A read operation shall query R replicas and return the most recent value based on vector clock comparison.
+- **FR-4.3**: Query available replica candidates concurrently, collect R successful responses for the requested quorum, and reconcile their vector clocks. Return non-dominated sibling versions rather than choose one arbitrary winner for concurrent writes.
 - **FR-4.4**: W + R > N expresses intersection for a stable replica set; it does not guarantee linearizability with causal conflicts, sloppy quorum or changing membership.
 - **FR-4.5**: Default configuration shall be N=3, W=2, R=2 (intersecting quorums).
 - **FR-4.6**: The system shall support eventual consistency mode (W=1, R=1) for low-latency use cases.

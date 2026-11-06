@@ -1,5 +1,7 @@
 # Tasks: Distributed Key-Value Store
 
+The numbered scaffolding plan below retains its original partial statuses and implementation sketches as history. Current accepted behavior, 428-test evidence and unfinished deployment goals are recorded in the [2026-10-31 review](open-source-review_cn.md) and the dated acceptance sections at the end; a historical `[~]` does not by itself mean that today's runtime path remains unreviewed.
+
 ## Task Dependency Graph
 
 ```
