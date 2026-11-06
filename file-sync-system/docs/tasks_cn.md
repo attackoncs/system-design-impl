@@ -39,4 +39,4 @@
 - [x] 有界设备块缓存和服务端清单缓存，权限实时复核。
 - [ ] 生产事件保留/重新快照策略与持续压测。
 
-验收：benchmarks/results.md；examples/network_demo.py。当前未提交或推送。
+验收：[验证报告](../benchmarks/results.md)、[网络示例](../examples/network_demo.py)。当前提交与推送状态以 `git status`、`git log` 及远程分支记录为准。
