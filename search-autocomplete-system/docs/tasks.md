@@ -20,4 +20,4 @@
 
 - 2026-11-02: 188 passed (170 existing + 18 new), strict warning mode; actual HTTP/process failure and both examples verified, including demo cleanup.
 - Local/HTTP latency measured; benchmarks/results.md records scale limitations.
-- Changes remain uncommitted and unpushed.
+- Check `git status`, `git log` and the remote branch for current commit/push state; the dated verification above does not establish submission state.
