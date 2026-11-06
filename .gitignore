@@ -48,6 +48,14 @@ System Design Interview.md
 # Added by codegraph
 .codegraph/
 
+# Added by AI coding tools (MCP server configs, tool skills, graph caches)
+.atomcode/
+.codebuddy/
+.gemini/
+.qoder/
+.mcp.json
+opencode.jsonc
+
 # Sub-project SQLite databases
 *.sqlite
 *.sqlite3
