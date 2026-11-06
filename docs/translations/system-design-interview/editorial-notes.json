@@ -1,0 +1,828 @@
+[
+  {
+    "chapter": 17,
+    "source_line": 59,
+    "note": "QPS估算原稿的单列表格在第61行后断开，第63、65行在表格外保留“-   >”前缀，第65行末尾还有孤立竖线。分章版保留损坏结构及原始公式，合并阅读版已将原有估算重排回单列表格，并明确标注。",
+    "issue_type": "malformed_table",
+    "format_only": true
+  },
+  {
+    "chapter": 17,
+    "source_line": 214,
+    "note": "伪SQL在longitude后、FROM前有多余逗号；其边界条件直接用radius加减经纬度，也没有展示长度单位到角度的转换或圆形距离过滤。伪代码按原稿保留。",
+    "issue_type": "source_code_or_algorithm",
+    "format_only": false
+  },
+  {
+    "chapter": 17,
+    "source_line": 261,
+    "note": "图7长alt将左上象限01描述为欧洲、亚洲、非洲，右上11描述为北美洲，与第269—271行定义的西经0位、东经1位及通常地图方位不一致；第276行长alt也有相同地理分区解释。仍完整翻译长alt，未自行重写图意。",
+    "issue_type": "image_alt_inconsistency",
+    "format_only": false
+  },
+  {
+    "chapter": 17,
+    "source_line": 299,
+    "note": "表4将约5009.4km×4992.6km的长度1网格描述为“the size of the planet”，疑似夸大为整个地球的大小。保留原数值和该描述。",
+    "issue_type": "source_statement",
+    "format_only": false
+  },
+  {
+    "chapter": 17,
+    "source_line": 314,
+    "note": "原文称选择能够覆盖整个搜索圆的最小地理哈希长度，但表5的0.5km半径对应长度6，而表4中该网格高度只有609.4m，小于圆的1km直径；20km半径对应长度4时也有类似不一致。按原文保留，未改为其他选择规则。",
+    "issue_type": "source_internal_inconsistency",
+    "format_only": false
+  },
+  {
+    "chapter": 17,
+    "source_line": 378,
+    "note": "图13长alt把40m、30m等值解释为米和处理容量，而前一段明确m表示million、讨论的是商家数量。长alt中的单位和流水线解释均按原文翻译。",
+    "issue_type": "image_alt_inconsistency",
+    "format_only": false
+  },
+  {
+    "chapter": 17,
+    "source_line": 384,
+    "note": "图14长alt列出一个值为140的叶子节点，但前文第382行及构建伪代码规定每个叶子最多100家商家。节点值与叙述原样保留。",
+    "issue_type": "source_internal_inconsistency",
+    "format_only": false
+  },
+  {
+    "chapter": 17,
+    "source_line": 401,
+    "note": "原文直接写“To answer this question”，此前没有明确提出相应问题，疑似缺少关于四叉树内存用量的问题或过渡句。未擅自补写。",
+    "issue_type": "source_omission",
+    "format_only": false
+  },
+  {
+    "chapter": 17,
+    "source_line": 469,
+    "note": "图16长alt将希尔伯特曲线示意解释为路径查找、网络路由和共同目的地，与正文及图注的希尔伯特曲线映射主题不一致。长alt仍按原文完整翻译。",
+    "issue_type": "image_alt_inconsistency",
+    "format_only": false
+  },
+  {
+    "chapter": 17,
+    "source_line": 651,
+    "note": "缓存伪代码中的List<string>与返回类型List<String>写法不同；声明变量为listOfBusinessIds，第652行却检测listOfBusinessIDs，还混用Redis.get与Cache.set。原代码包括这些标识符均未改动。",
+    "issue_type": "source_code_or_algorithm",
+    "format_only": false
+  },
+  {
+    "chapter": 17,
+    "source_line": 661,
+    "note": "此处称商家变更时更新数据库并使缓存失效，后文第728行则按事先约定通过夜间任务更新缓存；两处更新时机的关系未充分解释。按原文保留。",
+    "issue_type": "source_internal_inconsistency",
+    "format_only": false
+  },
+  {
+    "chapter": 17,
+    "source_line": 663,
+    "note": "此处将500m、1km、2km、5km分别映射到地理哈希长度4、5、5、6，与表5及第715行的6、5、5、4顺序相反；还将第23行的五个可选半径写为四个，省略20km。全部按原文翻译。",
+    "issue_type": "source_internal_inconsistency",
+    "format_only": false
+  },
+  {
+    "chapter": 17,
+    "source_line": 674,
+    "note": "原文“Geohash”后多出一个单引号，形成“Geohash”'。中文译文使用正常成对引号，缓存名称Geohash保持不变。",
+    "issue_type": "punctuation",
+    "format_only": true
+  },
+  {
+    "chapter": 17,
+    "source_line": 682,
+    "note": "本段多区域部署描述引用图21，但紧随其后的相关图注为图20。原引用编号未调整。",
+    "issue_type": "figure_reference",
+    "format_only": false
+  },
+  {
+    "chapter": 17,
+    "source_line": 705,
+    "note": "图21长alt将LBS展开为Load Balancing Service，而正文第169行明确为Location-based service。长alt译为“负载均衡服务”，保留原文差异，未自行统一。",
+    "issue_type": "image_alt_inconsistency",
+    "format_only": false
+  },
+  {
+    "chapter": 18,
+    "source_line": 72,
+    "note": "QPS单列表格在第74行后断开，第76、78、80行留在表外，末行有孤立竖线。分章版保留原始结构，合并阅读版将原有估算重排为一张表。",
+    "issue_type": "malformed_table",
+    "format_only": true
+  },
+  {
+    "chapter": 18,
+    "source_line": 120,
+    "note": "334K×400×10%为约1336万，原稿将其粗略表述为1400万；译文保留这一估算口径，不将其当作精确算术结果。",
+    "issue_type": "source_rough_estimation",
+    "format_only": false
+  },
+  {
+    "chapter": 18,
+    "source_line": 140,
+    "note": "图5替代说明将位置缓存描述为存放持久数据，与第275行当前位置不必持久保存的正文不一致。两处原意均保留，没有根据正文暗改图片说明。",
+    "issue_type": "source_alt_body_mismatch",
+    "format_only": false
+  },
+  {
+    "chapter": 18,
+    "source_line": 354,
+    "note": "20字节/订阅者的内存估算主要计算指针，未明确计入频道、容器、连接等其余开销；200GB为原稿示意参数下的估值，并非真实部署上限。",
+    "issue_type": "source_estimation_scope",
+    "format_only": false
+  },
+  {
+    "chapter": 18,
+    "source_line": 390,
+    "note": "图10替代说明写作ash(channel)，且箭头方向描述与WebSocket向Redis发布的正文不完全一致。标识符及图链接按原稿保留。",
+    "issue_type": "source_alt_identifier_and_direction",
+    "format_only": false
+  },
+  {
+    "chapter": 18,
+    "source_line": 438,
+    "note": "原稿认为替换节点仅影响旧节点频道；这一结论需要考虑是否保留原哈希位置/槽位。示例将p_1改为p_1_new，却未详细说明槽位身份，译文不补设前提。",
+    "issue_type": "source_topology_assumption",
+    "format_only": false
+  },
+  {
+    "chapter": 18,
+    "source_line": 476,
+    "note": "图12替代说明暗示Pub/Sub圆柱保存用户地理哈希位置，而正文将其作为按地理哈希划分的频道。译文按原始替代说明保留，二者差异在此指出。",
+    "issue_type": "source_alt_body_mismatch",
+    "format_only": false
+  },
+  {
+    "chapter": 18,
+    "source_line": 503,
+    "note": "最小Erlang进程约300字节属于原稿容量示例；具体开销依赖运行时版本和配置。这里保留历史示例，不更新成当前性能承诺。",
+    "issue_type": "source_historical_estimation",
+    "format_only": false
+  },
+  {
+    "chapter": 19,
+    "source_line": 97,
+    "note": "原文先称用 0 到 3 之间的数字串表示递归网格，随后第 99 行改用 00、01、10、11 二进制编号说明 geohashing。译文保留两种表述，没有替换为其他编码算法或进制。",
+    "issue_type": "source_technical_or_descriptive_content",
+    "format_only": false
+  },
+  {
+    "chapter": 19,
+    "source_line": 101,
+    "note": "图 3 的原始 alt 将 0100、1110 等四位二进制示例称为 two-digit binary code，并在后文再次称标签为两位代码。译文按原文保留两位与示例之间的差异。",
+    "issue_type": "source_technical_or_descriptive_content",
+    "format_only": false
+  },
+  {
+    "chapter": 19,
+    "source_line": 171,
+    "note": "同一段先将缩放级别 21 的瓦片数写为 4.3 trillion，随后容量计算使用 4.4 trillion；表 1 的精确数值为 4 398 046 511 104。译文分别保留 4.3 万亿和 4.4 万亿，未统一近似值。",
+    "issue_type": "source_numeric_inconsistency",
+    "format_only": false
+  },
+  {
+    "chapter": 19,
+    "source_line": 210,
+    "note": "原文称接下来分析 navigation requests 的服务器吞吐量，但第 212—214 行实际计算的是 GPS 位置更新请求及其批量发送频率。译文保持原请求类型措辞及计算结果。",
+    "issue_type": "source_technical_or_descriptive_content",
+    "format_only": false
+  },
+  {
+    "chapter": 19,
+    "source_line": 265,
+    "note": "导航服务段落引用 Figure 8，但图 8 是位置服务图。译文保留原图号，没有替换为其他图。",
+    "issue_type": "source_cross_reference_mismatch",
+    "format_only": false
+  },
+  {
+    "chapter": 19,
+    "source_line": 277,
+    "note": "导航响应示例在 end_location 中使用字段 Ing，而 start_location 中使用 lng，疑似将小写字母 l 写成大写 I。代码块及字段按原样保留。",
+    "issue_type": "source_code_identifier_typo",
+    "format_only": false
+  },
+  {
+    "chapter": 19,
+    "source_line": 450,
+    "note": "原文将 CAP 定理概括为在一致性、可用性、分区容错性中选择两个，没有在该句中明确发生网络分区时的权衡条件。译文忠实保留原概括，未补充限定或改写技术论述。",
+    "issue_type": "source_technical_or_descriptive_content",
+    "format_only": false
+  },
+  {
+    "chapter": 19,
+    "source_line": 452,
+    "note": "该段先称键由 (user_id, timestamp) 组成，随后称 user_id 为 primary key，之后又称 user_id 为 partition key，timestamp 为 clustering key。译文保留主键与分区键的原有表述差异。",
+    "issue_type": "source_technical_or_descriptive_content",
+    "format_only": false
+  },
+  {
+    "chapter": 19,
+    "source_line": 480,
+    "note": "原文称 Google Maps 使用 21 个缩放级别，但表 1 列出级别 0 至 21，合计 22 个级别。译文保留 21 及原表全部行。",
+    "issue_type": "source_numeric_inconsistency",
+    "format_only": false
+  },
+  {
+    "chapter": 19,
+    "source_line": 486,
+    "note": "图 16 的原始 alt 称缩放级别 2 的 1024px × 1024px 图像由 64 张瓦片组成，而正文第 484 行称为 4 × 4 张、每张 256 × 256 像素。译文保留 alt 的 64 和正文的 4 × 4，未暗改数值。",
+    "issue_type": "source_numeric_inconsistency",
+    "format_only": false
+  },
+  {
+    "chapter": 19,
+    "source_line": 622,
+    "note": "该行将路由瓦片标识写为 r21，而后续第 634 行写为 r_21（Markdown 中下划线转义）。译文逐字保留这些示例记录，没有补上下划线。",
+    "issue_type": "source_identifier_formatting",
+    "format_only": true
+  },
+  {
+    "chapter": 19,
+    "source_line": 677,
+    "note": "本章小结原始 alt 将地图基础知识放在第 2 步、总体设计放在第 3 步、导航服务放在第 4 步，这与正文各节所处步骤不一致。译文完整保留 alt 的层级描述及原图链接，没有重新归类。",
+    "issue_type": "source_technical_or_descriptive_content",
+    "format_only": false
+  },
+  {
+    "chapter": 20,
+    "source_line": 16,
+    "note": "图片替代文字称标志按两行五列排列，但随后只描述了每行三个、共六个标志。译文保留原始数量和描述，未按图片猜测补充标志名称。",
+    "issue_type": "source_image_alt_count_mismatch",
+    "format_only": false
+  },
+  {
+    "chapter": 20,
+    "source_line": 115,
+    "note": "点对点模型的图片替代文字却称消费者 1、2 都收到消息 A，并称其为发布—订阅架构；这与第 113 行及图注所述点对点模型矛盾。译文保留图片替代文字原意。",
+    "issue_type": "source_image_alt_semantic_conflict",
+    "format_only": false
+  },
+  {
+    "chapter": 20,
+    "source_line": 141,
+    "note": "图片替代文字称分区前有八条消息，分区后两个分区各三条消息，未说明其余两条。译文未增补或调整消息数量。",
+    "issue_type": "source_image_alt_count_mismatch",
+    "format_only": false
+  },
+  {
+    "chapter": 20,
+    "source_line": 263,
+    "note": "图片替代文字先把 0–15 这 16 个位置称为 segments，随后又用 segment-1、segment-2 划分两个逻辑段；记录槽位与段的术语存在混用。译文分别使用‘区段’与‘逻辑段’，保留原文两层描述。",
+    "issue_type": "source_image_alt_term_ambiguity",
+    "format_only": false
+  },
+  {
+    "chapter": 20,
+    "source_line": 477,
+    "note": "此处假设消费者组已有两个消费者，再让 B 加入；第 483 行却说最初组中只有 A。译文分别保留原始数量。",
+    "issue_type": "source_example_initial_state_conflict",
+    "format_only": false
+  },
+  {
+    "chapter": 20,
+    "source_line": 589,
+    "note": "复制图替代文字称生产者向 Broker-3 上主题 A 的分区 1 发送数据；第 599 行的副本分布方案则说明 Broker-3 是主题 B 分区 1 的领导者。译文未自行修改主题名称。",
+    "issue_type": "source_image_alt_replica_distribution_conflict",
+    "format_only": false
+  },
+  {
+    "chapter": 20,
+    "source_line": 608,
+    "note": "原文称消息持久化在 multiple partitions 以避免单节点故障，随后讨论的实际机制是每个分区具有多个副本。译文保留‘多个分区’，未静默替换为‘多个副本’。",
+    "issue_type": "source_partition_replica_term_confusion",
+    "format_only": false
+  },
+  {
+    "chapter": 20,
+    "source_line": 616,
+    "note": "正文称副本 2、3 已完全追上领导者，但图 24 替代文字给出的最后条目分别为 14、13，领导者为 15；它们属于 ISR 并不等于已复制领导者所有最新条目。译文保留‘完全追上’表述。",
+    "issue_type": "source_isr_catchup_description_conflict",
+    "format_only": false
+  },
+  {
+    "chapter": 20,
+    "source_line": 621,
+    "note": "图片替代文字将包含 replica-1 的 ISR 集合统称为 followers，但同一段已将 replica-1 指定为 leader。译文保留原始领导者和跟随者两种说法。",
+    "issue_type": "source_image_alt_role_conflict",
+    "format_only": false
+  },
+  {
+    "chapter": 20,
+    "source_line": 641,
+    "note": "ACK=1 图片替代文字称必须复制到至少一个跟随者后才返回确认，这与第 639 行只等待领导者持久化的正文解释冲突。译文未替换替代文字中的条件。",
+    "issue_type": "source_image_alt_ack_semantics_conflict",
+    "format_only": false
+  },
+  {
+    "chapter": 20,
+    "source_line": 649,
+    "note": "ACK=0 图片替代文字声称‘只需领导者收到消息即可认为生产成功’，但第 647 行说明生产者不等待任何确认，因而无法从确认得知领导者是否收到。译文保留原始说法。",
+    "issue_type": "source_image_alt_ack_semantics_ambiguity",
+    "format_only": false
+  },
+  {
+    "chapter": 20,
+    "source_line": 697,
+    "note": "图 28 替代文字中的 Broker 分区清单与第 705–725 行的正文副本分布清单不完全一致，例如初始 Broker-2 是否保存主题 A 分区 1。译文分别保留各自清单，未补齐替代文字未列出的副本。",
+    "issue_type": "source_image_alt_replica_distribution_conflict",
+    "format_only": false
+  },
+  {
+    "chapter": 20,
+    "source_line": 732,
+    "note": "原文写为生产者必须 receive 多少个 replicas，未写明是收到副本确认；其后语境讨论 ISR 最小数量和提交安全性。译文保留‘接收到多少个副本’这一不严谨表述，未自行补写 ACK 或配置条件。",
+    "issue_type": "source_ack_replica_wording_ambiguity",
+    "format_only": false
+  },
+  {
+    "chapter": 20,
+    "source_line": 743,
+    "note": "新增 Broker 图的替代文字只说初始 Broker-1 保存分区 2，而第 747 行说两个分区各有三个副本；这会使替代文字中的分区 1 只出现两个副本。译文未补写未给出的分区。",
+    "issue_type": "source_image_alt_replica_count_conflict",
+    "format_only": false
+  },
+  {
+    "chapter": 20,
+    "source_line": 777,
+    "note": "减少分区图的替代文字说分区 3 仍收到一条新消息；第 781、785 行正文却说停用的分区 3 不再接收新消息。译文分别保留这些说法，未将虚线消息解释为迁移或其他未给出的含义。",
+    "issue_type": "source_image_alt_partition_decommission_conflict",
+    "format_only": false
+  },
+  {
+    "chapter": 20,
+    "source_line": 811,
+    "note": "至少一次语义的生产者配置允许 ack=1，但第 639 行已说明 ack=1 在领导者故障时可能丢失已确认但未复制的消息。此处没有限定故障模型；译文未将 ack=1 改成 ack=all。",
+    "issue_type": "source_delivery_guarantee_condition_gap",
+    "format_only": false
+  },
+  {
+    "chapter": 20,
+    "source_line": 828,
+    "note": "恰好一次图的替代文字前面说明 guaranteed once，最后一句却写为至少交付一次，弱于本节恰好一次语义。译文忠实保留最后一句的‘至少交付一次’。",
+    "issue_type": "source_image_alt_delivery_semantics_conflict",
+    "format_only": false
+  },
+  {
+    "chapter": 22,
+    "source_line": 5,
+    "note": "源稿多处撇号、引号及破折号出现乱码；译文按可辨认上下文恢复自然中文，不逐处沿用乱码。",
+    "issue_type": "source_encoding",
+    "format_only": true
+  },
+  {
+    "chapter": 22,
+    "source_line": 196,
+    "note": "表9使用filter_id 0012和0023，表10却定义0012和0013，示例标识符不完全对应。译文保留原始标识符。",
+    "issue_type": "source_example_mismatch",
+    "format_only": false
+  },
+  {
+    "chapter": 22,
+    "source_line": 228,
+    "note": "表12表头/正文发生错列和断行。分章版逐行保留；合并阅读版按可明确辨认的原始内容重排为比较项、原始数据、聚合数据三列。",
+    "issue_type": "source_table_layout",
+    "format_only": true
+  },
+  {
+    "chapter": 22,
+    "source_line": 271,
+    "note": "原文将Avro与ORC、Parquet并列称为列式数据格式；这一归类需要与各格式的定义核对。译文未改原句。",
+    "issue_type": "source_technical_content",
+    "format_only": false
+  },
+  {
+    "chapter": 22,
+    "source_line": 440,
+    "note": "表17缺少部分单元格，性能指标被拆到两行。合并阅读版整理已出现的内容并以“原稿缺项”标记缺失值，没有补写流处理列的响应、输入、输出和示例。",
+    "issue_type": "source_table_missing_cells",
+    "format_only": false
+  },
+  {
+    "chapter": 22,
+    "source_line": 495,
+    "note": "表18表头为优点/缺点，但正文第一列是时间基准，第二列是其优点，缺点内容未提供。合并阅读版改用“时间基准/原稿列出的特点”呈现已有信息。",
+    "issue_type": "source_table_header_mismatch",
+    "format_only": false
+  },
+  {
+    "chapter": 23,
+    "source_line": 152,
+    "note": "原文将幂等键防止同一请求重复提交，与不同用户竞争同一库存都称为double booking。幂等键并不能替代库存并发控制；应结合本章后续三种并发方案理解。",
+    "issue_type": "source_concept_scope",
+    "format_only": false
+  },
+  {
+    "chapter": 23,
+    "source_line": 228,
+    "note": "原文将gRPC误写为gPRC。译文正文统一采用标准拼写gRPC；其他API/协议字段和代码未因此改写。",
+    "issue_type": "source_typo_normalized",
+    "format_only": true
+  },
+  {
+    "chapter": 23,
+    "source_line": 327,
+    "note": "示例SQL使用BETWEEN，包含结束日期。实际预订需要明确退房日是否计入占用区间；本译文原样保留示例，没有改动日期边界。",
+    "issue_type": "source_date_boundary",
+    "format_only": false
+  },
+  {
+    "chapter": 23,
+    "source_line": 415,
+    "note": "原文对ACID隔离性及并发读写可见性的描述为简化示意。实际行为依赖数据库、隔离级别和SQL写法，不能据此推断所有事务都会发生相同的丢失更新。",
+    "issue_type": "source_simplification",
+    "format_only": false
+  },
+  {
+    "chapter": 23,
+    "source_line": 450,
+    "note": "预订更新伪代码的WHERE条件缺少hotel_id，而前面的查询包含hotel_id。代码块原样保留；不要将其未经校核直接用作实际跨酒店库存更新。",
+    "issue_type": "source_code_condition",
+    "format_only": false
+  },
+  {
+    "chapter": 23,
+    "source_line": 516,
+    "note": "原文称乐观锁从数据库角度完全没有锁。应区分应用无需显式悲观锁与数据库内部实现是否使用锁，译文保留其原始表述。",
+    "issue_type": "source_simplification",
+    "format_only": false
+  },
+  {
+    "chapter": 23,
+    "source_line": 532,
+    "note": "check_room_count示例的反引号与字段表达式存在疑似语法问题，且不含前文允许10%超额预订的条件。示例代码原样保留。",
+    "issue_type": "source_code_syntax_and_scope",
+    "format_only": false
+  },
+  {
+    "chapter": 24,
+    "source_line": 92,
+    "note": "原文将 IMAP 展开为 Internet Mail Access Protocol；常见标准名称为 Internet Message Access Protocol。译文按原文译作‘互联网邮件访问协议’，未替换展开名称。",
+    "issue_type": "source_technical_or_descriptive_content",
+    "format_only": false
+  },
+  {
+    "chapter": 24,
+    "source_line": 423,
+    "note": "示例 SQL 仅按 email_id 查询 emails_by_user，未给出正文所述分区键 user_id，且示例使用数字 123，而表中 email_id 为 TIMEUUID。代码按原样保留。",
+    "issue_type": "source_technical_or_descriptive_content",
+    "format_only": false
+  },
+  {
+    "chapter": 24,
+    "source_line": 428,
+    "note": "图片替代文字将 C↓ 解释为 child key，并描述其引用 attachments 主键；本章前文将 C↓ 定义为降序聚簇键。译文保留替代文字的原始表述，未改成聚簇键或外键关系。",
+    "issue_type": "source_technical_or_descriptive_content",
+    "format_only": false
+  },
+  {
+    "chapter": 24,
+    "source_line": 477,
+    "note": "邮件头示例中 \"headers\" 后缺少 JSON 冒号。代码块原样保留。",
+    "issue_type": "source_code_syntax",
+    "format_only": true
+  },
+  {
+    "chapter": 24,
+    "source_line": 539,
+    "note": "表 6 原文表头为 Scope、Sorting、Accuracy，而数据行实际分别为搜索类型、搜索范围、排序方式，存在列含义错位。译文忠实翻译原表头，未调整列。",
+    "issue_type": "source_table_header_mismatch",
+    "format_only": false
+  },
+  {
+    "chapter": 24,
+    "source_line": 570,
+    "note": "图片替代文字先称越往上圆柱体越少、越大，后又称向下接近第 0 层时圆柱体大小与数量同时增加，描述自相矛盾。译文保留两处说法。",
+    "issue_type": "source_technical_or_descriptive_content",
+    "format_only": false
+  },
+  {
+    "chapter": 25,
+    "source_line": 55,
+    "note": "表1表头只有块存储、文件存储、对象存储三列，但后续各行第一列却是比较维度，实际仅剩两列属性值；疑似缺失一列或表头错位。按源表逐行翻译，未补齐内容。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 25,
+    "source_line": 79,
+    "note": "正文将S3 SLA标为参考资料[7]、第102行将CLI ls命令标为[8]，但参考资料第840、842行的[7]、[8]对应关系相反。编号和链接按原文保留。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 25,
+    "source_line": 179,
+    "note": "原文称UNIX文件名存储在inode中；通常文件名由目录项保存，inode保存其他文件元数据。按原文翻译，未修正这一技术表述。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 25,
+    "source_line": 517,
+    "note": "图17长alt将三份1GB副本称为一个3GB数据集，又称相同3GB数据集被分为六个0.25GB块；后者合计1.5GB，与3GB不一致。数值和叙述均按原文保留。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 25,
+    "source_line": 525,
+    "note": "表5表头为复制、纠删码两列，但各数据行第一列为比较维度，第二列只有复制方案的内容；疑似丢失纠删码一列。按源表结构翻译，未补齐。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 25,
+    "source_line": 597,
+    "note": "图21长alt称object表有五个字段，但实际仅列出bucket_name、object_name、object_version、object_id四个字段；同图使用bucket_name，而后续查询示例使用bucket_id。均按原文保留。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 25,
+    "source_line": 635,
+    "note": "原命令为aws s3 list-buckets，疑似将s3api命令归入s3命名空间。代码按要求原样保留。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 25,
+    "source_line": 653,
+    "note": "原文称使用前缀“/”会返回CA/、NY/、federal.txt，但这些对象名均不以“/”开头，疑似混淆前缀与分隔符。按原文翻译。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 25,
+    "source_line": 713,
+    "note": "第二页分页SQL将表名从前一个示例的object改为metadata，疑似笔误。SQL原样保留。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 25,
+    "source_line": 775,
+    "note": "原文将ETag概括为分段的MD5校验和；ETag与MD5之间的关系可能依上传方式和加密设置而不同。按原文翻译，未添加限定条件。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 25,
+    "source_line": 818,
+    "note": "总结将分段上传的执行方式归在元数据存储的讨论下，和前文实际内容划分可能不一致。按原文保留。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 26,
+    "source_line": 145,
+    "note": "该JSON响应示例在rank字段后保留尾逗号，严格JSON语法不允许。所有代码块按原文保留。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 26,
+    "source_line": 183,
+    "note": "原文中间人攻击引用标记为[x]，参考资料中没有对应条目。引用标记原样保留。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 26,
+    "source_line": 240,
+    "note": "SQL用递增行号生成排名，并且Redis方案第375行直接使用ZREVRANK，都会为相同积分的不同用户给出不同位置，与第41行“同分同名次”的需求不一致。SQL还没有展示@rownum初始化。按原文保留。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 26,
+    "source_line": 303,
+    "note": "图10长alt将图解释为有向无环图和处理流水线，与第301、305行所述的五级索引跳表明显不一致。长alt仍完整按原文翻译。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 26,
+    "source_line": 378,
+    "note": "ZREVRANK返回从0开始的位置，正文没有解释展示名次时是否需要加1。原命令和后续相对排名范围示例原样保留。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 26,
+    "source_line": 486,
+    "note": "原文直接假设最高积分分片包含完整的前10名，未讨论该分片不足10人时需要继续访问较低分片的情况。按原文翻译。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 26,
+    "source_line": 488,
+    "note": "原文称INFO keyspace可在O(1)时间获取分片玩家总数，但该信息对应数据库键空间统计，并不直接给出某个有序集合的成员数；有序集合基数通常由ZCARD获取。原命令未更改。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 26,
+    "source_line": 492,
+    "note": "Redis Cluster按键分配哈希槽，单个有序集合键不会自动将其成员拆散到多个节点；原文随后按用户分片的描述省略了应用层拆分多个有序集合键的设计。按原文翻译。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 26,
+    "source_line": 537,
+    "note": "正文在介绍全局二级索引时引用[16]，但参考资料中[15]才是DynamoDB全局二级索引文档，[16]为排行榜与写分片教程。原引用编号未调整。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 27,
+    "source_line": 102,
+    "note": "原文将银行卡组织名称写为 Discovery，可能是 Discover 的拼写错误。译文保留 Discovery，没有自行更名。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 27,
+    "source_line": 247,
+    "note": "表 5 的 buyer 和 seller 两行都在 Debit 列填写 $1，Credit 列均为空，与第 242 行一借一贷的说明不一致。译文逐格保留原始数值与列位置。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 27,
+    "source_line": 315,
+    "note": "原文称令牌在第 4 步收到，但第 309 行所述第 3 步才是 PSP 返回令牌，第 4 步为将令牌存入数据库。译文保留原步骤引用。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 27,
+    "source_line": 453,
+    "note": "原文在 Uber 支付系统示例后引用 [16]，而参考资料 [16] 的标题为 Chain Services with Exactly-Once Guarantees，未明确标为 Uber 案例。译文保留原引用编号。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 28,
+    "source_line": 49,
+    "note": "需求澄清第 35 行使用 availability（可用性）99.99%，需求汇总第 49 行则使用 reliability（可靠性）99.99%。译文保留了原文的术语差异及百分比。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 28,
+    "source_line": 109,
+    "note": "响应体代码示例中，Status 字段后缺少 JSON 成员之间的逗号。按要求，代码块逐字保留，未修正语法。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 28,
+    "source_line": 116,
+    "note": "原文在数字钱包金额表示的语境下称，理解精度损失风险后使用 float 或 double 也是合适选择；这与本章第 114 行及支付系统一章推荐 string 的谨慎程度不同。译文忠实保留原论述，没有添加或改写金融工程建议。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 28,
+    "source_line": 217,
+    "note": "表 2 的取消行中，Balance change: +$1 位于 Operation 列，Do Nothing 位于 A 列，C 列为空，与第 254—256 行取消阶段的说明位置不一致。译文保持原表行与单元格位置。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 28,
+    "source_line": 246,
+    "note": "图 8 的原始 alt 已指出账户 C 更新后的 unlock A 可能应为 unlock C；图 9 第 260 行及图 11 第 312 行的 alt 也包含相关锁标签不一致说明。译文完整翻译原有疑点说明，保留原图引用及 SQL，不重画或改图。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 28,
+    "source_line": 268,
+    "note": "表 3 表头为 First Phase、Second Phase: success、Second Phase: fail，但正文首列填入 2PC/TC/C，2PC 最后一格还串接 Commit all local transactions 与 Cancel all local transactions，疑似列缺失或错位。译文保持原三列结构及各格内容。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 28,
+    "source_line": 391,
+    "note": "表 5 表头仅有 TC/C 和 Saga 两列，正文首列却是比较维度，第二列仅给出一组值；没有独立的两种方案数据列。译文逐格保留该缺项结构，未据上下文补全。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 28,
+    "source_line": 482,
+    "note": "第 475—479 行赋予状态机验证命令并生成事件、应用事件两项功能；第 464 行允许事件生成含随机性，而第 482 行又称状态机本身绝不能含随机性。译文保留这些陈述，未替作者划分不同阶段的确定性约束。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 28,
+    "source_line": 512,
+    "note": "原文步骤 3 写为为每个账户生成两个事件，但第 504 行说明每个账户生成一个事件，示例合计两个事件。译文按原句保留步骤 3 的数量，没有自行改正。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 28,
+    "source_line": 622,
+    "note": "原文将 HDFS 举作 object storage solution（对象存储方案）的例子。译文保留原分类与产品名称，未将其改写为分布式文件系统。",
+    "issue_type": "source_issue_pending_review",
+    "format_only": false
+  },
+  {
+    "chapter": 29,
+    "source_line": 9,
+    "note": "原文称香港交易所每天交易约 200 billion shares，未注明统计日期或具体口径；译文保留为‘2000 亿股’，未擅自替换为成交金额或其他单位。",
+    "issue_type": "source_technical_or_descriptive_content",
+    "format_only": false
+  },
+  {
+    "chapter": 29,
+    "source_line": 53,
+    "note": "需求澄清只支持限价单，但延迟需求以市价单进入系统至成交返回定义往返延迟。译文保留该订单类型差异。",
+    "issue_type": "source_technical_or_descriptive_content",
+    "format_only": false
+  },
+  {
+    "chapter": 29,
+    "source_line": 105,
+    "note": "图片替代文字将卖价从 100.10 到 100.13 描述为 descending、买价从 100.08 到 100.05 描述为 ascending，可能指图上排布方向。译文使用‘向下排列’与‘向上排列’，保留原文方向，不据数值重新排序。",
+    "issue_type": "source_technical_or_descriptive_content",
+    "format_only": false
+  },
+  {
+    "chapter": 29,
+    "source_line": 111,
+    "note": "图片替代文字称 100.10 为最高卖价并标为最优卖价，但同句列出的其他卖价更高；通常最优卖价应为最低卖价。译文保留‘最高卖价’原意，未悄悄纠正。",
+    "issue_type": "source_technical_or_descriptive_content",
+    "format_only": false
+  },
+  {
+    "chapter": 29,
+    "source_line": 215,
+    "note": "此处风控示例为用户每日交易金额低于 100 万美元，而需求澄清中的例子是每日最多交易 100 万股苹果股票。译文分别保留原始指标与单位。",
+    "issue_type": "source_technical_or_descriptive_content",
+    "format_only": false
+  },
+  {
+    "chapter": 29,
+    "source_line": 437,
+    "note": "正文明确指出图 12 是逻辑模型而非数据库模式，但图片替代文字称其为 database schema diagram。译文分别保留原始表述。",
+    "issue_type": "source_technical_or_descriptive_content",
+    "format_only": false
+  },
+  {
+    "chapter": 29,
+    "source_line": 580,
+    "note": "原文将磁盘访问延迟概括为几十毫秒，未区分磁盘介质、操作类型或持久化方式。译文保留其数值与范围，未换用其他延迟估计。",
+    "issue_type": "source_technical_or_descriptive_content",
+    "format_only": false
+  },
+  {
+    "chapter": 29,
+    "source_line": 701,
+    "note": "此处将 RPO 对应问题写为‘需要恢复哪些功能’，与后文第 733 行按可容忍数据丢失量定义 RPO 不一致。译文保留原问题。",
+    "issue_type": "source_technical_or_descriptive_content",
+    "format_only": false
+  },
+  {
+    "chapter": 29,
+    "source_line": 717,
+    "note": "原文最少票数公式写作 (N/2 + 1)，未明确取整规则；例子给出五节点最少三票。公式和例子均按原文保留。",
+    "issue_type": "source_technical_or_descriptive_content",
+    "format_only": false
+  },
+  {
+    "chapter": 29,
+    "source_line": 725,
+    "note": "原文把心跳 RPC 写为 AppendEnties，而图中为 AppendEntries；原文还以‘任期值低于新节点’解释无法当选。译文保留该拼写和任期比较表述，未补写协议条件。",
+    "issue_type": "source_typo_and_protocol_description",
+    "format_only": false
+  },
+  {
+    "chapter": 29,
+    "source_line": 727,
+    "note": "图片替代文字称任期 3 开始时没有选举，并同时对任期 4 的蓝绿色区域作局部与整段两种描述；这些说法与常见 Raft 任期解释存在疑点。译文按原文保留。",
+    "issue_type": "source_technical_or_descriptive_content",
+    "format_only": false
+  },
+  {
+    "chapter": 29,
+    "source_line": 777,
+    "note": "撮合伪代码只获取 order.price 对应档位；匹配量使用 order.quantity 而非剩余数量，并在循环中直接移除对手订单，未体现部分成交与剩余挂单处理。此代码为原文伪代码，全部原样保留。",
+    "issue_type": "source_technical_or_descriptive_content",
+    "format_only": false
+  },
+  {
+    "chapter": 29,
+    "source_line": 919,
+    "note": "参考资料 [17] 显示的 URL 为 /Memory_map，而实际链接目标为 /Mmap。两者分别按原文保留。",
+    "issue_type": "source_link_metadata",
+    "format_only": true
+  }
+]
