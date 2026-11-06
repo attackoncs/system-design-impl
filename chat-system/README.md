@@ -10,6 +10,13 @@ A Python reference implementation of Chapter 13, **Design A Chat System**, from
 *System Design Interview*. The core uses only the standard library; an optional
 WebSocket adapter provides actual network communication.
 
+The 2026-11-06 review includes a [fixed-source Tinode/Zulip comparison](docs/open-source-review_cn.md).
+The 11-05 real-Redis suite recorded **202 passed and one Sentinel skip**; a fresh
+six-process Sentinel lab passed that case separately on 11-06, covering **203 distinct
+cases across the two runs**. Recovery took 2.319 seconds; confirmed messages survived
+with zero retry duplicates. See the [verification report](benchmarks/results.md) for
+the runtime-discovery, lab-readiness and cleanup fixes and their validation limits.
+
 ## Features
 
 - Authenticated user/device sessions with replacement and token revocation.
@@ -293,7 +300,7 @@ The repository's local Chapter 13 is the feature source. The optional transport
 uses the [websockets asyncio server API](https://websockets.readthedocs.io/en/stable/reference/asyncio/server.html).
 
 
-## 2026-10-24 engineering review
+## 2026-10-24 engineering review (historical)
 
 Direct channel creation, group admission, sender-key deduplication and inbox fanout
 are serialized in SQLite transactions across threads and instances. A unique direct
@@ -312,5 +319,6 @@ The implementation preserves history without automatic expiry. It does not provi
 cross-region sharding or demonstrate fifty-million-DAU capacity. The existing capacity
 reports remain historical measurements, not measurements of this review's revisions.
 
-Final validation and the explicitly skipped Sentinel fault experiment are recorded in
-[the chapter audit](docs/chapter13-review.md).
+That review's validation and skipped Sentinel fault experiment remain in
+[the chapter audit](docs/chapter13-review.md), alongside the later 2026-11-05 suite
+and successful independent 2026-11-06 Sentinel run described above.
