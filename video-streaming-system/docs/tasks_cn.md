@@ -45,5 +45,5 @@
 
 验收记录：benchmarks/results.md；媒体示例 examples/media_demo.py。参考实现完成不表示这些生产扩展完成。
 
-历史分布式验收（2026-10-02）：benchmarks/ha-results.md；40 passed；Patroni 提升 16.362 秒，
+历史分布式验收（2026-10-03）：[HA报告](../benchmarks/ha-results.md)；40 passed；Patroni 提升 16.362 秒，
 原 API 恢复 16.582 秒。跨物理主机网络分区、对象存储复制及生产容量未验。

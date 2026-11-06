@@ -45,5 +45,5 @@ Upload and play videos up to 1 GB; multiple bitrate renditions across different 
 
 Acceptance records: benchmarks/results.md; media examples examples/media_demo.py. Completion of the reference implementation does not indicate completion of these production extensions.
 
-Historical distributed acceptance (2026-10-02): benchmarks/ha-results.md; 40 passed; Patroni promotion 16.362 s,
+Historical distributed acceptance (2026-10-03): [HA report](../benchmarks/ha-results.md); 40 passed; Patroni promotion 16.362 s,
 original API recovery 16.582 s. Cross-physical-host network partition, object storage replication and production capacity not verified.
