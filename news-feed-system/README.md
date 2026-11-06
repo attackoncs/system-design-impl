@@ -113,6 +113,6 @@ python -m pip install -e ".[dev]"
 python -m pytest tests -q -p no:cacheprovider
 ```
 
-The 2026-11-01 review passed **310 tests** with warnings treated as errors, including subprocess exit recovery, SQLite contention, privacy changes, overlapping bounded content/profile reads, cancellation draining, request observations, worker retry and real local HTTP flows. Delayed queue timeouts use `asyncio.TimeoutError` for the declared Python 3.9/3.10 support; a regression simulates their separate exception hierarchy. Python 3.13 was executed here; a full runtime-version matrix was not run.
+The latest recorded run, on 2026-11-05, passed **311 tests in 17.48 seconds**, with warnings treated as errors and no skips. It retains the 2026-11-01 coverage (310 tests in 17.24 seconds) for subprocess exit recovery, SQLite contention, privacy changes, bounded concurrent reads, cancellation draining, request observations and worker retry, and adds the real HTTP JSON-nesting rejection/recovery regression. Delayed queue timeouts use `asyncio.TimeoutError` for the declared Python 3.9/3.10 support; a regression simulates their separate exception hierarchy. Python 3.13 was executed; a full runtime-version matrix was not run. See the [dated verification report](benchmarks/REPORT.md).
 
 If using an uninstalled source checkout, set `PYTHONPATH` to this project's absolute `src` directory before testing so subprocesses inherit it. Restricted Windows environments also need a writable `TEMP`/`TMP` and permission for local loopback sockets.
