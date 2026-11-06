@@ -2,7 +2,7 @@
 
 ## Overview
 
-A Python rate limiter library supporting multiple algorithms, configurable rules, and both local (in-memory) and distributed (Redis) backends. Provides decorator and middleware integration for Flask/FastAPI with proper HTTP 429 responses and rate limit headers.
+A Python rate limiter library supporting multiple algorithms, configurable rules, and both local (in-memory) and distributed (Redis) backends. Flask/FastAPI adapters produce HTTP denial responses and rate limit headers; the general decorator raises an exception by default or returns a response dictionary when configured.
 
 ## Functional Requirements
 
@@ -11,9 +11,9 @@ A Python rate limiter library supporting multiple algorithms, configurable rules
 The system shall support the following rate limiting algorithms, selectable per rule:
 
 - **FR-1.1**: Token Bucket — allows bursts up to bucket capacity, refills at a fixed rate. Suitable for APIs that tolerate short bursts.
-- **FR-1.2**: Leaking Bucket — processes requests at a fixed rate, rejects overflow when queue is full. Suitable for stable outflow rate requirements.
+- **FR-1.2**: Leaking Bucket — drain virtual occupancy at a fixed rate and immediately allow or reject a whole request. Actual FIFO pacing is provided separately by the optional, process-local `LeakyBucketQueue`; the admission algorithm does not schedule HTTP execution.
 - **FR-1.3**: Fixed Window Counter — counts requests in fixed time windows (e.g., per minute). Simple and memory-efficient but can allow up to 2x the limit at window boundaries.
-- **FR-1.4**: Sliding Window Log — tracks exact timestamps of each request for precise limiting. Most accurate but higher memory usage.
+- **FR-1.4**: Sliding Window Log — retain a timestamp and unique member for each accepted request in the rolling window. Denied requests are not appended.
 - **FR-1.5**: Sliding Window Counter — approximates sliding window using weighted current + previous window counts. Balances accuracy and memory efficiency.
 
 ### FR-2: Storage Backends
@@ -27,7 +27,7 @@ The system shall support the following rate limiting algorithms, selectable per 
 - **FR-3.1**: Rate limiting rules shall be defined in configuration (Python dataclasses).
 - **FR-3.2**: Each rule shall specify: identifier key type (IP, user ID, custom), algorithm, limit, and time window.
 - **FR-3.3**: Rules shall be dynamically updatable at runtime without restart via `update_rules()`.
-- **FR-3.4**: Multiple rules can apply to the same endpoint (e.g., per-IP and per-user limits). The most restrictive result is returned.
+- **FR-3.4**: Multiple rules can apply to the same endpoint (e.g., per-IP and per-user limits). Evaluate matching rules sequentially; any denial wins with the longest retry delay. There is no group rollback of quota already charged by earlier rules.
 - **FR-3.5**: Each rule may optionally specify a path pattern for endpoint-specific limiting.
 - **FR-3.6**: Each rule may optionally specify a human-readable name for identification.
 
@@ -40,17 +40,17 @@ The system shall support the following rate limiting algorithms, selectable per 
 
 ### FR-5: HTTP Response Handling
 
-- **FR-5.1**: When a request is rate limited, the system shall return HTTP 429 (Too Many Requests).
+- **FR-5.1**: Framework adapters default to HTTP 429 (Too Many Requests) on denial and allow a configured 4xx/5xx status. The general decorator raises by default; `raise_exception=False` returns a dictionary, not a framework HTTP response.
 - **FR-5.2**: Responses shall include `X-RateLimit-Remaining` header with remaining request count.
 - **FR-5.3**: Responses shall include `X-RateLimit-Limit` header with the maximum allowed requests.
-- **FR-5.4**: Responses shall include `Retry-After` header with seconds until the client can retry.
-- **FR-5.5**: Responses shall include `X-RateLimit-Reset` header with seconds until the window resets.
-- **FR-5.6**: Rate limit headers shall be configurable (can be disabled via `include_headers` config).
+- **FR-5.4**: Denial responses shall include `Retry-After` as a positive integer delay in seconds when headers are enabled.
+- **FR-5.5**: Responses shall include `X-RateLimit-Reset` as a rounded-up relative algorithm reset duration when headers are enabled.
+- **FR-5.6**: Both `include_headers` and `auto_headers` shall control rate limit headers on allowed and denied responses.
 
 ### FR-6: Throttle Key Resolution
 
-- **FR-6.1**: The system shall support throttling by client IP address (handles X-Forwarded-For for proxied requests).
-- **FR-6.2**: The system shall support throttling by authenticated user ID (JWT, API key, session).
+- **FR-6.1**: Use the connection peer IP by default. Reading X-Forwarded-For requires explicit `trust_forwarded=True` behind a trusted proxy that sanitizes forwarded headers.
+- **FR-6.2**: Support an authenticated principal supplied by the application or a custom resolver. Credential-derived keys use stable hashes; the limiter does not authenticate JWTs, API keys or sessions.
 - **FR-6.3**: The system shall support throttling by custom properties via a configurable key function.
 - **FR-6.4**: The system shall support composite keys combining multiple extractors (e.g., IP + endpoint path).
 - **FR-6.5**: The system shall support throttling by request path and HTTP method.

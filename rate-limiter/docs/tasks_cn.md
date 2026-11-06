@@ -28,7 +28,7 @@
 
 ## 任务 5：Leaking Bucket（漏桶）算法
 
-- [x] 5.1 实现 `src/rate_limiter/algorithms/leaking_bucket.py` 中的 `LeakingBucketAlgorithm` 类 —— 维护一个以固定速率流出的队列计数器，队列满时拒绝
+- [x] 5.1 实现`src/rate_limiter/algorithms/leaking_bucket.py`中的`LeakingBucketAlgorithm`——固定速率排空虚拟占用量并立即决定接纳；可选`LeakyBucketQueue`独立控制本地回调启动节奏
 - [x] 5.2 编写用于 Redis 原子漏桶操作的 Lua 脚本
 - [x] 5.3 创建 `tests/test_algorithms/test_leaking_bucket.py`，覆盖：队列有空间时放行、队列满时拒绝、随时间流出
 
@@ -40,7 +40,7 @@
 
 ## 任务 7：Sliding Window Log（滑动窗口日志）算法
 
-- [x] 7.1 实现 `src/rate_limiter/algorithms/sliding_window_log.py` 中的 `SlidingWindowLogAlgorithm` 类 —— 存储每次请求的时间戳，移除过期条目，统计剩余数量
+- [x] 7.1 实现`src/rate_limiter/algorithms/sliding_window_log.py`中的`SlidingWindowLogAlgorithm`——仅为接纳请求记录时间戳及唯一成员，移除过期条目并统计滚动窗口内已接纳数量
 - [x] 7.2 编写用于 Redis 原子滑动窗口日志操作的 Lua 脚本（ZADD + ZREMRANGEBYSCORE + ZCARD）
 - [x] 7.3 创建 `tests/test_algorithms/test_sliding_window_log.py`，覆盖：限流内放行、达到限流值时拒绝、旧条目过期
 
@@ -52,7 +52,7 @@
 
 ## 任务 9：键解析
 
-- [x] 9.1 实现 `src/rate_limiter/keys.py` 中的 `ip_key`（处理 X-Forwarded-For）、`user_id_key` 和 `composite_key` 工厂函数
+- [x] 9.1 实现`src/rate_limiter/keys.py`中的`ip_key`（默认连接对端，转发头需显式信任代理）、`user_id_key`和`composite_key`；提取键不等于验证凭证
 - [x] 9.2 创建 `tests/test_keys.py`，覆盖：直接请求与代理请求的 IP 提取、用户 ID 提取、复合键生成
 
 ## 任务 10：核心 RateLimiter 编排器
@@ -62,18 +62,18 @@
 
 ## 任务 11：装饰器集成
 
-- [x] 11.1 实现 `src/rate_limiter/decorators.py` 中的 `rate_limit` 装饰器 —— 解析键、检查限流、在被拒时抛出适当异常或返回 429 响应
+- [x] 11.1 实现`src/rate_limiter/decorators.py`中的`rate_limit`——解析键并检查限流，默认在拒绝时抛异常；`raise_exception=False`返回响应字典，实际HTTP响应由框架适配器负责
 - [x] 11.2 创建 `tests/test_decorators.py`，覆盖：基础函数装饰、限流执行、自定义键函数、被拒时正确抛异常
 
 ## 任务 12：FastAPI 中间件
 
 - [x] 12.1 创建 `src/rate_limiter/middleware/__init__.py`，导出中间件相关类
-- [x] 12.2 实现 `src/rate_limiter/middleware/fastapi.py` 中的 `RateLimitMiddleware`（ASGI）—— 检查所有适用规则，被拒时返回带响应头的 429 JSONResponse，放行时向响应添加限流响应头
+- [x] 12.2 实现`src/rate_limiter/middleware/fastapi.py`中的`RateLimitMiddleware`（ASGI）——检查适用规则，拒绝时返回JSONResponse（默认429，可配其他4xx/5xx），放行与拒绝均遵守两个响应头开关
 - [x] 12.3 创建 `tests/test_middleware/__init__.py` 和 `tests/test_middleware/test_fastapi.py`，使用 httpx/TestClient 覆盖：放行请求获得响应头、被拒请求返回 429、多规则应用
 
 ## 任务 13：Flask 中间件
 
-- [x] 13.1 实现 `src/rate_limiter/middleware/flask.py` 中的 `RateLimitExtension` 类 —— 注册 before_request 和 after_request 钩子，被拒时返回带响应头的 429
+- [x] 13.1 实现`src/rate_limiter/middleware/flask.py`中的`RateLimitExtension`——注册before_request/after_request钩子，共享拒绝状态/正文规则，放行与拒绝均遵守两个响应头开关
 - [x] 13.2 创建 `tests/test_middleware/test_flask.py`，使用 Flask 测试客户端覆盖：放行请求、被拒请求返回 429 及正确响应头
 
 ## 任务 14：示例与文档

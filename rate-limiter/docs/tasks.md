@@ -28,7 +28,7 @@
 
 ## Task 5: Leaking Bucket Algorithm
 
-- [x] 5.1 Implement `src/rate_limiter/algorithms/leaking_bucket.py` with `LeakingBucketAlgorithm` class — maintains a queue counter that drains at a fixed rate, rejects when queue is full
+- [x] 5.1 Implement `src/rate_limiter/algorithms/leaking_bucket.py` with `LeakingBucketAlgorithm` — drain virtual occupancy and immediately decide admission; optional `LeakyBucketQueue` separately paces local callback starts
 - [x] 5.2 Write Lua script for atomic Redis leaking bucket operations
 - [x] 5.3 Create `tests/test_algorithms/test_leaking_bucket.py` with tests for: allow when queue has space, deny when full, drain over time
 
@@ -40,7 +40,7 @@
 
 ## Task 7: Sliding Window Log Algorithm
 
-- [x] 7.1 Implement `src/rate_limiter/algorithms/sliding_window_log.py` with `SlidingWindowLogAlgorithm` class — stores timestamp of each request, removes expired entries, counts remaining
+- [x] 7.1 Implement `src/rate_limiter/algorithms/sliding_window_log.py` with `SlidingWindowLogAlgorithm` — store timestamps and distinct members for accepted requests only, remove expired entries and count the rolling accepted quota
 - [x] 7.2 Write Lua script for atomic Redis sliding window log operations (ZADD + ZREMRANGEBYSCORE + ZCARD)
 - [x] 7.3 Create `tests/test_algorithms/test_sliding_window_log.py` with tests for: allow within limit, deny at limit, old entries expire
 
@@ -52,7 +52,7 @@
 
 ## Task 9: Key Resolution
 
-- [x] 9.1 Implement `src/rate_limiter/keys.py` with `ip_key` (handles X-Forwarded-For), `user_id_key`, and `composite_key` factory function
+- [x] 9.1 Implement `src/rate_limiter/keys.py` with peer-default `ip_key` (forwarded headers require explicit trusted-proxy opt-in), `user_id_key`, and `composite_key`; key extraction does not authenticate credentials
 - [x] 9.2 Create `tests/test_keys.py` with tests for IP extraction (direct and proxied), user ID extraction, and composite key generation
 
 ## Task 10: Core RateLimiter Orchestrator
@@ -62,17 +62,17 @@
 
 ## Task 11: Decorator Integration
 
-- [x] 11.1 Implement `src/rate_limiter/decorators.py` with `rate_limit` decorator — resolves key, checks limit, raises appropriate exception or returns 429 response on denial
+- [x] 11.1 Implement `src/rate_limiter/decorators.py` with `rate_limit` — resolve key, check limit and raise on denial by default; `raise_exception=False` returns a response dictionary, while framework adapters own actual HTTP responses
 - [x] 11.2 Create `tests/test_decorators.py` with tests for: basic function decoration, rate limit enforcement, custom key function, proper exception on denial
 
 ## Task 12: FastAPI Middleware
 
 - [x] 12.1 Create `src/rate_limiter/middleware/__init__.py` with middleware exports
-- [x] 12.2 Implement `src/rate_limiter/middleware/fastapi.py` with `RateLimitMiddleware` (ASGI) — checks all applicable rules, returns 429 JSONResponse with headers on denial, adds rate limit headers to successful responses
+- [x] 12.2 Implement `src/rate_limiter/middleware/fastapi.py` with `RateLimitMiddleware` (ASGI) — check applicable rules, return a JSONResponse on denial (default 429, configurable 4xx/5xx) and honor both header flags for denial and success
 - [x] 12.3 Create `tests/test_middleware/__init__.py` and `tests/test_middleware/test_fastapi.py` with tests using httpx/TestClient for: allowed requests get headers, denied requests get 429, multiple rules applied
 ## Task 13: Flask Middleware
 
-- [x] 13.1 Implement `src/rate_limiter/middleware/flask.py` with `RateLimitExtension` class — registers before_request and after_request hooks, returns 429 with headers on denial
+- [x] 13.1 Implement `src/rate_limiter/middleware/flask.py` with `RateLimitExtension` — register before_request/after_request hooks, share denial status/body rules and honor both header flags for denial and success
 - [x] 13.2 Create `tests/test_middleware/test_flask.py` with tests using Flask test client for: allowed requests, denied requests with 429 and correct headers
 
 ## Task 14: Examples and Documentation

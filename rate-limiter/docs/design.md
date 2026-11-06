@@ -101,7 +101,8 @@ Flask/FastAPI share rejection bodies and header formatting. The two header flags
 apply to both outcomes. Retry-After is a positive integer delta in seconds;
 X-RateLimit-Reset is a relative, rounded-up algorithm reset horizon. Error bodies
 retain fractional retry detail. Default status429 can be configured4xx/5xx.
-The universal decorator returns a dictionary unless configured to raise.
+The general decorator raises by default; `raise_exception=False` returns a
+dictionary rather than a framework HTTP response.
 
 ASGI and async decorators offload synchronous checks. A cancelled caller can
 leave a running check that still charges quota. Storage I/O does not block the
