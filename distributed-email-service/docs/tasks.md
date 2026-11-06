@@ -30,6 +30,9 @@ HTTP mail send/receive, attachments, read filtering, subject/sender/body search,
 
 ## Acceptance evidence and remaining boundaries
 
+The test and latency figures below are historical **2026-10-20** evidence. Current
+99-test results and measurements are in [the validation report](../benchmarks/results.md).
+
 - 6 core storage tests + 3 real nine-process network tests all pass (21.838 seconds).
 - 40 emails all delivered via HTTP/SMTP and searchable from replicas, 40 unique gateway deliveries; replica search p95 76.077ms.
 - After the primary exits, replicas remain readable and writes return 503; restart recovery after gateway acknowledgement loss and scanner unavailability shows no duplicates. See ../benchmarks/results.md.
