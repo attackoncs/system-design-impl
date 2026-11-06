@@ -9,6 +9,10 @@
 基于《System Design Interview》第 13 章实现的 Python 聊天系统参考库。
 核心仅依赖标准库，可选 WebSocket 适配层提供真实网络收发。
 
+2026-11-06收尾已完成[Tinode/Zulip固定源码对照](docs/open-source-review_cn.md)。
+本轮主套202项通过、1项Sentinel跳过，随后在全新六进程实验中单独通过该项，合计覆盖203个不同用例。
+故障恢复2.319秒，已确认消息保留、重试0重复；Windows运行时识别、实验就绪与资源清理修复及精确范围见[验证报告](benchmarks/results.md)。
+
 ## 功能
 
 - 令牌认证、独立设备会话、同设备重连替换和令牌撤销。

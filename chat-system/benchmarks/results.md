@@ -1,4 +1,37 @@
-# Local capacity and failover results
+# Chapter 13 verification: 2026-11-05 / 2026-11-06
+
+The 11-05 owned Redis 8.0.5 run collected 203 cases: **202 passed, one skipped,
+6.612 seconds**, warnings treated as errors. It exercised real loopback WebSockets,
+cross-process routing and WAIT against AOF/always Redis. The skipped case required
+the separate disposable Sentinel lab; see [raw suite result](review-2026-11-05.json).
+
+The 11-06 run used a fresh existing lab with three Redis processes and three
+Sentinels, and two logical chat services in the test process. It ran only that
+skipped case: **one passed, no skips, 5.53 seconds** (JUnit: 5.498 seconds).
+The primary changed from port 56865 to 56866 in **2.319 seconds**; confirmed
+messages survived, retry duplicates were zero, and pausing the surviving replica
+rejected an unconfirmed idempotent retry. All owned lab processes stopped.
+See [final raw Sentinel result](sentinel-review-2026-11-06.json).
+
+These runs cover 203 distinct cases; they are not one single 203-pass suite run.
+The retained [11-05 failed attempt](sentinel-review-2026-11-05.json) exposed a
+readiness-response parsing error before the deliberate primary crash. The final
+test waits for all three Sentinels to discover two peers/two replicas and pass
+CKQUORUM, using redis-py's typed command callback. Cleanup now closes every
+service/backend even when Redis scanning fails, preserving the original error.
+
+The Windows Redis runner also stops following Linux symlink targets through
+Windows stat. Its two added regression cases protect runtime discovery without
+substituting Redis mocks. No core messaging algorithm or load-path optimization
+was changed. The basic example was verified during this review; historical
+1,000-connection capacity figures below were not repeated.
+
+Current chapter/source coverage and deployment limits are documented in the
+[chapter audit](../docs/chapter13-review.md) and [fixed-source comparison](../docs/open-source-review_cn.md).
+
+---
+
+# Historical local capacity and failover results (2026-10-02)
 
 Measured 2026-10-02 on Windows 11 (16 logical CPUs), Python 3.13.9, Redis 8.0.5
 in Ubuntu WSL. Two independent Python chat processes and 1,000 actual WebSocket

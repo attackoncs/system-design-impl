@@ -1,0 +1,34 @@
+{
+  "warnings_as_errors": true,
+  "tests": 1,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "seconds": 5.498,
+  "pytest_exit_code": 0,
+  "scope": "Separate existing six-process WSL Redis/Sentinel lab; two logical chat nodes in the test process; no real push provider.",
+  "lab": {
+    "primary": 56865,
+    "sentinels": [
+      [
+        "127.0.0.1",
+        58273
+      ],
+      [
+        "127.0.0.1",
+        58274
+      ],
+      [
+        "127.0.0.1",
+        58275
+      ]
+    ]
+  },
+  "old_primary": 56865,
+  "new_primary": 56866,
+  "recovery_seconds": 2.319,
+  "confirmed_messages_preserved": true,
+  "retry_duplicates": 0,
+  "unconfirmed_retry_rejected": true,
+  "owned_lab_stopped": true
+}

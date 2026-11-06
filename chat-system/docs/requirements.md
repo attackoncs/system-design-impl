@@ -1,5 +1,9 @@
 # Requirements Document: Chat System
 
+## Verification update: 2026-11-06
+
+The existing optional Sentinel verification waits for three Sentinels to discover two peers/two replicas and pass CKQUORUM before the owned primary is killed. A listening port alone is insufficient readiness. Use typed redis-py command responses, finite deadlines and cleanup that closes all services/backend even when Redis is unavailable. Windows runtime discovery must not reject executable WSL Linux symlinks through native stat. These are validation requirements; messaging behavior and production-scale boundaries remain unchanged. See [current verification](chapter13-review.md).
+
 ## Introduction
 
 Implement Chapter 13, **Design A Chat System**, from the repository's local

@@ -29,6 +29,13 @@ WebSocket adapter provides actual network communication.
 中文文档：[README_CN.md](./README_CN.md)。Architecture and guarantees:
 [docs/design.md](./docs/design.md). Chapter coverage and this review: [chapter13-review.md](./docs/chapter13-review.md).
 
+The 2026-11-06 review compares [fixed Tinode/Zulip source](docs/open-source-review_cn.md)
+and verifies 203 distinct cases: the owned Redis suite ran 202 with one Sentinel
+skip, then a fresh six-process lab passed that case separately. Failover recovered
+in 2.319 seconds with confirmed messages preserved and no retry duplicates.
+The Windows runner and Sentinel-test readiness/cleanup fixes, exact results and
+remaining limits are recorded in the [verification report](benchmarks/results.md).
+
 ## Installation and tests
 
 Requires Python 3.9+.

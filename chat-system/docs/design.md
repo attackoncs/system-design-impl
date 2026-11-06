@@ -1,5 +1,9 @@
 # Design: Chat System
 
+## 2026-11-06 validation boundary
+
+The messaging and replica-confirmation architecture is unchanged. The owned Redis runner checks Linux-link existence without making Windows follow the WSL target; the executable is still validated by starting real Redis. The Sentinel fault test waits for each of three Sentinels to report two peers/two replicas and successful CKQUORUM. Its full `SENTINEL MASTER` command name invokes redis-py's typed callback without wrapper-specific options. Failure cleanup drains all service closes and closes the backend even if namespace scanning fails, preserving the original test failure. See [current evidence](chapter13-review.md); this does not add consensus, cross-region sharding or a real push provider.
+
 ## Scope and architecture
 
 The local implementation follows Chapter 13's direct/group messaging, device inboxes,

@@ -91,15 +91,13 @@ def test_sentinel_promotes_replica_and_preserves_confirmed_messages():
             deadline = time.monotonic() + 15
             while True:
                 try:
-                    replies = await asyncio.gather(
+                    states = await asyncio.gather(
                         *(
-                            sentinel.execute_command(
-                                "SENTINEL", "MASTER", "chat-primary"
-                            )
+                            # Select redis-py's typed callback without wrapper-specific options.
+                            sentinel.execute_command("SENTINEL MASTER", "chat-primary")
                             for sentinel in backend._sentinel.sentinels
                         )
                     )
-                    states = [dict(zip(reply[::2], reply[1::2])) for reply in replies]
                     if not all(
                         int(state["num-other-sentinels"]) >= 2
                         and int(state["num-slaves"]) >= 2

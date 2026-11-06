@@ -1,5 +1,15 @@
 # Implementation Plan: Chat System
 
+## 2026-11-06 review verification
+
+- [x] Compare fixed Tinode/Zulip source with the existing send/inbox/device/push paths; retain the implemented business boundaries.
+- [x] Fix Windows-to-WSL Redis symlink discovery and add two regression cases without a Redis mock.
+- [x] Verify the real Redis suite: 202 passed, one Sentinel skip, 6.612 seconds; run that case separately in a fresh six-process lab: one passed, 5.53 seconds, recovery 2.319 seconds.
+- [x] Require discovered peers/replicas plus quorum, select the typed Sentinel callback, and close services/backend after failures. Keep failed attempts separate from final evidence.
+- [x] Update bilingual docs and learning source; root agent regenerates the guide/index. No load run, external push-provider validation or 50-million-DAU claim was added.
+
+The two runs cover 203 distinct cases. Exact [current results](../benchmarks/results.md) precede the retained historical records below.
+
 Complete requirements and design first, then implement and validate in this order.
 Checkboxes reflect completed verification, not merely the existence of a file.
 
