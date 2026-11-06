@@ -59,6 +59,17 @@ class CacheSafetyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Cache(clock=lambda: math.nan).probe("key")
 
+    def test_invalid_update_ttl_preserves_existing_value_and_accounting(self):
+        for ttl in (True, math.inf, math.nan, 0, -1):
+            with self.subTest(ttl=ttl):
+                cache = Cache(clock=lambda: 1)
+                cache.set("key", "old", 60)
+                before = cache.status()
+                with self.assertRaises(ValueError):
+                    cache.set("key", "old", ttl)
+                self.assertEqual(cache.status(), before)
+                self.assertEqual(cache.get("key"), "old")
+
     def test_version_floor_metadata_is_bounded(self):
         cache = Cache()
         for i in range(1001):

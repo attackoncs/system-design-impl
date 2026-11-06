@@ -1,5 +1,7 @@
 # Chapter 2 implementation requirements
 
+2026-11-06: An attached write fence must retain ownership through the profile transaction and cursor publication, rechecking expiry after database waits. Promotion cannot pass an in-flight write or accept an old published cursor. Invalid per-call cache TTLs must leave prior values and accounting unchanged. These guarantees cover normal execution/rollback, not atomic crash commit across the separate fence/profile files.
+
 Translate the book's architecture evolution — from a single machine to millions of users — into a runnable local HTTP experiment with 1/8/10 processes. Implement stateless web / shared persistent sessions, round-robin load balancing with request-level failure fallback, versioned profiles / CAS / idempotency, TTL/LRU cache, asynchronous read replicas, static account sharding, durable outbox with deduplicated consumer, local versioned edge-resource cache, and diagnostic counters.
 
 Make eventual consistency, primary strong reads, and min-version reads explicit; do not equate TTL with the upper bound on replica lag. An existing database must refuse shard mapping changes without migration. Validate web/cache/replica failure, primary restart, shard isolation, and consumer ACK loss.

@@ -1,4 +1,22 @@
-# 第2章复审实测（2026-10-27）
+# 第2章复审验证（2026-11-06）
+
+基线 **73项/51.29秒**；最终完整 **77项＋5个子用例/51.35秒，-W error，无跳过**。新增3项租约竞态/回滚测试及1项无效TTL测试；后者逐一覆盖True、inf、nan、0、-1。旧代码先复现租约竞态和缓存旧值丢失，再验证修复。将租约等待用例加强为实际SQLite写锁后，12项＋5子用例再次通过（0.55秒）。
+
+```powershell
+$env:PYTHONPATH = 'src'
+$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
+python -W error -m pytest tests -q
+python examples/network_demo.py
+python examples/resilience_demo.py
+```
+
+[本轮阶段示例](stages-2026-11-06.json)顺序运行single/balanced/sharded，分别1/8/10个独立进程，三次资料读取均version=1，任务和副本已追平。[本轮9进程韧性示例](resilience-2026-11-06.json)验证旧缓存回填被拒绝、version=2、Web池缩容/扩容、edge失效/故障回源及唯一2次消费。全部回环HTTP和合成资料，实验只清理自己的进程/临时文件；不是跨主机或线上迁移。
+
+本轮未重跑性能样本，不用同时进行其他项目测试时的数字作提速比较。默认阶段仍未挂载提升Fence；新的共享Fence临界区是单机原盘实验保护，并不是跨两个SQLite文件的崩溃原子事务或生产选主。详见[章节覆盖/边界](../docs/chapter02-review.md)和[固定开源源码](../docs/open-source-review_cn.md)。
+
+---
+
+# 2026-10-27 历史复审实测
 
 完整pytest66项/51.08秒，-W error、无跳过；隔离HEAD基线19项/33.87秒。旧unittest只跑11项，README已纠正。验证命令：
 

@@ -1,5 +1,6 @@
 """Focused persistence operations composed by Store."""
 
+from contextlib import nullcontext
 import json
 
 from .common import Error, checksum, encode, identifier, integer
@@ -27,12 +28,10 @@ class ProfileMixin:
         identifier(user)
         body = validate_update(body)
         fence = getattr(self, "fence", None)
-        if fence is not None:
-            fence.assert_held()
+        guard = fence.writing() if fence is not None else nullcontext()
         fingerprint = checksum(body)
-        published = None
         result = None
-        with self.transaction() as db:
+        with guard as publish, self.transaction() as db:
             self.check_partition(db, user)
             old = db.execute(
                 "SELECT * FROM requests WHERE user=? AND id=?",
@@ -68,9 +67,8 @@ class ProfileMixin:
                 "INSERT INTO jobs VALUES(?,?,'pending',0,'',0)",
                 (user + "_" + str(version + 1), encode(change)),
             )
-            published = seq
-        if fence is not None and published is not None:
-            fence.publish(published)
+            if publish is not None:
+                publish(seq)
         return result
 
     def get(self, user):

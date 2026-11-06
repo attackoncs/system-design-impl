@@ -10,6 +10,7 @@ The fence does not copy sessions, idempotency records, or outbox jobs. Those
 stay on the original primary. Profile writes on a demoted holder fail closed.
 """
 
+from contextlib import contextmanager
 import sqlite3
 import threading
 
@@ -45,20 +46,50 @@ class Fence:
         db.execute("PRAGMA busy_timeout=5000")
         return db
 
-    def _exclusive(self, mutate):
+    @contextmanager
+    def _transaction(self):
         with self._thread:
             db = self._connect()
             try:
                 db.execute("BEGIN IMMEDIATE")
                 try:
-                    result = mutate(db, timestamp(self.clock()))
-                except Exception:
+                    yield db
+                except BaseException:
                     db.execute("ROLLBACK")
                     raise
                 db.execute("COMMIT")
-                return result
             finally:
                 db.close()
+
+    def _exclusive(self, mutate):
+        with self._transaction() as db:
+            return mutate(db, timestamp(self.clock()))
+
+    @contextmanager
+    def writing(self, lease_seconds=2):
+        """Exclude promotion until a profile transaction commits and publishes."""
+        lease_seconds = integer(lease_seconds, 1, 60)
+        with self._transaction() as db:
+            _epoch, holder, _cursor, expires = _row(db)
+            now = timestamp(self.clock())
+            if holder != self.holder or expires <= now:
+                raise Error(403, "database lease is not held")
+            db.execute("UPDATE fence SET expires=? WHERE id=1", (now + lease_seconds,))
+
+            def publish(cursor):
+                cursor = integer(cursor, 0, 1000)
+                now = timestamp(self.clock())
+                _epoch, holder, published, expires = _row(db)
+                if holder != self.holder or expires <= now:
+                    raise Error(403, "database lease is not held")
+                if cursor < published:
+                    raise Error(409, "published cursor is ahead of this database")
+                db.execute(
+                    "UPDATE fence SET cursor=?,expires=? WHERE id=1",
+                    (cursor, now + lease_seconds),
+                )
+
+            yield publish
 
     def status(self):
         db = self._connect()
@@ -139,7 +170,7 @@ class Fence:
         return self._exclusive(mutate)
 
     def assert_held(self, lease_seconds=2):
-        """Extend the lease or refuse the write. Call this before a profile commit."""
+        """Renew a held lease; profile mutations must use writing() for isolation."""
         lease_seconds = integer(lease_seconds, 1, 60)
 
         def mutate(db, now):
@@ -153,7 +184,7 @@ class Fence:
         return self._exclusive(mutate)
 
     def publish(self, cursor):
-        """Advance the acknowledged cursor after a committed profile change."""
+        """Standalone cursor publication; writing() supplies a protected publisher."""
         cursor = integer(cursor, 0, 1000)
 
         def mutate(db, now):

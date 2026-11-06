@@ -1,6 +1,13 @@
 # Chapter 2 implementation tasks
 
-Status: Reference experiment complete. 73 tests pass; 1/8/10-process demo and measurements have been run. requirements.md / tasks.md stay local per existing convention.
+Status: Reference experiment complete. 77 tests and five invalid-TTL subcases pass; 1/8/10-process demo and measurements have been run. requirements.md / tasks.md stay local per existing convention.
+
+## 2026-11-06 source and concurrency review
+
+- [x] Read the chapter, CodeGraph paths and fixed HAProxy/Redis source; preserve production boundaries.
+- [x] Hold shared fence ownership across profile commit/publication; test actual SQL writer waiting, promotion exclusion and rollback.
+- [x] Validate per-call TTLs before cache mutation; preserve old values and accounting on rejection.
+- [x] Strict77-case regression, five invalid-TTL subcases and fresh1/8/10/9-process HTTP examples; bilingual docs and raw evidence.
 
 - [x] Single-machine and balanced/sharded topologies, real HTTP, and independent persistent files.
 - [x] Stateless web, shared sessions, load balancing, and request-level failure fallback.

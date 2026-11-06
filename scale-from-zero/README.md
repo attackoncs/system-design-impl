@@ -31,7 +31,9 @@ python examples/network_demo.py --stage sharded
 python tools/benchmark.py --requests 30 --clients 4
 ```
 
-The suite has 73 tests, including the original multi-process HTTP cases. The demo starts each topology with fresh isolated data, logs in two synthetic users, updates their profiles, verifies replica/cache reads and drains background jobs. Labs stop only their own processes and remove temporary databases on exit. Each stage is a separate experiment, **not an online migration procedure**.
+The suite has 77 tests plus five invalid-TTL subcases, including the original multi-process HTTP cases. The demo starts each topology with fresh isolated data, logs in two synthetic users, updates their profiles, verifies replica/cache reads and drains background jobs. Labs stop only their own processes and remove temporary databases on exit. Each stage is a separate experiment, **not an online migration procedure**.
+
+The [2026-11-06 review](docs/chapter02-review.md) adds a [fixed HAProxy/Redis source comparison](docs/open-source-review_cn.md). Profile writes with an attached fence now exclude promotion across the database transaction and cursor publication; expired writers cannot commit after waiting for the profile writer. Invalid cache TTLs are validated before replacing old entries. The two SQLite files still have a process-crash window between commits, so this is a retained-disk lab model, not a cross-database HA protocol. Current [stage](benchmarks/stages-2026-11-06.json) and [resilience](benchmarks/resilience-2026-11-06.json) outputs preserve the exact scope.
 
 For a persistent topology:
 

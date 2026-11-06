@@ -101,6 +101,7 @@ class Cache:
 
     def put(self, key, value, generation=None, ttl=None):
         snapshot = freeze(value)
+        lifetime = self.ttl if ttl is None else seconds(ttl)
         if not isinstance(snapshot, dict):
             raise ValueError("cache object required")
         integer(snapshot.get("version", 0))
@@ -130,7 +131,6 @@ class Cache:
             self._remove(key)
             for expired in [name for name, row in self.values.items() if row[0] <= now]:
                 self._remove(expired)
-            lifetime = self.ttl if ttl is None else seconds(ttl)
             self.values[key] = now + lifetime, snapshot, size
             self._bytes += size
             if self.policy == "lfu":

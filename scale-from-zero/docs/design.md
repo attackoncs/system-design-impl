@@ -1,5 +1,9 @@
 # Chapter 2 — Staged scaling laboratory
 
+## 2026-11-06: Write ownership and invalid TTLs
+
+`Fence.writing()` acquires the shared fence transaction before the profile writer and holds it until the profile transaction has committed and its cursor is published. Its protected publisher checks the current clock inside the profile transaction; expiry rolls back users/requests/changes/jobs. Promotion waits for this ownership and then checks the latest cursor. The existing standalone renew/publish methods remain available but are not substitutes for this critical section. Profile commits before fence commit: process failure between the two can leave an unacknowledged write and still requires retained-disk recovery, not a cross-file atomic transaction or production HA. Cache TTL validation occurs before any value/accounting changes. The current suite is77 tests and5 subcases; older figures below remain historical.
+
 ## Educational scope
 
 The source chapter moves from a single server to stateless web scaling, database replication, cache, CDN, multiple data centers, queues and data sharding. This implementation makes a bounded subset executable with real local HTTP, while distinguishing models and unimplemented deployment capabilities. It does not assert millions of active users, cloud/CDN integration, multi-region replication or production availability.

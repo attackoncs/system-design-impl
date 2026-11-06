@@ -31,7 +31,9 @@ python examples/network_demo.py --stage sharded
 python tools/benchmark.py --requests 30 --clients 4
 ```
 
-66项测试含5项独立进程HTTP测试。演示依次启动1/8/10进程，两个合成用户登录/写入资料，验证同会话跨Web节点、读副本/缓存及任务处理。退出只清理自己启动的进程和临时数据库。三种阶段各自使用新数据，**不是在线数据迁移步骤**。当前完整套件为73项，见文末2026-10-29一节。
+当前完整套件为77项及5个无效TTL子用例，含原有5项独立进程HTTP实验。演示依次启动1/8/10进程，两个合成用户登录/写入资料，验证同会话跨Web节点、读副本/缓存及任务处理。退出只清理自己启动的进程和临时数据库。三种阶段各自使用新数据，**不是在线数据迁移步骤**。
+
+[2026-11-06复核](docs/chapter02-review.md)补齐[HAProxy/Redis固定源码对照](docs/open-source-review_cn.md)：显式挂载Fence时，租约写事务覆盖资料事务和游标发布，防止提升穿插旧主提交；无效缓存TTL在替换旧项之前校验。两个SQLite文件仍有进程崩溃提交窗口，不是跨库原子HA协议。[本轮阶段](benchmarks/stages-2026-11-06.json)与[韧性示例](benchmarks/resilience-2026-11-06.json)保存真实回环HTTP范围。
 
 持久运行先执行 `python tools/init_config.py --stage sharded`。查看 `.runtime/private-config.json` 的 `services`，为每个节点开独立终端，设置 `PYTHONPATH=src`，例如：
 
