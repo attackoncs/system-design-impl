@@ -32,7 +32,7 @@ flowchart LR
 
 ## Reads and consistency
 
-Ordinary authors push batched IDs. Celebrities are queried by `(author_id, created_at, post_id)` index. A cold or expired first-page window and all historical cursor pages query eligible authors with at most 16 fixed tasks by default. A warm complete window reuses ordinary-author feed IDs and pulls celebrity posts. At most one page plus per-task query batches is held during merge. A bounded coverage ledger tracks relationship/mute/classification signatures and a non-sliding repair deadline.
+Ordinary authors push batched IDs. Celebrities are queried by `(author_id, created_at, post_id)` index; the in-memory development store keeps each author's posts sorted by that key, so a page is a bisect plus a slice rather than a sort of the author's history. A cold or expired first-page window and all historical cursor pages query eligible authors with at most 16 fixed tasks by default. A warm complete window reuses ordinary-author feed IDs and pulls celebrity posts. At most one page plus per-task query batches is held during merge. A bounded coverage ledger tracks relationship/mute/classification signatures and a non-sliding repair deadline.
 
 Sort and cursor keys include timestamp and post ID. New posts cannot shift the cursor to repeat an earlier page. Follow/mute/sharing rules are checked again before return. Hydration reads content and author caches with source fallback, plus the local action/counter caches. Media remains a client-loadable URL.
 

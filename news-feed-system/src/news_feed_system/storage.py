@@ -8,8 +8,10 @@ are one transaction. Delivery remains at least once.
 
 from __future__ import annotations
 
+import bisect
 import contextlib
 import dataclasses
+import itertools
 import datetime as dt
 import json
 import sqlite3
@@ -76,7 +78,9 @@ class InMemoryPostStore:
 
     def __init__(self) -> None:
         self._posts: dict[str, Post] = {}
-        self._authors: dict[str, dict[str, Post]] = {}
+        # Per author: ascending post keys and the posts in the same order, so a
+        # page is a bisect plus a slice instead of a sort of the whole history.
+        self._authors: dict[str, tuple[list[PostKey], list[Post]]] = {}
         self._pending: dict[str, None] = {}
         self._lock = threading.RLock()
 
@@ -90,7 +94,11 @@ class InMemoryPostStore:
                 return
             stored = snapshot(post)
             self._posts[post.post_id] = stored
-            self._authors.setdefault(post.author_id, {})[post.post_id] = stored
+            keys, posts = self._authors.setdefault(post.author_id, ([], []))
+            key = post_key(stored)
+            index = bisect.bisect_right(keys, key)  # usually the end: O(1)
+            keys.insert(index, key)
+            posts.insert(index, stored)
             self._pending[post.post_id] = None
 
     def get(self, post_id: str) -> Optional[Post]:
@@ -103,17 +111,15 @@ class InMemoryPostStore:
     ) -> list[Post]:
         _limit(limit)
         with self._lock:
-            posts = self._authors.get(author_id, {}).values()
-            eligible = [p for p in posts if before is None or post_key(p) < before]
-            return [
-                snapshot(p)
-                for p in sorted(eligible, key=post_key, reverse=True)[:limit]
-            ]
+            keys, posts = self._authors.get(author_id, ((), ()))
+            end = len(keys) if before is None else bisect.bisect_left(keys, before)
+            return [snapshot(p) for p in reversed(posts[max(0, end - limit) : end])]
 
     def pending_posts(self, limit: int = 100) -> list[Post]:
         _limit(limit)
         with self._lock:
-            return [snapshot(self._posts[p]) for p in list(self._pending)[:limit]]
+            pending = itertools.islice(self._pending, limit)
+            return [snapshot(self._posts[p]) for p in pending]
 
     def mark_dispatched(self, post_id: str) -> None:
         with self._lock:
