@@ -6,7 +6,51 @@ import time
 
 from .contracts import freeze
 
-from .common import Database, Error, Fence, checksum, encode, entry, request, verify
+from .common import (
+    GENESIS_HASH,
+    Database,
+    Error,
+    Fence,
+    checksum,
+    encode,
+    entry,
+    request,
+    verify,
+)
+
+
+class LogView:
+    """Immutable journal prefix ``1..count`` fixed when a sync starts.
+
+    Replicas fetch only the suffix they lack, so a sync costs O(missing rows)
+    rather than O(journal). Rows appended later are outside the view and are
+    never marked committed by this sync. ``len`` is the prefix length.
+    """
+
+    def __init__(self, journal, count, head):
+        self.journal, self.count, self.head = journal, count, head
+
+    def __len__(self):
+        return self.count
+
+    def suffix(self, known):
+        """Return ``(head_at_known, rows known+1..count)`` with a verified link."""
+        if not 0 <= known <= self.count:
+            raise ValueError("replica position outside the journal view")
+        with self.journal.connection() as db:
+            rows = [
+                json.loads(row[0])
+                for row in db.execute(
+                    "SELECT body FROM entries WHERE seq>=? AND seq<=? ORDER BY seq",
+                    (max(known, 1), self.count),
+                )
+            ]
+        if known and (not rows or rows[0].get("seq") != known):
+            raise ValueError("journal changed outside its single writer")
+        anchor = rows.pop(0)["hash"] if known else GENESIS_HASH
+        if verify(rows, anchor, known + 1) != self.head:
+            raise ValueError("journal changed outside its single writer")
+        return anchor, rows
 
 
 class Replica(Fence):
@@ -37,7 +81,7 @@ class Replica(Fence):
             previous = db.execute(
                 "SELECT body FROM entries ORDER BY seq DESC LIMIT 1"
             ).fetchone()
-            tail = json.loads(previous[0]) if previous else {"seq": 0, "hash": "0" * 64}
+            tail = json.loads(previous[0]) if previous else {"seq": 0, "hash": GENESIS_HASH}
             if seq <= tail["seq"]:
                 old = db.execute(
                     "SELECT body FROM entries WHERE seq=?", (seq,)
@@ -59,7 +103,7 @@ class Replica(Fence):
             previous = db.execute(
                 "SELECT body FROM entries ORDER BY seq DESC LIMIT 1"
             ).fetchone()
-            tail = json.loads(previous[0]) if previous else {"seq": 0, "hash": "0" * 64}
+            tail = json.loads(previous[0]) if previous else {"seq": 0, "hash": GENESIS_HASH}
             return {"count": tail["seq"], "head": tail["hash"]}
 
 
@@ -90,7 +134,8 @@ class Journal(Database):
                 json.loads(row[0])
                 for row in db.execute("SELECT body FROM entries ORDER BY seq")
             ]
-            verify(rows)
+            # Full check once at startup; later syncs verify only new rows.
+            self.verified = (len(rows), verify(rows))
             committed = [
                 r[0] for r in db.execute("SELECT committed FROM entries ORDER BY seq")
             ]
@@ -167,10 +212,10 @@ class Journal(Database):
                 or not 0 <= remote["count"] <= len(rows)
             ):
                 return False
-            count = remote["count"]
-            if remote["head"] != (rows[count - 1]["hash"] if count else "0" * 64):
+            head, missing = rows.suffix(remote["count"])
+            if remote["head"] != head:
                 return False
-            for row in rows[count:]:
+            for row in missing:
                 ack = rpc("/internal/append", {**self.credentials, "entry": row})
                 if (
                     not isinstance(ack, dict)
@@ -182,9 +227,20 @@ class Journal(Database):
         except (Error, OSError, TimeoutError, ValueError, TypeError):
             return False
 
+    def _view(self):
+        """Verify rows added since the last sync and fix this sync's prefix.
+
+        Runs under the writer lock. Earlier rows were verified at startup or by
+        a previous sync and are immutable (triggers); any suffix later shipped
+        to a replica is re-linked to this verified head in ``LogView.suffix``.
+        """
+        count, head = self.verified
+        rows = self.records(False, after=count)
+        self.verified = (count + len(rows), verify(rows, head, count + 1))
+        return LogView(self, *self.verified)
+
     def _sync(self, deadline, cancel):
-        rows = self.records(False)
-        verify(rows)
+        rows = self._view()
         # Wait for every accepted task, even after a quorum or an error. The
         # three owned workers never outlive this snapshot's writer ownership.
         futures, failure, acknowledgements = [], None, 0
@@ -238,7 +294,7 @@ class Journal(Database):
                 old = db.execute(
                     "SELECT body FROM entries ORDER BY seq DESC LIMIT 1"
                 ).fetchone()
-                previous = json.loads(old[0]) if old else {"seq": 0, "hash": "0" * 64}
+                previous = json.loads(old[0]) if old else {"seq": 0, "hash": GENESIS_HASH}
                 row = entry(previous["seq"] + 1, previous["hash"], event)
                 db.execute(
                     "INSERT INTO entries VALUES(?,?,0)", (row["seq"], encode(row))

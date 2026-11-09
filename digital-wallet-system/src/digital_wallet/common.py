@@ -108,9 +108,16 @@ def entry(seq, previous, event):
     return {**value, "hash": checksum(value)}
 
 
-def verify(rows):
-    previous = "0" * 64
-    for index, row in enumerate(rows, 1):
+GENESIS_HASH = "0" * 64
+
+
+def verify(rows, previous=GENESIS_HASH, start=1):
+    """Check a contiguous hash-chain segment and return its head.
+
+    The default checks a whole log. Passing an already-trusted ``previous``
+    head and its successor ``start`` checks only a suffix in O(len(rows)).
+    """
+    for index, row in enumerate(rows, start):
         if row != entry(index, previous, row["event"]):
             raise ValueError("event log checksum or sequence mismatch")
         previous = row["hash"]

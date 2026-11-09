@@ -1,15 +1,16 @@
 {
-  "python": "3.13.9",
-  "platform": "Windows-11-10.0.26100-SP0",
+  "python": "3.14.4",
+  "platform": "Linux-6.18.54.1-microsoft-standard-WSL2-x86_64-with-glibc2.43",
   "processes": 7,
   "transfers": 20,
   "local_transfers": 10,
   "cross_shard_transfers": 10,
   "clients": 4,
-  "elapsed_seconds": 17.761551299998246,
-  "completed_transfers_per_second": 1.1260277698830268,
-  "accept_to_terminal_p50_ms": 3463.3118999990984,
-  "accept_to_terminal_p95_ms": 3692.9994999991322,
+  "completion": "wait",
+  "elapsed_seconds": 52.07376373900115,
+  "completed_transfers_per_second": 0.3840705676709288,
+  "accept_to_terminal_p50_ms": 5154.348575000768,
+  "accept_to_terminal_p95_ms": 19713.956411000254,
   "audit": {
     "errors": [],
     "in_transit": 0,
@@ -22,10 +23,12 @@
     "shards": [
       {
         "events": 31,
+        "head": "2bda361a929503ae976b3ad7656ba10976f33568bf9e6026a87b63e17a619aed",
         "matches": true
       },
       {
         "events": 21,
+        "head": "37857682f3f2b03e6c98f260ed1662bb71dd19b31664b5227fa08cbd01133df7",
         "matches": true
       }
     ],
@@ -57,5 +60,5 @@
       "shard": 1
     }
   ],
-  "scope": "Single fixed coordinator; 2-of-3 real HTTP journal replicas; two unreplicated SQLite participants; includes terminal-state polling, excludes startup and final audit."
+  "scope": "Single fixed coordinator; 2-of-3 real HTTP journal replicas; two unreplicated SQLite participants; includes terminal-state polling or bounded completion wait (see completion), excludes startup and final audit."
 }

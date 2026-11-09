@@ -8,6 +8,23 @@ from .contracts import fields, intent
 
 def reduce_event(state, event):
     """Pure deterministic projection: replay never invokes another service."""
+    return apply_event(copy.deepcopy(state), event)
+
+
+def apply_events(state, rows):
+    """Fold verified log rows into ``state`` in place and return it."""
+    for row in rows:
+        state = apply_event(state, row["event"])
+    return state
+
+
+def apply_event(state, event):
+    """Apply one event to a caller-owned state in place and return it.
+
+    Replay loops own their state, so copying it per event would make replay
+    O(events * state). On error the state may be partially updated; callers
+    discard it together with the failed replay or rolled-back transaction.
+    """
     if not isinstance(event, dict):
         raise ValueError("event object required")
     if event.get("kind") == "genesis":
@@ -34,7 +51,6 @@ def reduce_event(state, event):
         or not state
     ):
         raise ValueError("invalid event kind/role or missing genesis")
-    state = copy.deepcopy(state)
     body = intent(event["intent"])
     id = body["transaction_id"]
     source, destination, amount = (

@@ -17,7 +17,7 @@ Explicitly excluded: deposits/withdrawals, FX, fees, chargebacks, real bank reco
 - Freeze commands and validate receipts; coherent balance/sequence snapshots and concurrent safe snapshot publication; parallel replication with serialized append/sync and exact acknowledged-prefix commits.
 - Bound connections/threads/output, share I/O deadlines, cancel/drain owned work, enforce JSON/HTTP contracts; rebuildable caches are not monetary truth.
 
-Open: Raft/elections and participant event replicas, authority-disk-loss promotion, independently deployed CQRS readers, accelerated/compacted snapshots, million TPS and four-nines evidence.
+Open: Raft/elections and participant event replicas, authority-disk-loss promotion, independently deployed CQRS readers, log compaction, million TPS and four-nines evidence.
 
 ## 2026-11-05 audit and balance contracts
 

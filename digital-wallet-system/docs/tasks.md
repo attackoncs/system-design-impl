@@ -35,7 +35,9 @@ Two-wallet balance transfers, transactional correctness, and reproducible histor
 - [x] Parallel replica RPC, shared append/sync ownership, exact prefix commit, bounded completion waits, capacity/deadline/cancellation/drain.
 - [x] Failure/race/protocol and seven-process notification recovery tests; retain HEAD baseline and raw measurements.
 - [ ] Raft elections, participant event replication and authority-disk-loss recovery.
-- [ ] Independent CQRS readers, accelerated/compacted snapshots, shard migration and production-scale validation.
+- [x] Snapshot-plus-tail recovery: restart, incremental snapshots and post-snapshot historical reads replay only the tail; full-history check moved to audit; linear in-place replay; incremental journal verification/replication.
+- [x] Per-row projections: writes touch only the involved account/participant rows (O(1)); participant/current-balance reads are single-row lookups.
+- [ ] Independent CQRS readers, log compaction, shard migration and production-scale validation.
 
 ## 2026-11-05 audit and balance review
 

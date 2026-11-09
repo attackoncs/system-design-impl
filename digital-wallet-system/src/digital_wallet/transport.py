@@ -139,6 +139,19 @@ class Deadline:
         self.thread.join()
 
 
+class _RejectedRPC(HTTPError):
+    # urllib's HTTPError wraps a body file that warns (ResourceWarning) if never
+    # closed, and many callers drop the error unread. Close it at once and serve
+    # the already-bounded body from memory; code/reason/headers stay usable.
+    def __init__(self, url, status, reason, headers, body):
+        super().__init__(url, status, reason, headers, None)
+        self.close()
+        self._body = BytesIO(body)
+
+    def read(self, amt=-1):
+        return self._body.read(amt)
+
+
 def request(
     url,
     method="GET",
@@ -263,12 +276,12 @@ def request(
             if response.length not in (None, 0):
                 raise OSError("truncated RPC response")
             if not 200 <= response.status < 300:
-                raise HTTPError(
+                raise _RejectedRPC(
                     url,
                     response.status,
                     "RPC peer rejected request",
                     response.headers,
-                    BytesIO(bytes(result[: 1024 * 1024])),
+                    bytes(result[: 1024 * 1024]),
                 )
             if raw:
                 return bytes(result)

@@ -103,7 +103,7 @@ class WalletTests(unittest.TestCase):
         self.assertEqual(self.left.view(1)["accounts"][self.source]["available"], 10000)
         self.assertEqual(self.left.view(2)["accounts"][self.source]["available"], 9900)
         with self.left.transaction() as db:
-            db.execute("UPDATE projection SET state='{}'")
+            db.execute("UPDATE accounts SET available=available+1")
         self.assertFalse(self.left.audit()["matches"])
         restored = Shard(self.root / "left.sqlite", 0, 2, self.accounts)
         self.assertEqual(restored.view()["accounts"][self.source]["available"], 9700)

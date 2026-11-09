@@ -1,0 +1,20 @@
+{
+  "python": "3.14.4",
+  "platform": "Linux-6.18.54.1-microsoft-standard-WSL2-x86_64-with-glibc2.43",
+  "runs": [
+    {
+      "events": 1000,
+      "tail_events": 10,
+      "write_total_s": 3.277,
+      "snapshot_ms": 1139.8,
+      "restart_ms": 2330.6
+    },
+    {
+      "events": 3000,
+      "tail_events": 10,
+      "write_total_s": 29.745,
+      "snapshot_ms": 10771.3,
+      "restart_ms": 21741.9
+    }
+  ]
+}

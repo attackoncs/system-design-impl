@@ -17,7 +17,9 @@ class CompletionNetworkTests(unittest.TestCase):
             self.assertEqual(value["status"], "PENDING")
             self.assertEqual(lab.balance()["held"], 0)
             lab.start("worker")
-            value = lab.call("/v1/transfers/waited?wait_ms=2000")
+            # Six replicated TCC steps may exceed one 2000 ms bound on slow
+            # disks; clients re-issue the same bounded long-poll until terminal.
+            value = lab.done("waited", wait_ms=2000)
             self.assertEqual(value["status"], "SUCCEEDED")
             # Exact retries retain the original money identity and terminal fact.
             self.assertEqual(

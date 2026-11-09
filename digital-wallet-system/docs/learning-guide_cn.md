@@ -42,21 +42,21 @@ flowchart LR
 
 ## 六站阅读路线
 
-1. [Shard.action](../src/digital_wallet/shard.py#L105)：先看参与者输入，kind和role的组合必须合法，且账户必须路由到本分片。
+1. [Shard.action](../src/digital_wallet/shard.py#L254)：先看参与者输入，kind和role的组合必须合法，且账户必须路由到本分片。
 2. [reduce_event](../src/digital_wallet/projection.py#L9)：手算prepare、confirm和cancel对available、held、parts的作用。
 3. [Coordinator.create](../src/digital_wallet/coordinator.py#L70)：看权限和转账ID去重，返回PENDING不等于双方完成。
-4. [Journal.append](../src/digital_wallet/journal.py#L232)：理解accepted和decision怎样成为已确认日志，别跳过副本确认。
+4. [Journal.append](../src/digital_wallet/journal.py#L288)：理解accepted和decision怎样成为已确认日志，别跳过副本确认。
 5. [Coordinator.advance](../src/digital_wallet/coordinator.py#L149)：每次只推进当前可以安全执行的动作；把参与者状态代入条件分支。
 6. [Coordinator.step](../src/digital_wallet/coordinator.py#L195)与[AuditMixin.audit](../src/digital_wallet/audit.py#L8)：看失败后的公平重试、恢复及在途资金校验。
 
 ## 微观一：重试必须落到同一参与者意图
 
-[shard.py:118](../src/digital_wallet/shard.py#L118)
+[shard.py:267](../src/digital_wallet/shard.py#L267)
 
 ```python
 with self.transaction() as db:
     self.check_fence(db, epoch, leader)
-    state = json.loads(db.execute("SELECT state FROM projection").fetchone()[0])
+    state = self.touched(db, body)
     old = state["parts"].get(body["transaction_id"])
     if old:
         if old["intent"] != body or old["role"] != role:
