@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 
@@ -24,10 +25,16 @@ def request(base, path, method="GET", body=None, token=None, key=None, region=No
         if body is not None
         else (b"" if method == "POST" else None)
     )
-    with urlopen(
-        Request(base + path, data=data, method=method, headers=headers), timeout=5
-    ) as response:
-        return json.load(response)
+    try:
+        with urlopen(
+            Request(base + path, data=data, method=method, headers=headers), timeout=5
+        ) as response:
+            return json.load(response)
+    except HTTPError as error:
+        # Callers only use .code; release the error body so swallowed errors
+        # do not leak a file (Python 3.14 ResourceWarning).
+        error.close()
+        raise
 
 
 class Cluster:

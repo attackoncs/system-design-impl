@@ -118,6 +118,15 @@ class _Deadline:
         self.thread.join()
 
 
+def _http_error(url, status, reason, headers):
+    # urllib's HTTPError wraps a body file that warns (ResourceWarning) if never
+    # closed; it has no body here, so close it before raising. code/reason/
+    # headers stay usable after close().
+    error = HTTPError(url, status, reason, headers, None)
+    error.close()
+    return error
+
+
 def fetch(
     url, token=None, timeout=3, *, deadline=None, cancel=None, max_bytes=MAX_SNAPSHOT
 ):
@@ -177,12 +186,8 @@ def fetch(
             if response.status != 200:
                 # A redirect is evidence of a different endpoint, never authority
                 # to send the replication credential somewhere else.
-                raise HTTPError(
-                    url,
-                    response.status,
-                    "upstream rejected request",
-                    response.headers,
-                    None,
+                raise _http_error(
+                    url, response.status, "upstream rejected request", response.headers
                 )
             lengths = response.headers.get_all("Content-Length", [])
             encodings = response.headers.get_all("Transfer-Encoding", [])
@@ -205,6 +210,10 @@ def fetch(
                 if not part:
                     break
                 data.extend(part)
+            # The deadline/cancel interrupt shuts the socket down, which read1()
+            # reports as EOF; classify that as expiry before judging truncation.
+            if time.monotonic() >= deadline or (cancel is not None and cancel.is_set()):
+                raise TimeoutError("HTTP operation expired")
             if len(data) > max_bytes:
                 raise ValueError("upstream response exceeds local limit")
             # read1() may return EOF before Content-Length is exhausted without
@@ -212,8 +221,6 @@ def fetch(
             # evidence that its HTTP message arrived intact.
             if response.length not in (None, 0):
                 raise ValueError("truncated upstream response")
-            if time.monotonic() >= deadline or (cancel is not None and cancel.is_set()):
-                raise TimeoutError("HTTP operation expired")
             result = json.loads(
                 data,
                 object_pairs_hook=_pairs,

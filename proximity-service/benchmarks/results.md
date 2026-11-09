@@ -1,5 +1,16 @@
 # Validation report
 
+## Replay pruning index — 2026-11-09
+
+Every owner write runs `DELETE FROM replay WHERE created < ?`; `created` had no
+index, so each write scanned the whole replay table. Added
+`CREATE INDEX IF NOT EXISTS replay_created ON replay(created)`. Throwaway
+WSL2/Python 3.14.4/SQLite 3.46.1 measurement with 100,000 unexpired records:
+**7.4 ms -> ~0.003 ms** per prune. Suite with `-W error -o
+asyncio_default_fixture_loop_scope=function`: 71 passed / 6 failed before and after
+(pre-existing ResourceWarning/timing failures); without `-W error`, 76 passed and
+one pre-existing timing subtest failed after the change.
+
 ## Source review revalidation — 2026-11-02
 
 No production or test source changed in this round. All **76 tests passed in

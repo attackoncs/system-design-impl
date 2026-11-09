@@ -62,7 +62,8 @@ This provides next-day eventual publication, not a hard midnight visibility SLO.
 
 Mutations are owner-only; there is no draft-reading API. Replay keys are scoped
 to owner and bind method, ID and normalized body. Response and mutation commit
-together. Records expire after seven days and are pruned on writes, so expired
+together. Records expire after seven days and are pruned on writes through the
+`replay(created)` index, so expired
 keys may create another business. Public detail, update and deletion all use the
 same delayed-visibility generation.
 

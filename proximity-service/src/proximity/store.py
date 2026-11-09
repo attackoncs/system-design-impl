@@ -62,6 +62,7 @@ class Store:
                 CREATE TABLE IF NOT EXISTS public(id TEXT PRIMARY KEY,body TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS geo(precision INTEGER,cell TEXT,shard INTEGER,id TEXT,PRIMARY KEY(precision,cell,shard,id));
                 CREATE TABLE IF NOT EXISTS replay(owner TEXT,key TEXT,fingerprint TEXT,response TEXT,created REAL,PRIMARY KEY(owner,key));
+                CREATE INDEX IF NOT EXISTS replay_created ON replay(created);
             """)
             for key, value in {
                 "version": "0",

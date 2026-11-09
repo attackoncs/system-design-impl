@@ -39,18 +39,18 @@ flowchart TB
 
 | 顺序 | 入口 | 输入→输出与学习目标 |
 |---|---|---|
-| 1 | [Store.mutate](../src/proximity/store.py#L126) | 编辑操作→草稿结果；先找请求幂等与归属校验 |
-| 2 | [Store.publish](../src/proximity/store.py#L250) | 当前时间与草稿→可读发布版本；关注并发构建竞争 |
-| 3 | [Store._prepare](../src/proximity/store.py#L222) | 草稿快照→待安装空间数据；这是慢构建阶段 |
-| 4 | [Store._install](../src/proximity/store.py#L238) | 准备好的数据→原子安装；避免半份版本 |
-| 5 | [Store.search](../src/proximity/store.py#L438) | 坐标、半径、cursor→一页商家；版本与参数先固定 |
+| 1 | [Store.mutate](../src/proximity/store.py#L127) | 编辑操作→草稿结果；先找请求幂等与归属校验 |
+| 2 | [Store.publish](../src/proximity/store.py#L251) | 当前时间与草稿→可读发布版本；关注并发构建竞争 |
+| 3 | [Store._prepare](../src/proximity/store.py#L223) | 草稿快照→待安装空间数据；这是慢构建阶段 |
+| 4 | [Store._install](../src/proximity/store.py#L239) | 准备好的数据→原子安装；避免半份版本 |
+| 5 | [Store.search](../src/proximity/store.py#L439) | 坐标、半径、cursor→一页商家；版本与参数先固定 |
 | 6 | [cover](../src/proximity/geo.py#L82) 与 [distance](../src/proximity/geo.py#L67) | 前者生成候选格子，后者决定真实半径；别混成一种过滤 |
 
-查单个商家时再读 [Store.detail](../src/proximity/store.py#L418)，比较它与搜索是否使用同一可读版本。
+查单个商家时再读 [Store.detail](../src/proximity/store.py#L419)，比较它与搜索是否使用同一可读版本。
 
 ## 微观一：search为什么先触发publish却还能返回旧版本
 
-[store.py:448](../src/proximity/store.py#L448)
+[store.py:449](../src/proximity/store.py#L449)
 
 ```python
 lat, lon = coordinates(latitude, longitude)

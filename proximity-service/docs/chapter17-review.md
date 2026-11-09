@@ -1,5 +1,22 @@
 # 第17章审查：Proximity Service
 
+## 2026-11-09 效率复核
+
+核实`Store`每次owner写入都会执行`DELETE FROM replay WHERE created < ?`清理7天前的
+幂等记录，而`replay`表只有`(owner,key)`主键，`created`无索引，每次写入都全表扫描，
+代价随保留期内的幂等记录数线性增长。
+
+修复为最小改动：建表脚本增加`CREATE INDEX IF NOT EXISTS replay_created ON replay(created)`，
+已有数据库打开时自动补建；清理语义、过期时间和事务边界不变。
+
+临时测量（WSL2 Linux，Python 3.14.4，SQLite 3.46.1，不入库）：10万条未过期记录时，
+单次清理由 **7.4ms** 降到约 **0.003ms**。
+
+验证：`-W error -o asyncio_default_fixture_loop_scope=function`下修改前后均为
+**71 passed、6 failed**（含1个子用例失败）。失败均为既有HTTP/发布/多进程测试中的
+ResourceWarning或计时问题，与本改动无关，未追查；不加`-W error`时修改后76 passed、
+仅`test_fetch_absolute_deadline_covers_slow_headers_and_body`一个计时子用例失败。
+
 ## 2026-11-02 开源源码复核
 
 重新阅读根文档5880–6725行，结合CodeGraph复核，并阅读Tile38和Redis GEO的实际
