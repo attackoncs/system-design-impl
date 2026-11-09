@@ -17,7 +17,7 @@ This document describes the executed reference pipeline after the chapter 11 rev
 1. Validate types and timezone-aware schedule values. Under a recipient stripe, look up an explicit business event ID if supplied.
 2. Resolve registered endpoints and check preferences. Validate basic email/phone syntax, cap endpoint count at 100 and rendered title/body at 1 MiB.
 3. Resolve templates once and copy all mutable request dictionaries. Platform mappings filter registered push tokens; legacy untyped tokens remain compatible.
-4. Check per-user channel and per-user cross-channel quota. With no event ID, check local content TTL deduplication using an unambiguous serialized title/body pair.
+4. Check per-user channel and per-user cross-channel quota. With no event ID, check local content TTL deduplication using an unambiguous serialized title/body pair. Expiry pops from the oldest end and stops at the first live entry (fixed window, append order = expiry order), so each check is amortized O(1) rather than a scan of the window.
 5. Record local CREATED/QUEUED before making the task visible to workers. Accept into the queue; record quota and content deduplication only after success. Rejections record local FAILED and do not consume those reservations.
 6. SQLite acceptance atomically inserts the job, QUEUED audit entry, and optional unique `(event_id, recipient_id, channel)` ledger row. Capacity counts all queued and claimed rows. A duplicate returns the original notification ID through `DuplicateNotificationError`, including after terminal acknowledgement. First acceptance wins if replay content differs.
 

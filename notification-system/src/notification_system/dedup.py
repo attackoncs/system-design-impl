@@ -76,6 +76,8 @@ class Deduplicator:
             notification_id: The notification ID to associate.
         """
         expiry = self._clock() + self._window_seconds
+        # Re-insert at the end so dict order stays expiry order (fixed window).
+        self._entries.pop(dedup_key, None)
         self._entries[dedup_key] = (notification_id, expiry)
 
     def check_and_record(
@@ -106,11 +108,20 @@ class Deduplicator:
         self.record(key, notification_id)
 
     def _expire_old_entries(self) -> None:
-        """Remove all expired entries."""
+        """Remove expired entries from the oldest end.
+
+        Every entry uses the same window and ``record`` appends, so insertion
+        order is expiry order: stop at the first live entry. Each entry is
+        removed at most once, making this amortized O(1) per call instead of a
+        scan of every entry in the window.
+        """
         now = self._clock()
-        expired_keys = [k for k, (_, expiry) in self._entries.items() if now >= expiry]
-        for k in expired_keys:
-            del self._entries[k]
+        entries = self._entries
+        while entries:
+            key = next(iter(entries))
+            if now < entries[key][1]:
+                break
+            del entries[key]
 
     @property
     def entry_count(self) -> int:
