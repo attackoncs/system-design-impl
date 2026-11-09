@@ -163,6 +163,7 @@ unique-id-generator/
 | 错误场景 | 处理策略 |
 |----------|----------|
 | **时钟回拨** | 抛出带有漂移时长的 `ClockMovedBackwardsError`。调用方应等待或使用单调时钟。生成器拒绝继续产生 ID 以防止重复。 |
+| **重启时低于持久上限** | 配置 `HighWaterMark` 时，在 `overflow_timeout_seconds` 内等待时钟越过上次运行的上限；无法及时追上则抛 `ClockMovedBackwardsError`。上限写入失败直接抛错，不发ID。 |
 | **序列号溢出** | sleep等待下一毫秒；回拨或超时即失败。SequenceOverflowError可对外抛出，不保证固定等待延迟。 |
 | **无效配置** | 在构造时抛出 `InvalidConfigError`。快速失败并给出描述性消息 (指明违反了哪条约束)。 |
 | **数据中心/机器 ID 过大** | 在配置校验阶段抛出 `InvalidConfigError`。消息包含当前配置位宽下的最大允许值。 |
@@ -185,6 +186,10 @@ UUID和时间戳-随机批量接口也要求正整数count；后者要求正整�
 偏移，生成的是无符号64位概率性ID，不能替代Snowflake的有符号范围唯一ID。
 
 全局唯一性依赖统一布局/epoch、不同活跃身份和重启后不复用旧时间/序列。
-未实现身份租约、持久化时间高水位、跨进程锁、NTP管理或自动故障切换。
+可选[HighWaterMark](../src/unique_id/high_water.py)覆盖重启：签发超过持久上限的时间戳前，
+在锁内先持久化 `timestamp + window_ms`（临时文件、fsync、原子替换、目录fsync），
+因此每个返回的ID都不超过某个已落盘上限，热路径每窗口仅写一次。新实例只签发大于
+已加载上限的时间戳，崩溃、同毫秒重启或回拨后重启都不会重发ID。
+仍未实现身份租约、跨进程锁、NTP管理或自动故障切换；一个上限文件只能属于一个身份、一个存活实例。
 MonotonicClock仅保护本对象生命周期内不回拨，不同步机器、不阻止身份重用。
 不同布局或epoch不构成统一的全局唯一命名空间。见[实测](../benchmarks/REPORT.md)。

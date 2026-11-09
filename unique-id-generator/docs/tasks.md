@@ -342,4 +342,5 @@ Task 1 (Project Scaffolding)
 - [x] Add 28 boundary cases: 26 fail on the old implementation; final suite passes 122 tests with warnings as errors.
 - [x] Run both examples, three-sample single/batch/shared-thread measurements and four distinct processes; retain raw JSON.
 - [x] Replace duplicated stale design code with source links; update README, requirements, tasks and learning guide.
-- [ ] Deployment identity leases, persistent restart high-water marks, clock synchronization and automatic failover remain unimplemented; see [coverage](open-source-review_cn.md).
+- [x] Persistent restart high-water mark (2026-11-09): optional `HighWaterMark` file, window reservation with fsync + atomic replace, start-up wait/rollback refusal; see [review](chapter08-review.md).
+- [ ] Deployment identity leases, clock synchronization and automatic failover remain unimplemented; see [coverage](open-source-review_cn.md).

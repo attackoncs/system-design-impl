@@ -14,7 +14,7 @@
 
 ## 概述
 
-本库使用以下组合生成64位范围整数ID。全局唯一性要求统一布局/epoch、分配不同活跃身份，并避免重启后复用旧时间/序列；库不分配身份、不持久化重启高水位。
+本库使用以下组合生成64位范围整数ID。全局唯一性要求统一布局/epoch、分配不同活跃身份，并避免重启后复用旧时间/序列；可选 `HighWaterMark` 文件持久化重启时间高水位，重启后不会重发已发ID；库仍不分配或租约身份。
 
 - **时间戳**（自定义纪元以来的毫秒数）
 - **数据中心 ID**（标识数据中心）
@@ -117,7 +117,8 @@ config = SnowflakeConfig(
 
 ```python
 class SnowflakeGenerator:
-    def __init__(self, config=None, clock=None, *, overflow_timeout_seconds=1.0): ...
+    def __init__(self, config=None, clock=None, *, overflow_timeout_seconds=1.0,
+                 high_water=None): ...
     def generate(self) -> int: ...
     def generate_batch(self, count: int) -> list[int]: ...
 ```
@@ -199,6 +200,22 @@ gen = SnowflakeGenerator(clock=MonotonicClock())
 
 - **SystemClock**：使用 `time.time()`。受 NTP 调整影响。如果时钟回退，抛出 `ClockMovedBackwardsError`。
 - **MonotonicClock**：使用 `time.monotonic()`，初始化时锚定到系统时间，生命周期内不回拨；不持续校准墙钟、不同步机器，也不解决身份重用。
+
+## 重启高水位（可选）
+
+```python
+from unique_id import HighWaterMark, SnowflakeConfig, SnowflakeGenerator
+
+gen = SnowflakeGenerator(
+    SnowflakeConfig(datacenter_id=3, machine_id=7),
+    high_water=HighWaterMark("/var/lib/idgen/dc3-m7.hw", window_ms=1000),
+)
+```
+
+签发超过持久上限的时间戳前，先写入 `timestamp + window_ms`（临时文件、fsync、原子rename、目录fsync），
+通常每个窗口只写一次。重启后时钟未超过该上限前不发号：差距能在 `overflow_timeout_seconds` 内追上则等待，
+否则抛 `ClockMovedBackwardsError` 由调用方稍后重试。写入失败直接抛错且不发ID。每个节点身份、每个存活实例
+独占一个文件；不传 `high_water` 时行为不变。
 
 ## 错误处理
 

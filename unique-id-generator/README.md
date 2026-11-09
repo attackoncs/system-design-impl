@@ -8,7 +8,7 @@
 
 > [Latest chapter/open-source review (Chinese)](docs/open-source-review_cn.md): **122 tests**, precise UTC parsing, bounded alternatives and measured generation. [Earlier review](docs/chapter08-review.md).
 
-A Python implementation of the Twitter Snowflake algorithm for numeric, time-sortable IDs. Uniqueness requires a shared layout/epoch, distinct active node identities and no reuse of old time/sequence state after restart. The library does not allocate identities or persist a restart high-water mark.
+A Python implementation of the Twitter Snowflake algorithm for numeric, time-sortable IDs. Uniqueness requires a shared layout/epoch, distinct active node identities and no reuse of old time/sequence state after restart. An optional `HighWaterMark` file persists a restart timestamp ceiling so a restarted generator never reissues an ID; the library still does not allocate or lease identities.
 
 ## Features
 
@@ -18,6 +18,7 @@ A Python implementation of the Twitter Snowflake algorithm for numeric, time-sor
 - **Configurable bit layout** — tune timestamp range, datacenter/machine capacity, and throughput
 - **Thread-safe** — concurrent generation via `threading.Lock`
 - **Clock abstraction** — SystemClock or MonotonicClock for drift-prone environments
+- **Restart high-water mark** — optional durable timestamp ceiling, reserved ahead in windows (one fsync per window), blocks reissue after restart or clock rollback
 - **ID parsing** — decompose an ID with the matching layout/epoch; integer UTC conversion preserves milliseconds
 - **Alternative strategies** — UUID v4 and timestamp-random generators for comparison
 - **Zero runtime dependencies** — stdlib only
@@ -200,6 +201,27 @@ Configuration is validated at construction time. Invalid configs raise `InvalidC
 - `machine_id` must fit in `machine_bits`
 - `epoch_ms` must be positive
 
+### Restart high-water mark (optional)
+
+```python
+from unique_id import HighWaterMark, SnowflakeConfig, SnowflakeGenerator
+
+config = SnowflakeConfig(datacenter_id=3, machine_id=7)
+generator = SnowflakeGenerator(
+    config,
+    high_water=HighWaterMark("/var/lib/idgen/dc3-m7.hw", window_ms=1000),
+)
+```
+
+Before issuing a timestamp above the durable ceiling, the generator writes
+`timestamp + window_ms` (temp file, fsync, atomic rename, directory fsync), so
+normally only one write happens per window. On restart it issues nothing until
+the clock passes the stored ceiling: a gap that closes within
+`overflow_timeout_seconds` is waited out, otherwise `ClockMovedBackwardsError`
+is raised and the caller retries later. A failed write raises and issues no ID.
+One file per node identity and per live generator; without `high_water` the
+behavior is unchanged.
+
 ## API Reference
 
 ### SnowflakeGenerator
@@ -209,7 +231,8 @@ The core ID generator. Thread-safe.
 ```python
 class SnowflakeGenerator:
     def __init__(self, config: SnowflakeConfig = None, clock: Clock = None,
-                 *, overflow_timeout_seconds: float = 1.0): ...
+                 *, overflow_timeout_seconds: float = 1.0,
+                 high_water: HighWaterMark = None): ...
     def generate(self) -> int: ...
     def generate_batch(self, count: int) -> list[int]: ...
     @property

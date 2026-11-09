@@ -13,6 +13,7 @@ from unique_id.exceptions import (
     SequenceOverflowError,
     UniqueIDError,
 )
+from unique_id.high_water import HighWaterMark
 from unique_id.parser import IDParser, ParsedID
 from unique_id.snowflake import SnowflakeGenerator
 from unique_id.strategies import (
@@ -24,6 +25,7 @@ from unique_id.strategies import (
 __all__ = [
     "SnowflakeGenerator",
     "SnowflakeConfig",
+    "HighWaterMark",
     "IDParser",
     "ParsedID",
     "Clock",

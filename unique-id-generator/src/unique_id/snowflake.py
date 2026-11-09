@@ -10,6 +10,7 @@ from typing import Optional
 import unique_id.clock
 import unique_id.config
 import unique_id.exceptions
+import unique_id.high_water
 
 
 class SnowflakeGenerator:
@@ -26,6 +27,7 @@ class SnowflakeGenerator:
         clock: Optional[unique_id.clock.Clock] = None,
         *,
         overflow_timeout_seconds: float = 1.0,
+        high_water: Optional[unique_id.high_water.HighWaterMark] = None,
     ) -> None:
         """Initialize the Snowflake generator.
 
@@ -33,7 +35,12 @@ class SnowflakeGenerator:
             config: Generator configuration. Uses defaults if None.
             clock: Clock implementation. Uses SystemClock if None.
             overflow_timeout_seconds: Maximum wait after sequence exhaustion;
-                zero rejects immediately if the clock has not advanced.
+                zero rejects immediately if the clock has not advanced. Also
+                bounds the wait for the clock to pass a restart ceiling.
+            high_water: Optional durable timestamp ceiling for this node
+                identity. When given, no ID is issued at or below the ceiling
+                persisted by a previous run, and every issued timestamp is
+                covered by a durable ceiling before the ID is returned.
         """
         if (
             isinstance(overflow_timeout_seconds, bool)
@@ -55,6 +62,11 @@ class SnowflakeGenerator:
         self._sequence = 0
         self._last_timestamp = -1
         self._lock = threading.Lock()
+        # Restart protection: -1 means no history (or no store configured).
+        self._high_water = high_water
+        ceiling = high_water.load() if high_water is not None else None
+        self._restart_ceiling = -1 if ceiling is None else ceiling
+        self._reserved_until = self._restart_ceiling
 
     @property
     def config(self) -> unique_id.config.SnowflakeConfig:
@@ -81,6 +93,8 @@ class SnowflakeGenerator:
     def _generate_locked(self) -> int:
         """Validate first, then atomically publish the next sequence state."""
         timestamp = self._current_millis()
+        if timestamp <= self._restart_ceiling:
+            timestamp = self._wait_past_restart_ceiling(timestamp)
         if timestamp < self._last_timestamp:
             raise unique_id.exceptions.ClockMovedBackwardsError(
                 self._last_timestamp, timestamp
@@ -93,6 +107,12 @@ class SnowflakeGenerator:
         offset = timestamp - self._config.epoch_ms
         if not 0 <= offset <= self._max_timestamp:
             raise ValueError("timestamp outside configured Snowflake bit range")
+        if self._high_water is not None and timestamp > self._reserved_until:
+            # Persist before publishing: a crash can never leave an issued
+            # timestamp above the durable ceiling. I/O happens once per window.
+            ceiling = timestamp + self._high_water.window_ms
+            self._high_water.store(ceiling)
+            self._reserved_until = ceiling
         self._last_timestamp, self._sequence = timestamp, sequence
         return (offset << self._timestamp_shift) | self._node_prefix | sequence
 
@@ -144,6 +164,31 @@ class SnowflakeGenerator:
                 )
             # Yield the CPU while retaining exclusive ownership of generator state.
             time.sleep(0.0001)
+
+    def _wait_past_restart_ceiling(self, timestamp: int) -> int:
+        """Wait, within the overflow deadline, for the clock to pass the
+        ceiling persisted by a previous run.
+
+        The ceiling may lie up to one window ahead of the old run's clock, so
+        a quick restart normally waits briefly. A gap that cannot close before
+        the deadline (a real rollback) fails immediately instead of sleeping.
+
+        Raises:
+            ClockMovedBackwardsError: If the clock is still at or below the
+                restart ceiling when the deadline expires.
+        """
+        ceiling = self._restart_ceiling
+        deadline = time.monotonic() + self._overflow_timeout
+        while timestamp <= ceiling:
+            remaining_ms = (deadline - time.monotonic()) * 1000
+            if ceiling - timestamp >= remaining_ms:
+                raise unique_id.exceptions.ClockMovedBackwardsError(
+                    ceiling, timestamp
+                )
+            time.sleep(0.001)
+            timestamp = self._current_millis()
+        self._restart_ceiling = -1
+        return timestamp
 
     def _current_millis(self) -> int:
         """Get current time in milliseconds from the configured clock."""

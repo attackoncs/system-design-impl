@@ -35,18 +35,20 @@ flowchart LR
 ## 六站源码阅读路线
 
 1. [SnowflakeConfig.__post_init__](../src/unique_id/config.py#L33)：检查位布局和节点编号范围。先确认案例的2位序列配置合法。
-2. [SnowflakeGenerator.__init__](../src/unique_id/snowflake.py#L23)：定位初始状态与锁。输入配置和Clock，输出一个带独立状态的实例。
-3. [SnowflakeGenerator.generate](../src/unique_id/snowflake.py#L64)：看锁覆盖的范围；入口本身不负责算法，下一站才是状态机。
-4. [SnowflakeGenerator._generate_locked](../src/unique_id/snowflake.py#L81)：输入当前毫秒和旧状态，决定新序列并生成ID。重点找“状态何时正式写回”。
-5. [SnowflakeGenerator._wait_next_millis](../src/unique_id/snowflake.py#L121)：只在序列耗尽时进入；等待的是业务时钟推进，截止时间使用单调时钟。
+2. [SnowflakeGenerator.__init__](../src/unique_id/snowflake.py#L24)：定位初始状态与锁。输入配置和Clock，输出一个带独立状态的实例。
+3. [SnowflakeGenerator.generate](../src/unique_id/snowflake.py#L76)：看锁覆盖的范围；入口本身不负责算法，下一站才是状态机。
+4. [SnowflakeGenerator._generate_locked](../src/unique_id/snowflake.py#L93)：输入当前毫秒和旧状态，决定新序列并生成ID。重点找“状态何时正式写回”。
+5. [SnowflakeGenerator._wait_next_millis](../src/unique_id/snowflake.py#L141)：只在序列耗尽时进入；等待的是业务时钟推进，截止时间使用单调时钟。
 6. [IDParser.parse](../src/unique_id/parser.py#L49)：拿到ID后用相同布局反解。把输出字段对回案例，证明理解了按位组合。
 
 ## 微观一：异常之前不提交状态
 
-[snowflake.py:83](../src/unique_id/snowflake.py#L83)
+[snowflake.py:95](../src/unique_id/snowflake.py#L95)
 
 ```python
 timestamp = self._current_millis()
+if timestamp <= self._restart_ceiling:
+    timestamp = self._wait_past_restart_ceiling(timestamp)
 if timestamp < self._last_timestamp:
     raise unique_id.exceptions.ClockMovedBackwardsError(
         self._last_timestamp, timestamp
@@ -58,8 +60,6 @@ if timestamp == self._last_timestamp:
         timestamp = self._wait_next_millis(self._last_timestamp)
 offset = timestamp - self._config.epoch_ms
 if not 0 <= offset <= self._max_timestamp:
-    raise ValueError("timestamp outside configured Snowflake bit range")
-self._last_timestamp, self._sequence = timestamp, sequence
 ```
 
 第一段拒绝比 `_last_timestamp` 更小的时间。局部变量 `sequence` 先从0开始；相同毫秒时加1并用位掩码限制范围。加到4后 `4 & 3 == 0`，表示耗尽，而非允许重用0，所以调用等待函数。
@@ -83,7 +83,7 @@ flowchart TD
 
 ## 微观二：等待不会占满CPU，但仍持有生成器锁
 
-[snowflake.py:132](../src/unique_id/snowflake.py#L132)
+[snowflake.py:152](../src/unique_id/snowflake.py#L152)
 
 ```python
 deadline = time.monotonic() + self._overflow_timeout
@@ -105,7 +105,7 @@ while True:
 
 循环每次重新读业务时钟，发现推进便返回；回拨立即报错，截止则抛 `SequenceOverflowError`。`sleep` 让出CPU，但外层 `generate` 的实例锁仍被持有，其他线程不能同时修改序列。等待上限限制了这段串行等待的时间，不能把它描述成无等待的无限吞吐。
 
-[SnowflakeGenerator.generate_batch](../src/unique_id/snowflake.py#L99) 一次持锁生成多个ID。如果中途失败，之前已经生成的内部状态不会回滚；调用者不能把批量方法当成事务。
+[SnowflakeGenerator.generate_batch](../src/unique_id/snowflake.py#L119) 一次持锁生成多个ID。如果中途失败，之前已经生成的内部状态不会回滚；调用者不能把批量方法当成事务。
 
 ## 失败案例与两项测试
 

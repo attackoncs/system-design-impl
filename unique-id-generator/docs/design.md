@@ -163,6 +163,7 @@ unique-id-generator/
 | Error Scenario | Handling Strategy |
 |----------------|-------------------|
 | **Clock moved backwards** | Raise `ClockMovedBackwardsError` with drift duration. Caller should wait or use monotonic clock. Generator refuses to produce IDs to prevent duplicates. |
+| **Restart below persisted ceiling** | With `HighWaterMark`, wait (bounded by `overflow_timeout_seconds`) for the clock to pass the ceiling of the previous run; if the gap cannot close in time raise `ClockMovedBackwardsError`. A failed ceiling write raises and issues nothing. |
 | **Sequence overflow** | Sleep until the next millisecond, rejecting rollback or deadline exhaustion. SequenceOverflowError is public; no fixed latency guarantee. |
 | **Invalid configuration** | Raise `InvalidConfigError` at construction time. Fail-fast with descriptive message (which constraint was violated). |
 | **Datacenter/machine ID too large** | Raise `InvalidConfigError` during config validation. Message includes max allowed value for configured bits. |
@@ -189,8 +190,14 @@ latter requires a positive integer epoch and a 42-bit time offset; its output is
 unsigned 64-bit and probabilistic, distinct from Snowflake's signed-range output.
 
 Global uniqueness assumes a shared layout/epoch, distinct active identities and
-no reuse of a time/sequence after restart. No identity lease, persisted high-water
-mark, cross-process lock, NTP management or automatic failover is implemented.
+no reuse of a time/sequence after restart. The optional [HighWaterMark](../src/unique_id/high_water.py)
+covers restart: before issuing a timestamp above the durable ceiling the generator
+persists `timestamp + window_ms` (temp file, fsync, atomic replace, directory fsync)
+under its lock, so every returned ID is at or below a durable ceiling and the hot
+path writes once per window. A new instance issues only timestamps above the loaded
+ceiling, so a crash, same-millisecond restart or rollback cannot reissue an ID.
+No identity lease, cross-process lock, NTP management or automatic failover is
+implemented; one ceiling file must belong to one identity and one live generator.
 MonotonicClock only protects its local lifetime against rollback; it cannot
 synchronize machines or prevent identity reuse. Different layouts/epochs do not
 form a shared globally unique namespace. See [measurements](../benchmarks/REPORT.md).
