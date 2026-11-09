@@ -1,3 +1,14 @@
+# 第6章结构复审 — 2026-11-09
+
+只改生产代码，未改测试与基准。审计结论：不可变快照＋串行写者、迁移区间线性归并等结构良好，不做大改；只消除确认的重复。
+
+- 三个哈希函数改为共用`_digest_int(constructor, key)`，直接传入`hashlib.sha1/md5/sha256`构造器（不用按名称查找的`hashlib.new`，避免热路径开销）；公开函数与返回值不变。
+- “节点不存在”`KeyError`三处、“空环”`RuntimeError`三处（含`stats`）合并为`require_node`/`require_entries`与常量`EMPTY_RING`，异常类型与消息不变。
+- 保留：`compute_distribution`的手写总体标准差（改用`statistics.pstdev`可能改变浮点末位）；写者重入保护与发布锁。
+- 验证：163项测试通过（Python 3.14，`-W error`）。
+
+---
+
 # 第6章再次复审 — 2026-10-27
 
 2026-10-31更新：已完成[GitHub源码对照与章节覆盖](open-source-review_cn.md)。

@@ -30,40 +30,21 @@ class HashFunction(Protocol):
         """Hash a string key to an integer position on the ring."""
 
 
+def _digest_int(algorithm: Callable, key: str) -> int:
+    """Interpret the hex digest of ``key`` as an unsigned ring position."""
+    return int(algorithm(key.encode("utf-8")).hexdigest(), 16)
+
+
 def sha1_hash(key: str) -> int:
-    """Default hash function using SHA-1, returning full 160-bit integer.
-
-    Args:
-        key: The string key to hash.
-
-    Returns:
-        An integer in the range [0, 2^160 - 1].
-    """
-    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()
-    return int(digest, 16)
+    """Default hash: SHA-1, an integer in [0, 2^160 - 1]."""
+    return _digest_int(hashlib.sha1, key)
 
 
 def md5_hash(key: str) -> int:
-    """MD5-based hash function, returning 128-bit integer.
-
-    Args:
-        key: The string key to hash.
-
-    Returns:
-        An integer in the range [0, 2^128 - 1].
-    """
-    digest = hashlib.md5(key.encode("utf-8")).hexdigest()
-    return int(digest, 16)
+    """MD5 hash, an integer in [0, 2^128 - 1]."""
+    return _digest_int(hashlib.md5, key)
 
 
 def sha256_hash(key: str) -> int:
-    """SHA-256-based hash function, returning 256-bit integer.
-
-    Args:
-        key: The string key to hash.
-
-    Returns:
-        An integer in the range [0, 2^256 - 1].
-    """
-    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
-    return int(digest, 16)
+    """SHA-256 hash, an integer in [0, 2^256 - 1]."""
+    return _digest_int(hashlib.sha256, key)

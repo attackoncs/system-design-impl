@@ -31,6 +31,19 @@ class _RingState:
         return cls(ordered, tuple(item[0] for item in ordered), tuple(nodes))
 
 
+EMPTY_RING = "Hash ring is empty - no nodes available."
+
+
+def require_entries(state: _RingState) -> None:
+    if not state.entries:
+        raise RuntimeError(EMPTY_RING)
+
+
+def require_node(state: _RingState, node: str) -> None:
+    if node not in state.nodes:
+        raise KeyError(f"Node '{node}' does not exist on the ring.")
+
+
 def _positive_count(value: int) -> int:
     if type(value) is not int or value <= 0:
         raise ValueError("virtual node count must be a positive integer")
@@ -64,8 +77,7 @@ class RingSnapshot:
         return hash_functions.hash_position(self._hash_function, key)
 
     def _start(self, state: _RingState, key: str) -> int:
-        if not state.entries:
-            raise RuntimeError("Hash ring is empty - no nodes available.")
+        require_entries(state)
         return bisect.bisect_right(state.positions, self._hash(key)) % len(
             state.entries
         )
@@ -77,14 +89,12 @@ class RingSnapshot:
 
     def iter_assignments(self, keys: Iterable[str]) -> Iterator[tuple[str, str]]:
         """Stream caller-supplied keys using this view, without retaining keys."""
-        if not self._state.entries:
-            raise RuntimeError("Hash ring is empty - no nodes available.")
+        require_entries(self._state)
         return ((key, self.get_node(key)) for key in keys)
 
     def get_keys(self, node: str, keys: Iterable[str]) -> list[str]:
         """Filter supplied keys; the ring does not store a registry of data keys."""
-        if node not in self._state.nodes:
-            raise KeyError(f"Node '{node}' does not exist on the ring.")
+        require_node(self._state, node)
         return [key for key, owner in self.iter_assignments(keys) if owner == node]
 
     def get_nodes(self, key: str, count: int) -> list[str]:
@@ -223,8 +233,7 @@ class ConsistentHashRing:
         self._validate_node(node)
         with self._writing():
             state = self._snapshot()
-            if node not in state.nodes:
-                raise KeyError(f"Node '{node}' does not exist on the ring.")
+            require_node(state, node)
             removed = sorted(
                 (item for item in state.entries if item[1] == node),
                 key=lambda item: item[2],
@@ -245,8 +254,7 @@ class ConsistentHashRing:
         count = _positive_count(count)
         with self._writing():
             state = self._snapshot()
-            if node not in state.nodes:
-                raise KeyError(f"Node '{node}' does not exist on the ring.")
+            require_node(state, node)
             old_count = sum(entry[1] == node for entry in state.entries)
             self._ensure_capacity(len(state.entries) - old_count + count)
             if old_count == count:

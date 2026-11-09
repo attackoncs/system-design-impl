@@ -32,27 +32,26 @@ flowchart LR
 
 ## 六站读代码，不从统计工具开始
 
-1. [ConsistentHashRing._entries](../src/consistent_hashing/ring.py#L173)：输入节点名和虚拟索引，产生环点。先找到为何输入哈希的是 `A#0` 而非 `A`。
+1. [ConsistentHashRing._entries](../src/consistent_hashing/ring.py#L183)：输入节点名和虚拟索引，产生环点。先找到为何输入哈希的是 `A#0` 而非 `A`。
 2. [_RingState.from_ordered](../src/consistent_hashing/ring.py#L28)：把已排序输入物化成元组，并派生positions。它决定快照为何可以保持不变。
-3. [ConsistentHashRing.snapshot](../src/consistent_hashing/ring.py#L265)：取得一份拓扑与哈希函数；后续批量路由应保留这个对象。
-4. [RingSnapshot._start](../src/consistent_hashing/ring.py#L66)：把k的20变成entries下标1；理解 `bisect_right` 与取模后再看返回节点。
-5. [ConsistentHashRing.add_node](../src/consistent_hashing/ring.py#L200)：生成C的30，构造新状态后发布。下一步比较保存的旧快照与当前环。
+3. [ConsistentHashRing.snapshot](../src/consistent_hashing/ring.py#L273)：取得一份拓扑与哈希函数；后续批量路由应保留这个对象。
+4. [RingSnapshot._start](../src/consistent_hashing/ring.py#L79)：把k的20变成entries下标1；理解 `bisect_right` 与取模后再看返回节点。
+5. [ConsistentHashRing.add_node](../src/consistent_hashing/ring.py#L210)：生成C的30，构造新状态后发布。下一步比较保存的旧快照与当前环。
 6. [affected_ranges](../src/consistent_hashing/migration.py#L43)：输入前后明确快照，输出受影响区间；[iter_migrations](../src/consistent_hashing/migration.py#L94) 再消费调用方提供的键流。
 
 ## 微观一：为什么查的是“右边第一个”
 
-[ring.py:66](../src/consistent_hashing/ring.py#L66)
+[ring.py:79](../src/consistent_hashing/ring.py#L79)
 
 ```python
 def _start(self, state: _RingState, key: str) -> int:
-    if not state.entries:
-        raise RuntimeError("Hash ring is empty - no nodes available.")
+    require_entries(state)
     return bisect.bisect_right(state.positions, self._hash(key)) % len(
         state.entries
     )
 ```
 
-空环先报错，避免对0取模。`bisect_right` 返回严格大于键位置的插入点：20得到1，30若存在也跳过30。取模使超过最大点的键绕回下标0。后续 [RingSnapshot.get_node](../src/consistent_hashing/ring.py#L73) 只从该条entry取物理节点名。
+空环先报错，避免对0取模。`bisect_right` 返回严格大于键位置的插入点：20得到1，30若存在也跳过30。取模使超过最大点的键绕回下标0。后续 [RingSnapshot.get_node](../src/consistent_hashing/ring.py#L85) 只从该条entry取物理节点名。
 
 ```mermaid
 flowchart TD
@@ -68,7 +67,7 @@ flowchart TD
 
 ## 微观二：新拓扑准备好后才替换
 
-[ring.py:208](../src/consistent_hashing/ring.py#L208)
+[ring.py:218](../src/consistent_hashing/ring.py#L218)
 
 ```python
 with self._writing():
@@ -87,9 +86,9 @@ return [position for position, _, _ in added]
 
 写锁内先固定旧状态，检查重复节点和总容量，再生成新环点。哈希函数若在生成C的过程中抛错，还没有进入 `_publish`，所以读者继续看到旧的A、B环。
 
-[ConsistentHashRing._publish](../src/consistent_hashing/ring.py#L196) 只在短状态锁内替换引用。耗时哈希和排序没有拿着状态锁进行；已经取得旧快照的读者仍可使用旧元组。
+[ConsistentHashRing._publish](../src/consistent_hashing/ring.py#L206) 只在短状态锁内替换引用。耗时哈希和排序没有拿着状态锁进行；已经取得旧快照的读者仍可使用旧元组。
 
-权重调整同样要读 [ConsistentHashRing.set_virtual_nodes](../src/consistent_hashing/ring.py#L237)：增加权重只追加新索引，减小则删除较大索引，不先删除整台机器再重新加入。
+权重调整同样要读 [ConsistentHashRing.set_virtual_nodes](../src/consistent_hashing/ring.py#L246)：增加权重只追加新索引，减小则删除较大索引，不先删除整台机器再重新加入。
 
 ## 微观三：未变拓扑为什么不必扫描
 

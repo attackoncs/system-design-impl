@@ -12,6 +12,8 @@ import math
 from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING
 
+from consistent_hashing.ring import EMPTY_RING
+
 if TYPE_CHECKING:
     from consistent_hashing.ring import ConsistentHashRing, RingSnapshot
 
@@ -106,7 +108,7 @@ def compute_distribution(
     ring = ring.snapshot()
     keys_per_server: dict[str, int] = {node: 0 for node in ring.nodes}
     if not keys_per_server:
-        raise RuntimeError("Hash ring is empty - no nodes available.")
+        raise RuntimeError(EMPTY_RING)
 
     total_keys = 0
     for _, node in ring.iter_assignments(keys):
