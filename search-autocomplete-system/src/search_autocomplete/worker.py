@@ -4,13 +4,14 @@ import sqlite3
 import threading
 import time
 
-from search_autocomplete.store import Unavailable, _finite_number
+from search_autocomplete.store import Unavailable
+from search_autocomplete.validation import finite_number, require_shard_count
 
 WEEK = 7 * 86400
 
 
 def _duration(value, name):
-    if not _finite_number(value) or value <= 0:
+    if not finite_number(value) or value <= 0:
         raise ValueError(f"{name} must be positive and finite")
     return value
 
@@ -33,14 +34,8 @@ class SnapshotWorker:
         clock=time.time,
         purge_blocked=False,
     ):
-        if (
-            not isinstance(shards, int)
-            or isinstance(shards, bool)
-            or not 1 <= shards <= 256
-        ):
-            raise ValueError("invalid shard count")
         self.store = store
-        self.shards = shards
+        self.shards = require_shard_count(shards)
         self.interval = _duration(interval, "interval")
         self.window = _duration(window, "window")
         self.retry_delay = _duration(retry_delay, "retry_delay")

@@ -5,13 +5,14 @@ import threading
 
 import search_autocomplete.store
 import search_autocomplete.trie
+from search_autocomplete.validation import require_integer
 
 _MISSING = object()
 
 
-def _identifier(value, label):
-    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-        raise ValueError(f"invalid {label}")
+def _require_revision(expected, actual):
+    if expected != actual:
+        raise search_autocomplete.store.Unavailable("filter revision changed; retry")
 
 
 def relevant_shards(snapshot, prefix):
@@ -27,6 +28,12 @@ def relevant_shards(snapshot, prefix):
     ]
 
 
+def shard_range(snapshot, index):
+    """Return a shard's inclusive lower and exclusive upper bound (None = open)."""
+    bounds = snapshot["lower"]
+    return bounds[index], bounds[index + 1] if index + 1 < len(bounds) else None
+
+
 class Autocomplete:
     """Versioned local trie serving with bounded snapshot and result caches."""
 
@@ -34,10 +41,7 @@ class Autocomplete:
         """Attach a snapshot store and set the maximum number of cached
         results.
         """
-        if (
-            not isinstance(cache_size, int) or isinstance(cache_size, bool)
-        ) or cache_size < 0:
-            raise ValueError("invalid cache capacity")
+        require_integer(cache_size, 0, message="invalid cache capacity")
         self.store, self.cache_size = store, cache_size
         self.lock = threading.RLock()
         self.tries = collections.OrderedDict()
@@ -74,10 +78,27 @@ class Autocomplete:
             return value
 
     def _check_revision(self, revision):
-        if self.store.revision() != revision:
-            raise search_autocomplete.store.Unavailable(
-                "filter revision changed; retry"
+        _require_revision(revision, self.store.revision())
+
+    def _compute(self, version, shard, prefix, blocked):
+        """Merge each relevant shard trie's filtered top five for one generation."""
+        snapshot = self._load(
+            self.snapshots, version, 2, lambda: self.store.snapshot(version)
+        )
+        indices = relevant_shards(snapshot, prefix) if shard is None else [shard]
+        if any(i >= len(snapshot["shards"]) for i in indices):
+            raise ValueError("invalid shard")
+        candidates = []
+        for index in indices:
+            trie = self._load(
+                self.tries,
+                (version, index),
+                256,
+                # Resolved at call time so the module's Trie stays replaceable.
+                lambda: search_autocomplete.trie.Trie(snapshot["shards"][index]),
             )
+            candidates.extend(trie.suggest(prefix, blocked))
+        return tuple(search_autocomplete.trie.ranked(candidates))
 
     def suggest(self, prefix, version=None, revision=None, shard=None):
         """Return five ranked matches from one consistent local serving view.
@@ -103,36 +124,19 @@ class Autocomplete:
             (shard, "shard"),
         ):
             if value is not None:
-                _identifier(value, label)
+                require_integer(value, 0, message=f"invalid {label}")
         active, actual_revision, blocked = self.store.view()
         version = active if version is None else version
         if version == 0:
             raise search_autocomplete.store.Unavailable(
                 "no snapshot has been published"
             )
-        if revision is not None and revision != actual_revision:
-            raise search_autocomplete.store.Unavailable(
-                "filter revision changed; retry"
-            )
+        if revision is not None:
+            _require_revision(revision, actual_revision)
         key = (version, actual_revision, shard, prefix)
         result = self._get(self.cache, key)
         if result is _MISSING:
-            snapshot = self._load(
-                self.snapshots, version, 2, lambda: self.store.snapshot(version)
-            )
-            indices = relevant_shards(snapshot, prefix) if shard is None else [shard]
-            if any(i >= len(snapshot["shards"]) for i in indices):
-                raise ValueError("invalid shard")
-            candidates = []
-            for index in indices:
-                trie = self._load(
-                    self.tries,
-                    (version, index),
-                    256,
-                    lambda: search_autocomplete.trie.Trie(snapshot["shards"][index]),
-                )
-                candidates.extend(trie.suggest(prefix, blocked))
-            result = tuple(search_autocomplete.trie.ranked(candidates))
+            result = self._compute(version, shard, prefix, blocked)
         # Include cache hits: a rule may change while the captured view is served.
         self._check_revision(actual_revision)
         return self._put(self.cache, key, result, self.cache_size)

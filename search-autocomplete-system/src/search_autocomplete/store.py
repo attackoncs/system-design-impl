@@ -4,36 +4,58 @@ import contextlib
 import functools
 import hashlib
 import json
-import math
 import sqlite3
 import threading
 import time
 import uuid
 
 import search_autocomplete.trie
+from search_autocomplete.validation import (
+    event_time,
+    finite_number,
+    require_event_id,
+    require_integer,
+    require_shard_count,
+)
 
 
 class Unavailable(RuntimeError):
     """A snapshot, aggregation, or consistent serving view is unavailable."""
 
 
-def _finite_number(value):
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return False
-    try:
-        return math.isfinite(value)
-    except OverflowError:
-        return False
-
-
 def _window(start, end):
-    if not all(_finite_number(value) for value in (start, end)) or not 0 <= start < end:
+    if not all(finite_number(value) for value in (start, end)) or not 0 <= start < end:
         raise ValueError("invalid time window")
 
 
 def _identifier(value, name):
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        raise ValueError(f"invalid {name}")
+    require_integer(value, 1, message=f"invalid {name}")
+
+
+def _query_hash(query):
+    """Receipt digest that deduplicates retries without retaining purged text."""
+    return hashlib.sha256(query.encode("utf-8")).hexdigest()
+
+
+def _meta(db, key):
+    return db.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()[0]
+
+
+def _increment_meta(db, key):
+    db.execute("UPDATE meta SET value = value + 1 WHERE key = ?", (key,))
+
+
+def _partition(rows, shards):
+    """Split sorted rows into at most ``shards`` contiguous, near-equal ranges."""
+    count = min(shards, max(1, len(rows)))
+    return [
+        rows[len(rows) * i // count : len(rows) * (i + 1) // count]
+        for i in range(count)
+    ]
+
+
+def _encode(document):
+    return json.dumps(document, separators=(",", ":"))
 
 
 def _active(method):
@@ -163,14 +185,13 @@ class Store:
         events retain a query-hash receipt so retries cannot restore them.
         """
         query = search_autocomplete.trie.normalize(query)
-        if not isinstance(event_id, str) or not 1 <= len(event_id) <= 200:
-            raise ValueError("invalid event ID")
+        require_event_id(event_id)
         automatic_time = at is None
         at = time.time() if automatic_time else at
-        if not _finite_number(at) or at < 0:
+        if not event_time(at):
             raise ValueError("invalid timestamp")
         at = float(at)
-        query_hash = hashlib.sha256(query.encode("utf-8")).hexdigest()
+        query_hash = _query_hash(query)
         with self.lock, self.db:
             self.db.execute("BEGIN IMMEDIATE")
             old = self.db.execute(
@@ -192,9 +213,7 @@ class Store:
                 "INSERT INTO events(id, query, at) VALUES (?, ?, ?)",
                 (event_id, query, at),
             )
-            self.db.execute(
-                "UPDATE meta SET value = value + 1 WHERE key = 'event_watermark'"
-            )
+            _increment_meta(self.db, "event_watermark")
             return True
 
     @_active
@@ -216,9 +235,7 @@ class Store:
     def revision(self):
         """Read only the current filter revision for a final serving fence."""
         with self.lock:
-            return self.db.execute(
-                "SELECT value FROM meta WHERE key = 'revision'"
-            ).fetchone()[0]
+            return _meta(self.db, "revision")
 
     @_active
     def block(self, query, enabled=True):
@@ -234,12 +251,8 @@ class Store:
                 else "DELETE FROM blocked WHERE query = ?"
             )
             if self.db.execute(command, (query,)).rowcount:
-                self.db.execute(
-                    "UPDATE meta SET value = value + 1 WHERE key = 'revision'"
-                )
-            return self.db.execute(
-                "SELECT value FROM meta WHERE key = 'revision'"
-            ).fetchone()[0]
+                _increment_meta(self.db, "revision")
+            return _meta(self.db, "revision")
 
     @_active
     def aggregate(self, start, end):
@@ -261,15 +274,14 @@ class Store:
                 """,
                 (float(start), float(end)),
             ).fetchall()
-        data = json.dumps(
+        data = _encode(
             {
                 "start": start,
                 "end": end,
                 "filter_revision": values["revision"],
                 "event_watermark": values["event_watermark"],
                 "frequencies": rows,
-            },
-            separators=(",", ":"),
+            }
         )
         with self.lock, self.db:
             self.db.execute("BEGIN IMMEDIATE")
@@ -291,10 +303,8 @@ class Store:
         return json.loads(row[0])
 
     def _check_revision(self, revision):
-        actual = self.db.execute(
-            "SELECT value FROM meta WHERE key = 'revision'"
-        ).fetchone()[0]
-        if actual != revision:
+        """Fence a write transaction against filter changes since its input read."""
+        if _meta(self.db, "revision") != revision:
             raise Unavailable("filter changed during build; rebuild required")
 
     def _reserve_ticket(self):
@@ -308,9 +318,7 @@ class Store:
                 ) + 1 WHERE key = 'build_ticket'
                 """
             )
-            return self.db.execute(
-                "SELECT value FROM meta WHERE key = 'build_ticket'"
-            ).fetchone()[0]
+            return _meta(self.db, "build_ticket")
 
     @_active
     def build(self, start, end, shards=1, *, aggregation_id=None):
@@ -321,12 +329,7 @@ class Store:
         unchanged. Generation IDs increase but may contain gaps after failure.
         """
         _window(start, end)
-        if (
-            not isinstance(shards, int)
-            or isinstance(shards, bool)
-            or not 1 <= shards <= 256
-        ):
-            raise ValueError("invalid shard count")
+        require_shard_count(shards)
         if aggregation_id is not None:
             _identifier(aggregation_id, "aggregation ID")
         version = self._reserve_ticket()
@@ -335,15 +338,13 @@ class Store:
         aggregate = self.aggregation(aggregation_id)
         if (aggregate["start"], aggregate["end"]) != (start, end):
             raise ValueError("aggregation time window does not match")
-        rows = aggregate["frequencies"]
-        count = min(shards, max(1, len(rows)))
-        parts = [
-            rows[len(rows) * i // count : len(rows) * (i + 1) // count]
-            for i in range(count)
-        ]
+        parts = _partition(aggregate["frequencies"], shards)
+        # Offline validation: each shard must form a valid trie (normalized,
+        # unique, positive counts) before anything is published. Serving
+        # replicas rebuild their own trie lazily from these persisted records.
         for part in parts:
             search_autocomplete.trie.Trie(part)
-        data = json.dumps(
+        data = _encode(
             {
                 "version": version,
                 "start": start,
@@ -353,16 +354,17 @@ class Store:
                 "event_watermark": aggregate["event_watermark"],
                 "shards": parts,
                 "lower": [part[0][0] if part else "" for part in parts],
-            },
-            separators=(",", ":"),
+            }
         )
+        self._publish(version, aggregate["filter_revision"], data)
+        return version
+
+    def _publish(self, version, filter_revision, data):
+        """Atomically switch to ``version`` unless filtered-outdated or superseded."""
         with self.lock, self.db:
             self.db.execute("BEGIN IMMEDIATE")
-            self._check_revision(aggregate["filter_revision"])
-            published = self.db.execute(
-                "SELECT value FROM meta WHERE key = 'published_ticket'"
-            ).fetchone()[0]
-            if published >= version:
+            self._check_revision(filter_revision)
+            if _meta(self.db, "published_ticket") >= version:
                 raise Unavailable("snapshot build superseded by a newer publication")
             self.db.execute(
                 "INSERT INTO snapshots(id, data) VALUES (?, ?)", (version, data)
@@ -371,7 +373,6 @@ class Store:
                 "UPDATE meta SET value = ? WHERE key IN ('active', 'published_ticket')",
                 (version,),
             )
-        return version
 
     @_active
     def snapshot(self, version=None):
@@ -380,9 +381,7 @@ class Store:
             _identifier(version, "snapshot generation")
         with self.lock:
             if version is None:
-                version = self.db.execute(
-                    "SELECT value FROM meta WHERE key = 'active'"
-                ).fetchone()[0]
+                version = _meta(self.db, "active")
             row = self.db.execute(
                 "SELECT data FROM snapshots WHERE id = ?", (version,)
             ).fetchone()
@@ -406,7 +405,7 @@ class Store:
             self.db.executemany(
                 "INSERT OR IGNORE INTO purged_receipts(id, query_hash, at) VALUES (?, ?, ?)",
                 [
-                    (event_id, hashlib.sha256(query.encode("utf-8")).hexdigest(), at)
+                    (event_id, _query_hash(query), at)
                     for event_id, query, at in rows
                 ],
             )

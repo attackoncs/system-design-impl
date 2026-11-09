@@ -2,8 +2,12 @@
 
 import hashlib
 
-from search_autocomplete.store import _finite_number
 from search_autocomplete.trie import normalize
+from search_autocomplete.validation import (
+    event_time,
+    require_event_id,
+    require_integer,
+)
 
 
 class Collector:
@@ -14,19 +18,14 @@ class Collector:
     """
 
     def __init__(self, store, sample_every=1):
-        if (
-            not isinstance(sample_every, int)
-            or isinstance(sample_every, bool)
-            or sample_every < 1
-        ):
-            raise ValueError("sample_every must be a positive integer")
         self.store = store
-        self.sample_every = sample_every
+        self.sample_every = require_integer(
+            sample_every, 1, message="sample_every must be a positive integer"
+        )
 
     def selected(self, event_id):
         """Select by stable event identity, rather than biased query text."""
-        if not isinstance(event_id, str) or not 1 <= len(event_id) <= 200:
-            raise ValueError("invalid event ID")
+        require_event_id(event_id)
         digest = hashlib.blake2b(event_id.encode("utf-8"), digest_size=16).digest()
         return int.from_bytes(digest, "big") % self.sample_every == 0
 
@@ -34,6 +33,6 @@ class Collector:
         """Return True only when a selected event was newly persisted."""
         selected = self.selected(event_id)
         query = normalize(query)
-        if at is not None and (not _finite_number(at) or at < 0):
+        if at is not None and not event_time(at):
             raise ValueError("invalid event time")
         return selected and self.store.record(event_id, query, at)

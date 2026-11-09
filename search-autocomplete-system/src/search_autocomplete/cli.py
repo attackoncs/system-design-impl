@@ -6,7 +6,8 @@ import sys
 import time
 
 from search_autocomplete import Autocomplete, Collector, SnapshotWorker, Store
-from search_autocomplete.http import Coordinator, server
+from search_autocomplete.coordinator import Coordinator
+from search_autocomplete.http import server
 from search_autocomplete.worker import WEEK
 
 

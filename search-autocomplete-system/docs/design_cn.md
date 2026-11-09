@@ -55,7 +55,7 @@ LRU 条目包含版本号、规则修订号和前缀。清理/驱逐缓存不会
 
 ## 分片与副本
 
-Collector、SnapshotWorker和协调器超时配置复用现有有限数校验；不可表示的超大整数报ValueError，不再在转浮点数时泄漏OverflowError。
+Collector、Store、SnapshotWorker、Autocomplete和协调器配置共用`validation.py`中的校验（有限数、有界整数、事件ID、分片数）；不可表示的超大整数报ValueError，不再在转浮点数时泄漏OverflowError。
 
 按字典序对查询排序，再分成查询条数大致相等的区间。分片映射存储包含的下界和不包含的上界。一个前缀区间可能跨多个分片；协调器仅向重叠分片扇出请求，并合并它们的 Top-5 列表。当排名和过滤规则一致时，从每个分片返回 Top-5 即可覆盖全局 Top-5。
 
@@ -76,7 +76,7 @@ HTTP 使用 no-store。原书一小时浏览器缓存是可选优化，会遮蔽
 
 ## 目录布局与运行限制
 
-`src/search_autocomplete/`：采集、Worker、Trie、存储、服务、HTTP 和 CLI。
+`src/search_autocomplete/`：每个模块单一职责。`trie.py` 不可变 Top 5 Trie 与排名；`store.py` SQLite 事件、过滤规则、聚合与原子发布；`collection.py` 稳定采样；`worker.py` 周期构建；`service.py` 本地版本化服务、LRU 缓存与分片路由；`coordinator.py` 副本扇出、故障切换与应答校验；`http.py` 有界 HTTP 服务器（兼容再导出 `Coordinator`）；`validation.py` 共用参数校验；`cli.py` 命令入口。
 `examples/`：本地批量/查询及多进程网络演示。
 `tests/`：确定性正确性测试与真实 HTTP 故障切换测试。
 `tools/benchmark.py`：可配置的本地延迟测量工具。

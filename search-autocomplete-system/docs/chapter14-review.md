@@ -18,6 +18,34 @@
 | 高可用、千万日活及 100ms 目标 | 提供本地机制和有限测量；未验证多主机存储 HA 或互联网规模容量 |
 | 多语言、地域/CDN、实时热点 | 原书后续讨论，未作为当前核心范围实现 |
 
+## 2026-11-09 结构与质量重构
+
+仅调整 `src/` 生产代码结构，不改行为、HTTP 形状、排名/过滤语义，不改测试和基准代码。
+
+审计发现：
+
+- 校验逻辑重复：`_finite_number` 定义在 `store.py`，却被 Collector、Worker、HTTP 以私有名跨模块导入；正整数/分片数（1..256）/事件 ID 校验在 Store、Worker、Collector、Autocomplete 各写一份。
+- `store.py` 中“读取 meta 单值”SQL 重复 6 次，自增 2 次，查询摘要 sha256 重复 2 次；`build` 同时负责参数校验、分片切分、文档编码和发布事务。
+- `http.py`（449 行）混合两种职责：出站副本客户端（扇出、故障切换、应答校验、流式读取）和入站 HTTP 服务器；`_read_reply` 约 70 行，分片上界计算在协调器内重写。
+- `Autocomplete.suggest` 内联了缓存未命中的整段计算，过滤修订不符的报错写了两遍。
+
+改动：
+
+- 新增 `validation.py`：`finite_number`、`integer_in/require_integer`、`require_shard_count`、`require_event_id`、`event_time`；各模块改用它，错误类型和消息保持不变。
+- `store.py`：抽出 `_meta`、`_increment_meta`、`_query_hash`、`_partition`、`_encode`，发布事务拆为 `_publish`；锁/事务边界与原来一致。
+- 新增 `coordinator.py`：承载 `Coordinator`、副本应答校验，以及从 `_read_reply` 拆出的 `_read_body`；`http.py` 只保留有界服务器和请求解析，并再导出 `Coordinator`，`search_autocomplete.http.Coordinator` 仍可用。
+- `service.py`：抽出 `_compute`（未命中计算）、`_require_revision`，新增 `shard_range` 供协调器复用。
+- `cli.py` 直接从 `coordinator` 导入。
+
+刻意保留：
+
+- `build` 中逐分片构造一次性 Trie 仅用于校验（规范化、唯一、正频次）。这是离线每周操作，替换为单独的校验函数需要复制 Trie 的规则；现有测试还把 `search_autocomplete.trie.Trie` 当作“锁外离线构造”的观测点。只补充了注释。
+- `service`/`store` 继续在调用时经模块属性访问 `search_autocomplete.trie.Trie`，以及 `_get`、`_reader`、`_read_reply` 等内部名，因为测试会替换它们。
+- 协调器的两代快照 LRU 不与 Autocomplete 的分段合并加载缓存合并：两者的锁语义不同，合并后反而更复杂。
+- 协调器继续用 `type(x) is int` 做严格的线路级检查，不改成 isinstance 版本，以免放宽输入。
+
+验证：重构前后严格回归均为 **188 passed**（6.4–7.1 秒，`-W error`）；`examples/basic.py` 和 `examples/network_demo.py` 实际运行结果与此前一致。`src` 共 1448 → 1514 行：新增两个模块带来文档字符串和导入，最大文件 `http.py` 从 449 行降到 150 行，`store.py` 从 420 行降到 419 行，重复片段已移除。
+
 ## 2026-11-02复审
 
 已阅读原书并核对Sonic和RediSearch固定提交，使用CodeGraph检查采集、构建和HTTP服务。既有Trie排序、过滤补位和分片实现通过独立随机对照，无需另写索引。

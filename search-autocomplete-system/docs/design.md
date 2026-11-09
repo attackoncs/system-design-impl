@@ -79,8 +79,9 @@ during cold builds. Cache capacities are counts, not strict byte/RSS limits.
 
 ## Shards and replicas
 
-Collector, SnapshotWorker and coordinator timeout configuration reuse the existing
-finite-number predicate. Very large integers fail as ValueError rather than leaking
+Collector, Store, SnapshotWorker, Autocomplete and coordinator configuration share
+the predicates in `validation.py` (finite numbers, bounded integers, event IDs,
+shard counts). Very large integers fail as ValueError rather than leaking
 an OverflowError during conversion to a floating-point number.
 
 Sort queries by text and partition into approximately equal query-count ranges.
@@ -113,7 +114,13 @@ would hide new removal rules; generation-pinned URLs alone do not solve that iss
 
 ## Layout and operating limits
 
-`src/search_autocomplete/`: collection, worker, trie, store, service, HTTP and CLI.
+`src/search_autocomplete/`: one responsibility per module. `trie.py` immutable
+top-five trie and ranking; `store.py` SQLite events, filters, aggregations and
+atomic publication; `collection.py` stable sampling; `worker.py` periodic builds;
+`service.py` local versioned serving, LRU caches and shard routing;
+`coordinator.py` replica fan-out, failover and reply validation; `http.py` bounded
+HTTP server (re-exports `Coordinator`); `validation.py` shared argument checks;
+`cli.py` command entry points.
 `examples/`: local batch/query and multi-process network demos.
 `tests/`: deterministic correctness and actual HTTP failover tests.
 `tools/benchmark.py`: configurable local latency measurement.

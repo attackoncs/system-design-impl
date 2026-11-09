@@ -39,19 +39,19 @@ flowchart TB
 
 | 顺序 | 源码入口 | 输入→输出 | 重点 |
 |---|---|---|---|
-| 1 | [Store.record](../src/search_autocomplete/store.py#L158) | 事件ID、词、时间→接受结果 | 规范化、去重与内容冲突 |
-| 2 | [Store.aggregate](../src/search_autocomplete/store.py#L245) | 时间窗口→频次统计 | 事件时间和聚合边界 |
-| 3 | [Store.build](../src/search_autocomplete/store.py#L316) | 统计与分片配置→发布快照 | 慢构建与短发布事务分开 |
-| 4 | [SnapshotWorker.run_once](../src/search_autocomplete/worker.py#L54) | 当前时间／窗口→一轮构建 | 后台推进与过滤清理 |
-| 5 | [Autocomplete.suggest](../src/search_autocomplete/service.py#L82) | prefix及可选版本→候选元组 | 固定一致视图，不读取半成品 |
+| 1 | [Store.record](../src/search_autocomplete/store.py#L180) | 事件ID、词、时间→接受结果 | 规范化、去重与内容冲突 |
+| 2 | [Store.aggregate](../src/search_autocomplete/store.py#L258) | 时间窗口→频次统计 | 事件时间和聚合边界 |
+| 3 | [Store.build](../src/search_autocomplete/store.py#L324) | 统计与分片配置→发布快照 | 慢构建与短发布事务分开 |
+| 4 | [SnapshotWorker.run_once](../src/search_autocomplete/worker.py#L49) | 当前时间／窗口→一轮构建 | 后台推进与过滤清理 |
+| 5 | [Autocomplete.suggest](../src/search_autocomplete/service.py#L103) | prefix及可选版本→候选元组 | 固定一致视图，不读取半成品 |
 | 6 | [Trie.suggest](../src/search_autocomplete/trie.py#L143) | 规范化前缀→节点候选 | 前缀定位和缓存候选的收益 |
-| 7 | [Coordinator._read_reply](../src/search_autocomplete/http.py#L161) | 副本HTTP响应→候选数据 | 传输完整后才能解析，再校验版本与排名 |
+| 7 | [Coordinator._read_reply](../src/search_autocomplete/coordinator.py#L192) | 副本HTTP响应→候选数据 | 传输完整后才能解析，再校验版本与排名 |
 
 先跑“记录两词→build→suggest”这条路，再读HTTP协调器如何散发到多个副本。后者不能替代本地版本一致性。
 
 ## 微观一：固定版本后再查Trie
 
-[service.py:99](../src/search_autocomplete/service.py#L99)
+[service.py:120](../src/search_autocomplete/service.py#L120)
 
 ```python
 prefix = search_autocomplete.trie.normalize(prefix, empty=True)
@@ -61,17 +61,17 @@ for value, label in (
     (shard, "shard"),
 ):
     if value is not None:
-        _identifier(value, label)
+        require_integer(value, 0, message=f"invalid {label}")
 active, actual_revision, blocked = self.store.view()
 version = active if version is None else version
 if version == 0:
     raise search_autocomplete.store.Unavailable(
         "no snapshot has been published"
     )
-if revision is not None and revision != actual_revision:
-    raise search_autocomplete.store.Unavailable(
-        "filter revision changed; retry"
-    )
+if revision is not None:
+    _require_revision(revision, actual_revision)
+key = (version, actual_revision, shard, prefix)
+result = self._get(self.cache, key)
 ```
 
 这里的变量不是重复的版本号：
@@ -80,7 +80,7 @@ if revision is not None and revision != actual_revision:
 - `actual_revision`与`blocked`描述当前屏蔽规则。
 - 显式提供的版本和revision需要校验，不能因为缓存温热就省略身份检查。
 
-接着沿 [Autocomplete._check_revision](../src/search_autocomplete/service.py#L76) 阅读查询末尾的栅栏。查询期间过滤规则可能变化，前面检查过一次并不能保证返回时还有效。
+接着沿 [Autocomplete._check_revision](../src/search_autocomplete/service.py#L80) 阅读查询末尾的栅栏。查询期间过滤规则可能变化，前面检查过一次并不能保证返回时还有效。
 
 ```mermaid
 sequenceDiagram
@@ -112,17 +112,17 @@ sequenceDiagram
 
 ## 微观三：能解析JSON还不够
 
-[http.py:221](../src/search_autocomplete/http.py#L221)
+[coordinator.py:102](../src/search_autocomplete/coordinator.py#L102)
 
 ```python
 if response.length not in (None, 0):
     # read1() permits early EOF even when Content-Length remains.
     # A parseable JSON prefix does not make that response complete.
     raise http.client.IncompleteRead(bytes(raw), response.length)
-return json.loads(raw)
+return raw
 ```
 
-分段读取使用read1以便遵守期限，但它允许响应在Content-Length尚有剩余时提前结束。如果收到的前半段恰好是合法JSON，单纯json.loads不会发现传输已经截断。这里先确认声明的长度已读完，再接受数据；失败沿 [Coordinator._query](../src/search_autocomplete/http.py#L233) 切换下一副本。未声明长度、按连接关闭分隔的合法响应仍被支持。
+分段读取使用read1以便遵守期限，但它允许响应在Content-Length尚有剩余时提前结束。如果收到的前半段恰好是合法JSON，单纯json.loads不会发现传输已经截断。这里先确认声明的长度已读完，再接受数据；失败沿 [Coordinator._query](../src/search_autocomplete/coordinator.py#L242) 切换下一副本。未声明长度、按连接关闭分隔的合法响应仍被支持。
 
 ```mermaid
 sequenceDiagram
@@ -140,7 +140,7 @@ sequenceDiagram
   C-->>U: 合并后的Top 5
 ```
 
-HTTP完整性检查不替代版本栅栏，也不让慢任务提前释放并发槽位。输入校验则复用 [_finite_number](../src/search_autocomplete/store.py#L20)；采集、Worker和协调器不会对同一种超大整数暴露不同的异常类型。
+HTTP完整性检查不替代版本栅栏，也不让慢任务提前释放并发槽位。输入校验则复用 [finite_number](../src/search_autocomplete/validation.py#L6)；采集、Worker和协调器不会对同一种超大整数暴露不同的异常类型。
 
 ## 并发失败：较早开始的构建较晚结束
 
