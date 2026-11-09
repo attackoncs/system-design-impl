@@ -27,7 +27,7 @@ Updated against source and execution on 2026-11-05. See [requirements](requireme
 - [ ] Membership, message broker, leases and versioned safe handoff control plane.
 - [ ] Replication/sharding, five-year retention cleanup, capacity planning and geographical placement.
 - [ ] Dynamic rendering, anti-spam models and PageRank/probabilistic scheduling.
-- [ ] Full RFC robots agent-group merging and HTTP failure policies when required; compatibility behavior is explicitly retained.
+- [x] 2026-11-09: RFC 9309 robots semantics: merged same-agent groups, case-insensitive exact product-token match with `*` fallback, 2xx/3xx(5 hops)/4xx/5xx status policies, 500 KiB parse limit, cache TTL capped at 24h, last good copy reused while unreachable. Compatibility retained by default only for network failures (`robots_unreachable_policy="allow"`; `"disallow"` is the RFC policy).
 
 These limits do not demonstrate the book's billion-pages/month capacity.
 

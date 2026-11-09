@@ -1,5 +1,10 @@
 # 第10章：调度基准与真实HTTP验证
 
+## 2026-11-09 持久frontier派发
+
+Linux/Python3.14一次性脚本：20万pending任务/2000主机，`SQLiteCrawlState.get()`由ROW_NUMBER全量排名的 **427ms/次** 降至递归CTE+`host_jobs`索引的 **11.3ms/次**；新旧实现对相同get/finish/retry序列返回结果完全一致。pytest `-W error` 修改前后均259通过。
+
+
 ## 2026-11-05 本轮复验
 
 Windows/Python3.13.9，修改前 **256项/13.04秒**，修复后 **259项/14.05秒，-W error**。新增[3个连续取消场景](../tests/test_cancellation_review.py)使用真实SQLite和受控事件，分别阻塞open/finish/close；旧实现均提前返回，修复后排空线程与子任务、释放文件锁、传播取消并允许实例复用。没有通过增加重试限额或忽略错误来规避失败。

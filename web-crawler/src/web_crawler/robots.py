@@ -1,24 +1,51 @@
-"""Robots.txt compliance checker with per-host caching."""
+"""Robots.txt (RFC 9309) compliance checker with per-origin caching."""
 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import hashlib
+import math
 import re
 import time
 import urllib.parse
-import urllib.robotparser
 from typing import Optional
 
 import web_crawler.fetcher
 from web_crawler import exceptions
 
+MAX_ROBOTS_BYTES = 500 * 1024  # RFC 9309 2.5: parse at least 500 KiB
+MAX_ROBOTS_REDIRECTS = 5  # RFC 9309 2.3.1.2: follow at least five redirects
+MAX_ROBOTS_CACHE_TTL = 24 * 3600.0  # RFC 9309 2.4: reuse at most 24 hours
+UNREACHABLE_RETRY_SECONDS = 60.0  # retry interval after 5xx/network failure
+
+
+@dataclasses.dataclass(frozen=True)
+class _Rules:
+    """Rules of the group(s) selected for this crawler's product token."""
+
+    rules: tuple = ()  # (allow, canonical pattern, anchored, specificity)
+    crawl_delay: float = 0.0
+    disallow_all: bool = False
+
+
+_ALLOW_ALL = _Rules()
+_DISALLOW_ALL = _Rules(disallow_all=True)
+_SERVER_ERROR = object()
+_NETWORK_ERROR = object()
+
 
 class RobotsChecker:
-    """Checks robots.txt compliance with per-host caching.
+    """Checks robots.txt compliance with per-origin caching (RFC 9309).
 
-    Fetches and parses robots.txt for each host on first access, caches the
-    result for the configured TTL period.
+    Groups naming the crawler's product token (case-insensitive) are merged;
+    the ``*`` groups are merged and used only when no specific group matches.
+    2xx bodies are parsed (first 500 KiB), up to five redirects are followed,
+    3xx without a target, more than five redirects and 4xx mean "no
+    restrictions", and 5xx means complete disallow. Network failures follow
+    ``unreachable_policy``: ``"allow"`` keeps the documented compatibility
+    behavior, ``"disallow"`` is the RFC 9309 policy. While unreachable, a
+    previously downloaded result keeps being used; failures retry sooner.
     """
 
     def __init__(
@@ -26,50 +53,30 @@ class RobotsChecker:
         fetcher: web_crawler.fetcher.Fetcher,
         user_agent: str = "WebCrawler/1.0",
         cache_ttl: float = 3600.0,
+        unreachable_policy: str = "allow",
     ) -> None:
+        if unreachable_policy not in ("allow", "disallow"):
+            raise ValueError("unreachable_policy must be 'allow' or 'disallow'")
         self._locks = [asyncio.Lock() for _ in range(64)]
         self._fetcher = fetcher
         self._user_agent = user_agent
-        self._cache_ttl = cache_ttl
-        # host -> (RobotFileParser or None, timestamp)
-        self._cache: dict[
-            str, tuple[Optional[urllib.robotparser.RobotFileParser], float]
-        ] = {}
+        self._token = _product_token(user_agent)
+        self._cache_ttl = min(cache_ttl, MAX_ROBOTS_CACHE_TTL)
+        self._unreachable_policy = unreachable_policy
+        # origin -> (rules, expires_at, reusable while the origin is unreachable)
+        self._cache: dict[str, tuple[_Rules, float, bool]] = {}
 
     async def is_allowed(self, url: str) -> bool:
-        """Check if a URL is allowed by robots.txt.
-
-        Args:
-            url: The URL to check.
-
-        Returns:
-            True if allowed, False if disallowed.
-        """
+        """Return True if robots.txt allows this crawler to fetch ``url``."""
         parsed = urllib.parse.urlparse(url)
-        host = parsed.netloc.lower()
-        robots_url = f"{parsed.scheme}://{host}/robots.txt"
-
-        origin = f"{parsed.scheme}://{host}"
+        origin = f"{parsed.scheme}://{parsed.netloc.lower()}"
         index = int.from_bytes(hashlib.sha256(origin.encode()).digest()[:4], "big") % 64
         async with self._locks[index]:
-            parser = await self._get_parser(origin, robots_url)
-        if parser is None:
-            return True  # If robots.txt unavailable, allow all
-        return self._allows(parser, url)
+            rules = await self._get_rules(origin)
+        return self._allows(rules, url)
 
-    def _allows(self, parser, url: str) -> bool:
-        """Extend stdlib groups with wildcard/end-anchor and longest-rule matching.
-
-        The book includes rules such as /rss/people/*/reviews. stdlib's plain
-        prefix matching cannot enforce them. Allow wins equal-length matches.
-        Other group selection and failure policies retain stdlib semantics.
-        """
-        entry = next(
-            (entry for entry in parser.entries if entry.applies_to(self._user_agent)),
-            parser.default_entry,
-        )
-        if entry is None:
-            return True
+    def _allows(self, rules: _Rules, url: str) -> bool:
+        """Longest match wins; Allow wins equal-length matches (RFC 9309 2.2.2)."""
         # Parse before normalizing escapes: %23 belongs to the path, not a fragment.
         parsed = urllib.parse.urlparse(url)
         path = (
@@ -80,74 +87,116 @@ class RobotsChecker:
             )
             or "/"
         )
+        if path == "/robots.txt":
+            return True  # implicitly allowed (RFC 9309 2.2.2)
+        if rules.disallow_all:
+            return False
         best = (-1, True)
-        for rule in entry.rulelines:
-            # Undo only RobotFileParser's quoting, retaining original %xx escapes.
-            pattern = urllib.parse.unquote(rule.path)
-            anchored = pattern.endswith("$")
-            if anchored:
-                pattern = pattern[:-1]
-            pattern = "*".join(_canonical_path(part) for part in pattern.split("*"))
-            if _matches_rule(pattern, path, anchored):
-                best = max(best, (len(pattern.replace("*", "")), rule.allowance))
+        for allow, pattern, anchored, specificity in rules.rules:
+            if specificity >= best[0] and _matches_rule(pattern, path, anchored):
+                best = max(best, (specificity, allow))
         return best[1]
 
     def crawl_delay(self, url: str) -> float:
         parsed = urllib.parse.urlparse(url)
         key = f"{parsed.scheme}://{parsed.netloc.lower()}"
-        parser, _ = self._cache.get(key, (None, 0))
-        return float(parser.crawl_delay(self._user_agent) or 0) if parser else 0.0
+        cached = self._cache.get(key)
+        return cached[0].crawl_delay if cached else 0.0
 
-    async def _get_parser(
-        self, host: str, robots_url: str
-    ) -> Optional[urllib.robotparser.RobotFileParser]:
-        """Get or fetch the robots.txt parser for a host.
-
-        Checks the cache first. If the cached entry is still within TTL,
-        returns it directly. Otherwise fetches robots.txt, parses it,
-        and stores the result in the cache.
-
-        Args:
-            host: The host (netloc) to look up.
-            robots_url: The full URL to the robots.txt file.
-
-        Returns:
-            A RobotFileParser if robots.txt was successfully fetched and parsed,
-            or None if it could not be fetched (in which case all paths are
-            allowed).
-        """
+    async def _get_rules(self, origin: str) -> _Rules:
+        """Return cached rules, downloading robots.txt when absent or expired."""
         now = time.monotonic()
+        cached = self._cache.get(origin)
+        if cached is not None and now < cached[1]:
+            return cached[0]
+        result = await self._download(origin + "/robots.txt")
+        if isinstance(result, _Rules):
+            self._cache[origin] = (result, now + self._cache_ttl, True)
+            return result
+        if cached is not None and cached[2]:
+            # RFC 9309 2.4: a cached copy may outlive 24h while unreachable.
+            rules, reusable = cached[0], True
+        elif result is _NETWORK_ERROR and self._unreachable_policy == "allow":
+            rules, reusable = _ALLOW_ALL, False
+        else:
+            rules, reusable = _DISALLOW_ALL, False
+        retry = min(self._cache_ttl, UNREACHABLE_RETRY_SECONDS)
+        self._cache[origin] = (rules, now + retry, reusable)
+        return rules
 
-        # Check cache
-        if host in self._cache:
-            parser, cached_at = self._cache[host]
-            if now - cached_at < self._cache_ttl:
-                return parser
+    async def _download(self, url: str):
+        """Map the robots.txt response to rules or an unreachable marker."""
+        for _ in range(MAX_ROBOTS_REDIRECTS + 1):
+            try:
+                response = await self._fetcher.fetch(url, timeout=10.0)
+            except (exceptions.FetchError, OSError) as error:
+                status = getattr(error, "status_code", None)
+                if status is None:
+                    return _NETWORK_ERROR
+                return _ALLOW_ALL if 400 <= status < 500 else _SERVER_ERROR
+            status = response.status_code
+            location = next(
+                (v for k, v in response.headers.items() if k.lower() == "location"),
+                None,
+            )
+            if 300 <= status < 400 and location:
+                url = urllib.parse.urljoin(response.url or url, location)
+                continue
+            if 200 <= status < 300:
+                return _parse(response.body[:MAX_ROBOTS_BYTES], self._token)
+            # 3xx without a target and 4xx: robots.txt is unavailable.
+            return _ALLOW_ALL if 300 <= status < 500 else _SERVER_ERROR
+        return _ALLOW_ALL  # more than five redirects: treat as unavailable
 
-        # Fetch robots.txt
-        try:
-            response = await self._fetcher.fetch(robots_url, timeout=10.0)
-            parser = urllib.robotparser.RobotFileParser()
-            lines = response.body.decode("utf-8", errors="replace").splitlines()
-            for index, line in enumerate(lines):
-                key, separator, value = line.partition(":")
-                if separator and key.strip().lower() in ("allow", "disallow"):
-                    # Stdlib unquotes directives before storing them. Protect
-                    # literal escapes so %2A/%24 do not become rule operators.
-                    lines[index] = key + ":" + value.replace("%", "%25")
-            parser.parse(lines)
-            # RobotFileParser strips the request's product version. Normalize
-            # versioned directives too so their restrictions are not bypassed.
-            for entry in parser.entries:
-                entry.useragents = [
-                    agent.split("/", 1)[0] for agent in entry.useragents
-                ]
-            self._cache[host] = (parser, now)
-            return parser
-        except (exceptions.FetchError, OSError):
-            # If robots.txt cannot be fetched, allow all paths
-            self._cache[host] = (None, now)
-            return None
+
+def _product_token(user_agent: str) -> str:
+    """Lower-case product token: ``WebCrawler/1.0`` -> ``webcrawler``."""
+    return user_agent.split("/", 1)[0].strip().lower()
+
+
+def _parse(body: bytes, token: str) -> _Rules:
+    """Parse robots.txt and merge the groups that apply to ``token``."""
+    groups = []  # [agents, rules, delays]
+    current = None
+    in_rules = False
+    for raw in body.decode("utf-8-sig", errors="replace").splitlines():
+        key, separator, value = raw.split("#", 1)[0].partition(":")
+        if not separator:
+            continue
+        key, value = key.strip().lower(), value.strip()
+        if key == "user-agent":
+            # Consecutive user-agent lines share one group; a user-agent line
+            # after rules starts a new group. Blank lines do not end groups.
+            if current is None or in_rules:
+                current = [set(), [], []]
+                groups.append(current)
+                in_rules = False
+            current[0].add(_product_token(value))
+        elif current is None:
+            continue  # rules before any user-agent line belong to no group
+        elif key in ("allow", "disallow"):
+            in_rules = True
+            if value:  # an empty value is not a rule
+                current[1].append((key == "allow", value))
+        elif key == "crawl-delay":
+            in_rules = True
+            try:
+                delay = float(value)
+            except ValueError:
+                continue
+            if math.isfinite(delay) and delay >= 0:
+                current[2].append(delay)
+    selected = [group for group in groups if token in group[0]] or [
+        group for group in groups if "*" in group[0]
+    ]
+    rules = []
+    for allow, value in (rule for group in selected for rule in group[1]):
+        anchored = value.endswith("$")
+        pattern = value[:-1] if anchored else value
+        pattern = "*".join(_canonical_path(part) for part in pattern.split("*"))
+        rules.append((allow, pattern, anchored, len(pattern.replace("*", ""))))
+    delays = [delay for group in selected for delay in group[2]]
+    return _Rules(tuple(rules), max(delays, default=0.0))
 
 
 def _canonical_path(path: str) -> str:

@@ -1,5 +1,20 @@
 # 第 10 章实现核对
 
+## 2026-11-09 robots按RFC 9309补齐
+
+已有：origin缓存与miss合并、`*`/`$`、最长匹配且同长Allow优先、百分号转义规范化（保留`%2F`/`%23`/字面`%2A`/`%24`）。
+新增（`robots.py`以自带解析器替换urllib.robotparser）：同一产品标记的多个分组合并（2.2.1），产品标记大小写无关精确匹配（旧实现为子串匹配），仅在无专属分组时合并使用全部`*`分组（旧实现只取第一个`*`组），空行不再拆散分组；/robots.txt隐式允许；2xx仅解析前500 KiB（2.5）；3xx最多跟随5跳，超出或无Location视为不可用；任何4xx（含401/403）视为无限制；5xx视为全部禁止（2.3.1.3–2.3.1.4）；缓存TTL上限24小时，失败最多60秒后重试，期间沿用上次成功结果（2.4）。`FetchError`新增`status_code`，以区分HTTP错误与网络失败。
+刻意差异：网络失败（无状态码）默认仍放行，这是此前文档明确保留且有既有测试约束的兼容行为；新增`CrawlerConfig.robots_unreachable_policy="disallow"`即按RFC全部禁止。User-agent值中的`/版本`仍被去除；Crawl-delay（非RFC）取合并分组中的最大值。
+验证：/tmp一次性脚本覆盖分组合并、`*`回退、子串不匹配、404/403/503/HTTP 500/网络失败两种策略、5跳与6跳重定向、500 KiB截断、不可达时沿用缓存、24小时上限；既有套件`-W error` **259项通过**，未修改测试或基准。
+
+## 2026-11-09 持久调度查询效率
+
+问题：`SQLiteCrawlState.get()`用`ROW_NUMBER() OVER (PARTITION BY host ...)`对全部已到期pending行排序编号，再取`LIMIT window_size`，每次派发都是O(pending·log pending)；20万待抓取时每次get约0.43秒。
+修复：新增索引`host_jobs(state,host,priority)`（隐含rowid）；查询改为递归CTE按索引逐个跳到下一个pending主机（每主机一次seek），过滤活动主机与`hosts.next_ready`后，每主机用`ORDER BY priority,rowid LIMIT 1`取已到期队首，再按`priority,url`排序取窗口。代价降为O(主机数·log n)。语义不变：同一组主机队首、同样的礼貌/到期/优先级过滤和排序，领取仍在同一事务内置为inflight。旧库在open时`CREATE INDEX IF NOT EXISTS`自动补建。
+测量（Linux/Python3.14，/tmp一次性脚本，新旧代码在同一数据库副本上运行相同get/finish/retry序列）：20万任务/2000主机，每次get **427ms → 11.3ms**，返回序列完全一致；4000任务/150主机、window为1/3/128各3000步，序列亦完全一致。
+验证：`-W error`下修改前后均 **259项通过**。未新增测试。
+
+
 ## 2026-11-05 复核
 
 重新阅读原书2729–3176行及既有需求/设计/任务，并用CodeGraph核查调度、持久完成、内容认领和取消路径。2026-11-01已完成持久frontier、周期重爬、DNS与robots等实现；本轮保留其覆盖矩阵，不重复添加这些功能。

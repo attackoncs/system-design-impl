@@ -36,18 +36,18 @@ flowchart LR
 
 ## 六站源码阅读路线
 
-1. [Crawler.crawl](../src/web_crawler/crawler.py#L119)：批次入口，先看并发任务集合和max_pages的检查，知道一个批次何时结束。
-2. [Crawler._enqueue_url](../src/web_crawler/crawler.py#L350)：发现URL如何经过深度与过滤限制；持久模式先保存远端发现，再做后续路由移交。
-3. [SQLiteCrawlState.get](../src/web_crawler/state.py#L143)：从持久队列领取到期任务并保留主机；输出FrontierEntry给处理任务。
-4. [Crawler._process_entry](../src/web_crawler/crawler.py#L216)：robots、下载、重定向、HTML检查和发现链接集中在这里；先跟主页正常路径。
-5. [Crawler._claim_content](../src/web_crawler/crawler.py#L318)：跟child的重复内容分支，理解临时指纹拥有者与已提交指纹的区别。
-6. [SQLiteCrawlState.finish](../src/web_crawler/state.py#L217)：提交状态、内容和主机可用时间，最后回到 [Crawler._process_url](../src/web_crawler/crawler.py#L180) 的异常与取消补偿。
+1. [Crawler.crawl](../src/web_crawler/crawler.py#L120)：批次入口，先看并发任务集合和max_pages的检查，知道一个批次何时结束。
+2. [Crawler._enqueue_url](../src/web_crawler/crawler.py#L351)：发现URL如何经过深度与过滤限制；持久模式先保存远端发现，再做后续路由移交。
+3. [SQLiteCrawlState.get](../src/web_crawler/state.py#L145)：从持久队列领取到期任务并保留主机；输出FrontierEntry给处理任务。
+4. [Crawler._process_entry](../src/web_crawler/crawler.py#L217)：robots、下载、重定向、HTML检查和发现链接集中在这里；先跟主页正常路径。
+5. [Crawler._claim_content](../src/web_crawler/crawler.py#L319)：跟child的重复内容分支，理解临时指纹拥有者与已提交指纹的区别。
+6. [SQLiteCrawlState.finish](../src/web_crawler/state.py#L229)：提交状态、内容和主机可用时间，最后回到 [Crawler._process_url](../src/web_crawler/crawler.py#L181) 的异常与取消补偿。
 
 未设置state_path时，第三站改读 [URLFrontier.get](../src/web_crawler/frontier.py#L57)。其他业务管线相同，但恢复能力和队列数据位置不同。
 
 ## 微观一：并发容量在创建任务前就受限制
 
-[crawler.py:140](../src/web_crawler/crawler.py#L140)
+[crawler.py:141](../src/web_crawler/crawler.py#L141)
 
 ```python
 while not await self._queue_call("is_empty") or tasks:
@@ -95,7 +95,7 @@ def _schedule(self, host: str, now: float) -> None:
 
 ## 微观二：内容重复，发现过程仍要继续
 
-[crawler.py:282](../src/web_crawler/crawler.py#L282)
+[crawler.py:283](../src/web_crawler/crawler.py#L283)
 
 ```python
 fingerprint = self._content_seen.compute_fingerprint(response.body)
@@ -136,7 +136,7 @@ flowchart TD
 
 ## 失败与取消：还没确认的URL要能重新领取
 
-`_process_url` 的finally处理“尚未完成确认”情形。持久模式把领取的任务归还；`crawl` 取消并等待自己创建的任务，再关闭持久状态。[Crawler._io](../src/web_crawler/crawler.py#L108) 经[Crawler._drain](../src/web_crawler/crawler.py#L95)等待已经接受的同步数据库操作。每次取消都继续shield，直到工作完成再传播取消；子任务清理也使用同一规则。只在第一次取消时shield、随后直接await任务，第二次取消仍可能让数据库线程被遗弃。
+`_process_url` 的finally处理“尚未完成确认”情形。持久模式把领取的任务归还；`crawl` 取消并等待自己创建的任务，再关闭持久状态。[Crawler._io](../src/web_crawler/crawler.py#L109) 经[Crawler._drain](../src/web_crawler/crawler.py#L96)等待已经接受的同步数据库操作。每次取消都继续shield，直到工作完成再传播取消；子任务清理也使用同一规则。只在第一次取消时shield、随后直接await任务，第二次取消仍可能让数据库线程被遗弃。
 
 ```mermaid
 sequenceDiagram
@@ -166,7 +166,7 @@ sequenceDiagram
 - **max_concurrent=4能让同一主机同时抓4个URL吗？** 还受主机保留与礼貌间隔约束，不能只看全局并发上限。
 - **Hook异常是否代表网页没下载成功？** Hook按实现隔离错误；不能把业务内容处理Hook当成调度事务的一部分。
 - **只给URLSeen加锁能解决内容重复吗？** 不能，两个不同URL可能返回相同字节。
-- **robots中的`%2A`和`*`一样吗？** 前者是字面字符，后者是通配符。[RobotsChecker._allows](../src/web_crawler/robots.py#L60) 先解析URL再规范化路径，保留转义分隔符；空路径带查询也从`/`开始。回归入口是 [test_robots_preserves_encoded_delimiters_and_literal_metacharacters](../tests/test_open_source_review.py#L214)。
+- **robots中的`%2A`和`*`一样吗？** 前者是字面字符，后者是通配符。[RobotsChecker._allows](../src/web_crawler/robots.py#L78) 先解析URL再规范化路径，保留转义分隔符；空路径带查询也从`/`开始。回归入口是 [test_robots_preserves_encoded_delimiters_and_literal_metacharacters](../tests/test_open_source_review.py#L214)。
 
 ## 动手练习
 

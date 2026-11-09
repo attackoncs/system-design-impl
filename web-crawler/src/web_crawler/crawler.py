@@ -77,6 +77,7 @@ class Crawler:
             self._fetcher,
             user_agent=self._config.user_agent,
             cache_ttl=self._config.robots_cache_ttl,
+            unreachable_policy=self._config.robots_unreachable_policy,
         )
         self._parser = web_crawler.parser.ContentParser()
         self._link_extractor = web_crawler.parser.LinkExtractor()

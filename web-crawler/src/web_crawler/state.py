@@ -102,6 +102,8 @@ class SQLiteCrawlState:
                         fingerprint TEXT, unchanged INTEGER NOT NULL DEFAULT 0,
                         last_status TEXT, last_error TEXT);
                     CREATE INDEX IF NOT EXISTS ready_jobs ON jobs(state,due,priority);
+                    -- (state,host,priority,rowid): host walk + per-host head lookup.
+                    CREATE INDEX IF NOT EXISTS host_jobs ON jobs(state,host,priority);
                     CREATE TABLE IF NOT EXISTS fingerprints (hash TEXT PRIMARY KEY);
                     CREATE TABLE IF NOT EXISTS hosts (host TEXT PRIMARY KEY, next_ready REAL NOT NULL);
                     CREATE TABLE IF NOT EXISTS snapshots (
@@ -147,24 +149,34 @@ class SQLiteCrawlState:
         with self._db() as db:
             # One candidate per eligible host avoids a hot host hiding other hosts
             # beyond the bounded read window. SQLite keeps the full queue on disk.
+            # The recursive CTE walks distinct pending hosts through host_jobs
+            # (one index seek per host), then each host's head is a LIMIT 1
+            # seek, so a dispatch costs O(hosts·log n) instead of ranking every
+            # pending row.
             excluded = tuple(self._active)
             active_filter = (
                 ""
                 if not excluded
-                else " AND j.host NOT IN (" + ",".join("?" for _ in excluded) + ")"
+                else " AND r.host NOT IN (" + ",".join("?" for _ in excluded) + ")"
             )
             rows = db.execute(
                 """
-                SELECT url,host,priority,depth FROM (
-                    SELECT j.url,j.host,j.priority,j.depth,
-                           ROW_NUMBER() OVER (PARTITION BY j.host ORDER BY j.priority,j.rowid) AS rank
-                    FROM jobs j LEFT JOIN hosts h ON h.host=j.host
-                    WHERE j.state='pending' AND j.due<=? AND COALESCE(h.next_ready,0)<=?
+                WITH RECURSIVE r(host) AS (
+                    SELECT MIN(host) FROM jobs WHERE state='pending'
+                    UNION ALL
+                    SELECT (SELECT MIN(host) FROM jobs
+                            WHERE state='pending' AND host>r.host)
+                    FROM r WHERE r.host IS NOT NULL)
+                SELECT j.url,j.host,j.priority,j.depth
+                FROM r LEFT JOIN hosts h ON h.host=r.host
+                JOIN jobs j ON j.rowid=(
+                    SELECT rowid FROM jobs
+                    WHERE state='pending' AND host=r.host AND due<=?
+                    ORDER BY priority,rowid LIMIT 1)
+                WHERE COALESCE(h.next_ready,0)<=?
                 """
                 + active_filter
-                + """ )
-                WHERE rank=1 ORDER BY priority,url LIMIT ?
-            """,
+                + " ORDER BY j.priority,j.url LIMIT ?",
                 (now, now, *excluded, self.window_size),
             ).fetchall()
             for url, host, priority, depth in rows:

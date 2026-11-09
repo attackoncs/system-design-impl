@@ -20,7 +20,10 @@ class CrawlerConfig:
     per_host_delay: float = 1.0
     request_timeout: float = 30.0
     user_agent: str = "WebCrawler/1.0"
-    robots_cache_ttl: float = 3600.0
+    robots_cache_ttl: float = 3600.0  # capped at 24h (RFC 9309 2.4)
+    # robots.txt network failures: "allow" (compatibility default) or
+    # "disallow" (RFC 9309 2.3.1.4). HTTP 5xx always means complete disallow.
+    robots_unreachable_policy: str = "allow"
 
     # Filter configuration
     extension_blacklist: List[str] = dataclasses.field(
@@ -84,6 +87,8 @@ class CrawlerConfig:
                 or value <= 0
             ):
                 raise ValueError(f"{name} must be finite and positive")
+        if self.robots_unreachable_policy not in ("allow", "disallow"):
+            raise ValueError("robots_unreachable_policy must be 'allow' or 'disallow'")
         if self.recrawl_interval_seconds is not None:
             value = self.recrawl_interval_seconds
             if (

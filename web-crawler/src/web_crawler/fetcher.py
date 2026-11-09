@@ -341,7 +341,7 @@ class URLLibFetcher(Fetcher):
                     if 300 <= error.code < 400:
                         return self._read_response(error, url, control)
                     raise web_crawler.exceptions.FetchError(
-                        url, f"HTTP {error.code}: {error.reason}"
+                        url, f"HTTP {error.code}: {error.reason}", error.code
                     ) from error
             with contextlib.closing(response):
                 return self._read_response(response, url, control)

@@ -14,7 +14,7 @@ An asyncio-based Python web crawler library implementing the design from System 
 
 - **Async crawl loop** with configurable concurrency via asyncio.Semaphore
 - **URL Frontier** with priority front queues (HIGH/MEDIUM/LOW) and per-host politeness back queues
-- **Robots.txt checks** with origin caching, wildcard/end-anchor rules and longest-match precedence; stdlib group selection and the compatible network-error allow policy remain
+- **Robots.txt checks (RFC 9309)** with origin caching, merged same-agent groups (`*` only as fallback), wildcard/end-anchor rules, longest-match precedence, 4xx = no restrictions, 5xx = complete disallow, up to 5 redirects, 500 KiB parse limit and a 24h cache cap; network failures allow by default for compatibility (`robots_unreachable_policy="disallow"` for the RFC policy)
 - **Content deduplication** using SHA-256 fingerprinting
 - **Link extraction** with first-base-href resolution, per-link error isolation and normalization that preserves userinfo case
 - **Configurable URL filtering** — extension blacklist, domain whitelist/blacklist, max length, custom filters
@@ -173,7 +173,8 @@ CrawlerConfig(
     per_host_delay: float = 1.0,    # Seconds between requests to same host
     request_timeout: float = 30.0,  # HTTP request timeout
     user_agent: str = "WebCrawler/1.0",
-    robots_cache_ttl: float = 3600.0,
+    robots_cache_ttl: float = 3600.0,         # capped at 24h (RFC 9309)
+    robots_unreachable_policy: str = "allow",  # "disallow" = RFC on network failure
     extension_blacklist: list[str] = [...],  # File extensions to skip
     domain_whitelist: list[str] | None = None,
     domain_blacklist: list[str] | None = None,

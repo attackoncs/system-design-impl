@@ -14,11 +14,16 @@ class ConfigurationError(CrawlerError):
 
 
 class FetchError(CrawlerError):
-    """Raised when an HTTP fetch operation fails."""
+    """Raised when an HTTP fetch operation fails.
 
-    def __init__(self, url: str, reason: str) -> None:
+    ``status_code`` is set when the server answered with an HTTP error status
+    and is ``None`` for network failures (robots.txt treats them differently).
+    """
+
+    def __init__(self, url: str, reason: str, status_code=None) -> None:
         self.url = url
         self.reason = reason
+        self.status_code = status_code
         super().__init__(f"Failed to fetch '{url}': {reason}")
 
 
