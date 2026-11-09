@@ -23,6 +23,24 @@ MAX_BODY = 8 * 1024 * 1024
 MAX_REQUEST = 8 * 1024 * 1024
 
 
+
+class PeerRejected(HTTPError):
+    """Peer status error whose bounded body stays readable after close.
+
+    HTTPError is a tempfile wrapper that warns when collected unclosed, and
+    callers routinely drop failed peer errors. The placeholder file is closed
+    at construction; code, reason and headers remain usable and read() serves
+    the body from a plain BytesIO that needs no cleanup.
+    """
+
+    def __init__(self, url, code, headers, body):
+        super().__init__(url, code, "RPC peer rejected request", headers, None)
+        self.close()
+        self._body = BytesIO(bytes(body))
+
+    def read(self, size=-1):
+        return self._body.read(size)
+
 def interrupt_socket(active_socket):
     """Invalidate an owned descriptor, including outstanding makefile reads.
 
@@ -263,12 +281,8 @@ def request(
             if response.length not in (None, 0):
                 raise OSError("truncated RPC response")
             if not 200 <= response.status < 300:
-                raise HTTPError(
-                    url,
-                    response.status,
-                    "RPC peer rejected request",
-                    response.headers,
-                    BytesIO(bytes(result[: 1024 * 1024])),
+                raise PeerRejected(
+                    url, response.status, response.headers, result[: 1024 * 1024]
                 )
             if raw:
                 return bytes(result)
