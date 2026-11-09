@@ -60,11 +60,13 @@ class NetworkTests(unittest.TestCase):
             with self.assertRaises(HTTPError) as untrusted:
                 lab.api("/v1/scores", body, "read")
             self.assertEqual(untrusted.exception.code, 401)
+            untrusted.exception.close()
             with self.assertRaises(HTTPError) as points:
                 lab.api(
                     "/v1/scores", {**body, "match_id": "bad", "points": 999}, "game"
                 )
             self.assertEqual(points.exception.code, 400)
+            points.exception.close()
             self.assertTrue(
                 lab.api(
                     "/admin/reconcile", {"month": current_month(time.time())}, "admin"
@@ -87,6 +89,7 @@ class NetworkTests(unittest.TestCase):
             with self.assertRaises(HTTPError) as unavailable:
                 lab.api("/v1/scores/alice")
             self.assertEqual(unavailable.exception.code, 503)
+            unavailable.exception.close()
             lab.clients[1].command("REPLICAOF", "NO", "ONE")
             wait_for(lambda: lab.api("/v1/scores/alice")["rows"][0]["score"] == 1)
             lab.match("after", "alice")

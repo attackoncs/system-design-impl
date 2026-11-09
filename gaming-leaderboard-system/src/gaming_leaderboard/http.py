@@ -117,12 +117,15 @@ def server(role, config, store, host, port, *, concurrency=32, request_timeout=1
                             url + "/admin/rebuild", config["admin_token"], {}, **options
                         )
                     return {
-                        "projected": store.ready(store.journal.status()["heads"]),
+                        "projected": store.ready(store.journal.heads()),
                         "rebuild_requested": True,
                     }
                 if path == "/v1/scores" and method == "POST":
                     receipt = store.journal.ingest(body)
-                    projected = store.ready(store.journal.status()["heads"], timeout=1)
+                    # Receipts carry heads read in the ingest transaction; avoid
+                    # the full status scan unless a receipt lacks them.
+                    heads = receipt.get("heads") or store.journal.status()["heads"]
+                    projected = store.ready(heads, timeout=1)
                     return {
                         **receipt,
                         "projected": projected,

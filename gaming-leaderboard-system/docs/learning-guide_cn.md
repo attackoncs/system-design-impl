@@ -36,9 +36,9 @@ flowchart TB
 
 1. [Journal.ingest](../src/gaming_leaderboard/journal.py#L179)：看信任边界。输入是比赛结果，不是用户自报积分；先跟match身份，再跟赛季和注册时间。
 2. [Journal.emit](../src/gaming_leaderboard/journal.py#L54)：输入新的权威score，输出分片事件；注意和比赛受理处于同一事务。
-3. [Journal.feed](../src/gaming_leaderboard/journal.py#L253)：从分片偏移返回可验证的事件page，是恢复的源头。
-4. [Projection.poll_once](../src/gaming_leaderboard/projection.py#L154)与[Projection.apply](../src/gaming_leaderboard/projection.py#L141)：先找进度、身份和原子Lua更新，再研究主备读取。
-5. [Service.query](../src/gaming_leaderboard/service.py#L191)：看查询怎样取得赛季快照、等待投影并检查响应。
+3. [Journal.feed](../src/gaming_leaderboard/journal.py#L257)：从分片偏移返回可验证的事件page，是恢复的源头。
+4. [Projection.poll_once](../src/gaming_leaderboard/projection.py#L155)与[Projection.apply](../src/gaming_leaderboard/projection.py#L142)：先找进度、身份和原子Lua更新，再研究主备读取。
+5. [Service.query](../src/gaming_leaderboard/service.py#L202)：看查询怎样取得赛季快照、等待投影并检查响应。
 6. [top](../src/gaming_leaderboard/ranking.py#L31)和[ranks](../src/gaming_leaderboard/ranking.py#L72)：手算同分的rank与position，最后再看邻居查询。
 
 ## 微观一：比赛去重和积分更新在同一事务
@@ -107,8 +107,8 @@ Redis丢失时重建投影需要位置和epoch隔离。真实Lua与恢复行为�
 
 ## 微观三：跨分片查询如何读到同一个比赛前缀
 
-从[Service.query](../src/gaming_leaderboard/service.py#L191)进入
-[Service._snapshot](../src/gaming_leaderboard/service.py#L54)：先捕获赛季、各分片heads、
+从[Service.query](../src/gaming_leaderboard/service.py#L202)进入
+[Service._snapshot](../src/gaming_leaderboard/service.py#L55)：先捕获赛季、各分片heads、
 lineage与资料修订号。这个查询持有共享源读门；其他查询可以同时读取，源写入必须等待。
 若新月尚未初始化，先退出读门，再独占补齐零分成员，最后重新捕获快照，避免读锁升级。
 
@@ -128,9 +128,9 @@ flowchart TD
   I["内部feed不占公开操作容量"] -.-> W
 ```
 
-[Service._ready](../src/gaming_leaderboard/service.py#L139)等待进度；
-[Service.scatter](../src/gaming_leaderboard/service.py#L174)并行请求每个分片，
-[Service._envelope](../src/gaming_leaderboard/service.py#L103)在各阶段检查源身份、精确位置和epoch。
+[Service._ready](../src/gaming_leaderboard/service.py#L148)等待进度；
+[Service.scatter](../src/gaming_leaderboard/service.py#L185)并行请求每个分片，
+[Service._envelope](../src/gaming_leaderboard/service.py#L112)在各阶段检查源身份、精确位置和epoch。
 查询中途发生reset，不能把新旧Redis代混合成一个排名。
 [ServiceTests.test_epoch_change_between_rank_phases_fails_closed](../tests/test_service_reliability.py#L146)
 与[ServiceTests.test_future_projection_head_cannot_mix_with_source_snapshot](../tests/test_service_reliability.py#L160)

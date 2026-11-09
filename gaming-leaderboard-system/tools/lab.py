@@ -9,6 +9,7 @@ import socket
 import subprocess
 import sys
 import time
+from urllib.error import HTTPError
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,6 +32,8 @@ def wait_for(probe, timeout=20):
             if result:
                 return result
         except Exception as exc:
+            if isinstance(exc, HTTPError):
+                exc.close()  # HTTPError owns a response body; keep only the summary.
             last = exc
         time.sleep(0.05)
     raise AssertionError(f"condition not reached: {last}")

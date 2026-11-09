@@ -5,6 +5,7 @@ import json
 import threading
 import time
 import uuid
+from urllib.error import HTTPError
 
 from .common import Error, dumps, http_json, identifier, integer
 from .projection_contracts import batch_copy, query_copy
@@ -189,6 +190,8 @@ class Projection:
                 busy = self.poll_once(deadline=time.monotonic() + 5, cancel=stop)
                 stop.wait(0.005 if busy else 0.03)
             except Exception as exc:
+                if isinstance(exc, HTTPError):
+                    exc.close()
                 with self._state_lock:
                     self.state["error"] = str(exc)
                 stop.wait(0.1)

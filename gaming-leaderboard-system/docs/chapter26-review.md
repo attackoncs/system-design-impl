@@ -1,3 +1,15 @@
+# 第26章热路径效率复核 — 2026-11-09
+
+问题：`POST /v1/scores`在`journal.ingest()`之后再调用`journal.status()["heads"]`，
+`status()`会对matches全表`count(*)`；`/admin/rebuild`同样只为heads调用完整状态。
+
+修复：`http.py`写入路径直接使用回执中的`heads`——它与受理在同一SQLite写事务中读取，
+重复提交时为原回执的heads，二者都足以证明该比赛已投影；仅当回执缺少heads时才回退到
+`status()`。新增`Journal.heads()`只读heads表，供`/admin/rebuild`使用。200/202语义和响应形状不变。
+
+验证：`-W error -p no:asyncio`完整套件修前68通过/4失败，修后68通过/4失败，失败项相同
+（需要真实Redis：未设置`LB_REDIS_BINARY`）。未做额外计时。
+
 # Chapter 26 source and implementation review — 2026-11-05
 
 Read the local chapter (lines12814–13481), compared pinned WB-Games leaderboard

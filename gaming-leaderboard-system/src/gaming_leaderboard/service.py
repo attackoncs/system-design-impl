@@ -4,6 +4,7 @@ from concurrent.futures import TimeoutError as FutureTimeout, wait
 from contextlib import contextmanager, nullcontext
 import json
 import math
+import sys
 import time
 from urllib.error import HTTPError
 
@@ -93,6 +94,14 @@ class Service:
             # A local failure must not release snapshot ownership while accepted
             # RPC work is still using it. The real transport interrupts sockets.
             wait(futures)
+            # Close sibling RPC rejections nobody will read (HTTPError owns a
+            # body); the one propagating to the caller stays readable.
+            propagating = sys.exc_info()[1]
+            for future in futures:
+                if not future.cancelled():
+                    error = future.exception()
+                    if isinstance(error, HTTPError) and error is not propagating:
+                        error.close()
 
     def _heads(self, heads):
         count = len(self.config["projection_urls"])
@@ -149,7 +158,9 @@ class Service:
         while True:
             try:
                 return self._watermarks(heads, deadline, cancel)
-            except (Error, OSError, HTTPError):
+            except (Error, OSError, HTTPError) as exc:
+                if isinstance(exc, HTTPError):
+                    exc.close()
                 if cancel.is_set() or time.monotonic() >= deadline:
                     return None
                 # Poll with an interruptible wait; do not extend the total budget.

@@ -238,6 +238,10 @@ class Journal(Database):
                 before_commit()
             return receipt
 
+    def heads(self):
+        with self.transaction() as db:
+            return {str(r[0]): r[1] for r in db.execute("SELECT * FROM heads")}
+
     def status(self):
         with self.transaction() as db:
             return {

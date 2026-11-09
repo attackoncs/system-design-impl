@@ -1,3 +1,11 @@
+# Hot-path efficiency — 2026-11-09
+
+`POST /v1/scores` waits for projection using the heads recorded in the ingest
+receipt (same transaction) instead of a full `journal.status()` with
+`count(*)` over matches; `/admin/rebuild` uses the new `Journal.heads()`.
+Full suite with `-W error -p no:asyncio`: 68 passed / 4 failed before and after
+(the same real-Redis tests; no Redis binary configured).
+
 # Source and implementation review — 2026-11-05
 
 Python3.13.9, Windows11 build26100, actual Redis8.0.5 in WSL Ubuntu-26.04.
