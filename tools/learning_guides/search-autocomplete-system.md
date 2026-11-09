@@ -45,7 +45,7 @@ flowchart TB
 | 4 | {{symbol:src/search_autocomplete/worker.py:SnapshotWorker.run_once}} | 当前时间／窗口→一轮构建 | 后台推进与过滤清理 |
 | 5 | {{symbol:src/search_autocomplete/service.py:Autocomplete.suggest}} | prefix及可选版本→候选元组 | 固定一致视图，不读取半成品 |
 | 6 | {{symbol:src/search_autocomplete/trie.py:Trie.suggest}} | 规范化前缀→节点候选 | 前缀定位和缓存候选的收益 |
-| 7 | {{symbol:src/search_autocomplete/http.py:Coordinator._read_reply}} | 副本HTTP响应→候选数据 | 传输完整后才能解析，再校验版本与排名 |
+| 7 | {{symbol:src/search_autocomplete/coordinator.py:Coordinator._read_reply}} | 副本HTTP响应→候选数据 | 传输完整后才能解析，再校验版本与排名 |
 
 先跑“记录两词→build→suggest”这条路，再读HTTP协调器如何散发到多个副本。后者不能替代本地版本一致性。
 
@@ -91,9 +91,9 @@ sequenceDiagram
 
 ## 微观三：能解析JSON还不够
 
-{{excerpt:src/search_autocomplete/http.py:Coordinator._read_reply:60:5}}
+{{excerpt:src/search_autocomplete/coordinator.py:_read_body:18:5}}
 
-分段读取使用read1以便遵守期限，但它允许响应在Content-Length尚有剩余时提前结束。如果收到的前半段恰好是合法JSON，单纯json.loads不会发现传输已经截断。这里先确认声明的长度已读完，再接受数据；失败沿 {{symbol:src/search_autocomplete/http.py:Coordinator._query}} 切换下一副本。未声明长度、按连接关闭分隔的合法响应仍被支持。
+分段读取使用read1以便遵守期限，但它允许响应在Content-Length尚有剩余时提前结束。如果收到的前半段恰好是合法JSON，单纯json.loads不会发现传输已经截断。这里先确认声明的长度已读完，再接受数据；失败沿 {{symbol:src/search_autocomplete/coordinator.py:Coordinator._query}} 切换下一副本。未声明长度、按连接关闭分隔的合法响应仍被支持。
 
 ```mermaid
 sequenceDiagram
@@ -111,7 +111,7 @@ sequenceDiagram
   C-->>U: 合并后的Top 5
 ```
 
-HTTP完整性检查不替代版本栅栏，也不让慢任务提前释放并发槽位。输入校验则复用 {{symbol:src/search_autocomplete/store.py:_finite_number}}；采集、Worker和协调器不会对同一种超大整数暴露不同的异常类型。
+HTTP完整性检查不替代版本栅栏，也不让慢任务提前释放并发槽位。输入校验则复用 {{symbol:src/search_autocomplete/validation.py:finite_number}}；采集、Worker和协调器不会对同一种超大整数暴露不同的异常类型。
 
 ## 并发失败：较早开始的构建较晚结束
 

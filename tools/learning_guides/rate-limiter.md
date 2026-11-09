@@ -53,7 +53,7 @@ flowchart LR
 
 ## 微观二：令牌不足也要保存补充状态
 
-{{excerpt:src/rate_limiter/algorithms/token_bucket.py:_memory_token_bucket_script:39:18}}
+{{excerpt:src/rate_limiter/algorithms/token_bucket.py:_memory_token_bucket_script:23:18}}
 
 先算 `elapsed`，按时间补充并受capacity限制。足够1个就扣除；剩余小数会保存，返回给调用方的 `remaining` 则取整数。继续读函数后半部：拒绝时也保存当前令牌和时间，再用 `(1-tokens)/refill_rate` 得到等待时间，避免丢失部分补充。
 

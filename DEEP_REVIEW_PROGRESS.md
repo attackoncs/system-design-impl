@@ -1,5 +1,48 @@
 # 逐项目深入审查进度
 
+## 2026-11-09 效率复审与全仓回归
+
+本轮按原书核对后，针对**随历史/数据量增长的热路径成本**逐章排查并修复（每项先读代码与调用方确认，再用HEAD副本对照测量）：
+
+| 章 | 问题 → 修复 | 实测（旧→新） |
+|---|---|---|
+| 07 键值存储 | 启动重建Merkle索引O(N²/B) → `bulk_load`每桶排序/哈希一次 | 20万键 18.05秒→0.58秒 |
+| 10 网页爬虫 | 每次`get()`对全部待抓取行窗口排序 → 按主机索引取队首 | 20万任务 427→11.3毫秒/次 |
+| 11 通知系统 | 每次发送扫描去重窗口全部条目 → 从最旧端过期 | 5万条 1124.7→0.4微秒/次 |
+| 12 新闻动态 | 内存存储每页排序作者全部历史 → 有序列表二分 | 2万帖翻完 468→36.8毫秒 |
+| 13 聊天 | 新成员历史逐条探测入群前消息 → 记录入群位置 | SQLite 10万 约25→0.05毫秒 |
+| 15 视频 | 认领任务OFFSET分页 → 键集分页 | 2万阻塞任务 6,798→107毫秒 |
+| 16 文件同步 | 监视器每秒重读全部文件；配额每次求和全部修订 → stat快检、维护used计数 | 空闲周期395→25毫秒；配额16.5→0.017毫秒 |
+| 17 附近商家 | 每次写入无索引清理replay → `replay(created)`索引 | 10万行 7.4→0.003毫秒 |
+| 20 消息队列 | 每次`/sync`全量重扫日志 → 仅截断 | 2万条 361→0.7毫秒/批 |
+| 21/22/24/26 | 热路径调用含COUNT(*)的完整status → 只读水位/检查点/heads | 例：指标告警评估23.5→1.26毫秒 |
+| 25 对象存储 | 每次启动重哈希整个pack → 持久水位只扫尾部 | 2万写入 237→2.3毫秒 |
+| 28 数字钱包 | 快照恢复仍全量重放×2、重放平方级、日志同步全量 → 快照＋尾部、原地重放、增量校验 | 3000事件重启 21.7秒→22毫秒 |
+| 29 证券交易所 | 启动三遍平方级重放 → 单次线性遍历 | 1000命令重启 8.3秒→约0.3秒 |
+
+全仓回归中修复的跨章问题：Python 3.14下未关闭的`HTTPError`（临时文件包装）在GC时告警，`-W error`使测试失败——在13个项目的生产传输代码中构造即关闭或在丢弃处关闭（保留可读body）；Python 3.14的`json`不再对4000层嵌套抛`RecursionError`，酒店/对象存储改为显式深度上限64；KV Merkle协议测试与后台反熵首轮竞态、对象存储实验端口抢占、邮件丢ACK用例等待短于90秒租约等测试/工具时序问题；限流器测试仅忽略Starlette≥1.10的`httpx2`弃用告警。
+
+验证（WSL2/Python 3.14，逐项目串行，`-W error`）：27个项目中25个全部通过，全仓共4,058项通过（支付与限流器在修复后单独重跑：48项、265项）。其余2个为环境缺失而非代码失败：游戏排行榜4项需真实`redis-server`（`LB_REDIS_BINARY`），视频2项真实FFmpeg用例因`imageio-ffmpeg`静态构建在HLS/HTTP读取时段错误（-11），需系统FFmpeg。各章细节见对应`docs/chapterNN-review.md`的2026-11-09小节。
+
+### 2026-11-09 第二轮：补齐各章可落地的未完成任务（只改生产代码）
+
+| 章 | 完成的任务 | 要点 |
+|---|---|---|
+| 07 键值存储 | SSTable不再整文件驻留、流式压缩 | 稀疏索引＋字节上限LRU块缓存；k路归并；磁盘格式不变；压缩进程峰值611→49 MiB |
+| 08 唯一ID | 持久重启高水位 | 可选高水位文件，每窗口fsync一次；重启前须越过上限，防回拨重复 |
+| 09 短链接 | 点击明细保留 | 精确计数＋每链接有界deque（默认1000条/30天） |
+| 10 网页爬虫 | RFC 9309 robots | 同名组合并、`*`回退、4xx放行/5xx禁止、500 KiB/24小时；网络失败默认放行（可配置disallow） |
+| 16 文件同步 | 事件保留与重新快照 | 按空间限龄/限量增量清理；游标落后时返回`resnapshot`，客户端按冲突规则对齐 |
+| 19 地图 | 字节缓存预算 | 瓦片32 MiB、路由邻接16 MiB，超大值不缓存，`/health`暴露统计 |
+| 20 消息队列 | 分块增量追赶 | 从副本自身已校验位置分块`/sync`；落后2万条3轮追平（原先无法追平） |
+| 21 监控告警 | 回执/告警元数据GC | 索引范围删除、每轮有界；不删待发送/租约中投递及活动告警 |
+| 22 广告点击 | 去重/状态GC | 默认7天去重窗口、10万位置重放窗口；窗口外重复计入`expired`不重复计数（行为变化，已记录） |
+| 23 酒店 | 回执GC与隐私脱敏 | 默认关闭；未知支付/待退款永不清理；过期回执重试返回409 |
+| 25 对象存储 | pack轮转 | 默认256 MiB封存只读、活动pack尾部恢复、压缩仅处理已封存pack；崩溃顺序已逐步验证 |
+| 28 数字钱包 | 按行投影 | 写入O(1)；3000笔写入17.9→1.52秒 |
+
+共识/选主、TLS、真实供应商、CDN、跨机房等仍为各章记录的边界。除钱包一处直接篡改已删除内部表的测试行外，本轮未修改测试与基准代码。
+
 ## 当前快照（2026-11-06）
 
 根README所列 **27个独立子项目均已有按原书、开源实现与CodeGraph核对的复审记录**。第2、3章已补齐统一流程；此前将第7章列为“进行中”、第24–29章列为“待审”的表格属于下方历史快照，不能继续作为当前待办。第1、4、30章为阅读/学习章节，不计入27项。
@@ -41,7 +84,7 @@
 | 25 | 类S3对象存储 | 138项通过 | [章节](object-storage-system/docs/chapter25-review.md) · [对照](object-storage-system/docs/open-source-review_cn.md) · [报告](object-storage-system/benchmarks/results.md) |
 | 26 | 游戏排行榜 | 72项通过，含真实Redis验证 | [章节](gaming-leaderboard-system/docs/chapter26-review.md) · [对照](gaming-leaderboard-system/docs/open-source-review_cn.md) · [报告](gaming-leaderboard-system/benchmarks/results.md) |
 | 27 | 支付系统 | 48项通过；全部为模拟资金 | [章节](payment-system/docs/chapter27-review.md) · [对照](payment-system/docs/open-source-review_cn.md) · [报告](payment-system/benchmarks/REPORT.md) |
-| 28 | 数字钱包 | 59项通过；Raft/账户事件副本尚未实现 | [章节](digital-wallet-system/docs/chapter28-review.md) · [对照](digital-wallet-system/docs/open-source-review_cn.md) · [报告](digital-wallet-system/benchmarks/REPORT.md) |
+| 28 | 数字钱包 | 2026-11-09：快照＋尾部恢复、线性重放、增量日志同步，70项通过（WSL）；Raft/账户事件副本尚未实现 | [章节](digital-wallet-system/docs/chapter28-review.md) · [对照](digital-wallet-system/docs/open-source-review_cn.md) · [报告](digital-wallet-system/benchmarks/REPORT.md) |
 | 29 | 证券交易所 | 64项通过；定序器HA、mmap/FIX等尚未实现 | [章节](stock-exchange-system/docs/chapter29-review.md) · [对照](stock-exchange-system/docs/open-source-review_cn.md) · [报告](stock-exchange-system/benchmarks/REPORT.md) |
 
 ## 历史进度与实施记录（保留当时表述）

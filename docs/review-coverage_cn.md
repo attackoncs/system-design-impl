@@ -4,6 +4,10 @@
 
 本次先核对既有证据，不将“有README”“测试通过”或“有同类GitHub仓库”单独当作完成标准。每项同时检查原书覆盖说明、实际开源文件/函数的对照、CodeGraph调用链记录、具体修复或不改代码的理由、测试/示例结果，以及双语文档和未实现边界。
 
+## 2026-11-09补充
+
+本日对16个子项目做了热路径效率修复，并在Python 3.14下以`-W error`串行重跑全部27个项目：25个全部通过，共4,058项；排行榜（缺`redis-server`）与视频（随包FFmpeg段错误）各有真实服务用例受环境所限。逐项问题、实测与跨章修复见[总进度](../DEEP_REVIEW_PROGRESS.md)。
+
 ## 清点结论
 
 - **初次清点时25个项目已有上述复审记录**，无需因为文档日期较早就重复改写实现。本表链接指向已有证据，本次没有重新运行这25个项目的全部测试。
@@ -40,7 +44,7 @@
 | 25 | 类S3对象存储 | [章节](../object-storage-system/docs/chapter25-review.md) · [源码对照](../object-storage-system/docs/open-source-review_cn.md) · [验证](../object-storage-system/benchmarks/results.md) | 已见完整复审记录 | 当前调用链及生产缺口见章节 |
 | 26 | 游戏排行榜 | [章节](../gaming-leaderboard-system/docs/chapter26-review.md) · [源码对照](../gaming-leaderboard-system/docs/open-source-review_cn.md) · [验证](../gaming-leaderboard-system/benchmarks/results.md) | 已见完整复审记录 | 已有真实Redis记录；生产规模仍未证明 |
 | 27 | 支付系统 | [章节](../payment-system/docs/chapter27-review.md) · [源码对照](../payment-system/docs/open-source-review_cn.md) · [验证](../payment-system/benchmarks/REPORT.md) | 已见完整复审记录 | 合成资金；供应商/银行原子性与生产边界见章节 |
-| 28 | 数字钱包 | [章节](../digital-wallet-system/docs/chapter28-review.md) · [源码对照](../digital-wallet-system/docs/open-source-review_cn.md) · [验证](../digital-wallet-system/benchmarks/REPORT.md) | 已见完整复审记录 | 账户事件副本、Raft/自动选主等仍未实现 |
+| 28 | 数字钱包 | [章节](../digital-wallet-system/docs/chapter28-review.md) · [源码对照](../digital-wallet-system/docs/open-source-review_cn.md) · [验证](../digital-wallet-system/benchmarks/REPORT.md) | 已见完整复审记录；2026-11-09补快照恢复 | 重启/快照/历史查询只重放尾部，完整校验移至审计；账户事件副本、Raft/自动选主、日志裁剪等仍未实现 |
 | 29 | 证券交易所 | [章节](../stock-exchange-system/docs/chapter29-review.md) · [源码对照](../stock-exchange-system/docs/open-source-review_cn.md) · [验证](../stock-exchange-system/benchmarks/REPORT.md) | 已见完整复审记录 | 定序器HA、mmap/FIX及生产清算等仍未实现 |
 
 ## 证据使用方式

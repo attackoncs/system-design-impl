@@ -41,7 +41,7 @@ flowchart LR
 
 ## 微观一：为什么查的是“右边第一个”
 
-{{excerpt:src/consistent_hashing/ring.py:RingSnapshot._start:0:6}}
+{{excerpt:src/consistent_hashing/ring.py:RingSnapshot._start:0:5}}
 
 空环先报错，避免对0取模。`bisect_right` 返回严格大于键位置的插入点：20得到1，30若存在也跳过30。取模使超过最大点的键绕回下标0。后续 {{symbol:src/consistent_hashing/ring.py:RingSnapshot.get_node}} 只从该条entry取物理节点名。
 

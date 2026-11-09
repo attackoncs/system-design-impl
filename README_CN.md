@@ -39,7 +39,7 @@
 | 25 | [类S3对象存储](./object-storage-system/) | ✅ 核心链路已核对 | MinIO/SeaweedFS源码对照；上游错误响应边界、持久发布恢复与GC/聚合文件栅栏；138项测试；生产边界见章节记录 |
 | 26 | [游戏排行榜](./gaming-leaderboard-system/) | ✅ 核心链路已核对 | WB-Games/Redis8.0.5源码对照；共享排名快照、分片/代际屏障、重放与资料缓存；72项测试含真实Redis；生产边界已记录 |
 | 27 | [支付系统](./payment-system/) | ✅ 核心链路已核对 | Hyperswitch/TigerBeetle源码对照；可信checkout、账本/供应商身份、累计重试预算及对账租约栅栏；48项测试；全部模拟资金 |
-| 28 | [数字钱包](./digital-wallet-system/) | ✅ 核心已审查 | Formance/Seata源码对照；TCC/重放/日志多数派与有界等待；修复分片/账户审计身份、累计余额边界；59项测试；Raft/账户副本待实现 |
+| 28 | [数字钱包](./digital-wallet-system/) | ✅ 核心已审查 | Formance/Seata源码对照；TCC/重放/日志多数派与有界等待；修复分片/账户审计身份、累计余额边界；快照＋尾部恢复（3000事件重启21.7秒→22毫秒）、线性重放与增量日志同步；70项测试；Raft/账户副本待实现 |
 | 29 | [证券交易系统](./stock-exchange-system/) | ✅ 核心已审查 | Exchange Core/CoinTossX源码对照；类型敏感重放/提升、坏投影阻断、行情身份与终态保护；64项测试；定序器HA/mmap待实现 |
 | 30 | [持续学习](./docs/chapter30-learning-continues_cn.md) | ✅ 阅读导航 | 收尾章节无新增业务服务；核实GitHub入口，补充宏观图→调用链→故障实验的学习路线 |
 
