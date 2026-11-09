@@ -112,7 +112,9 @@ class NetworkTests(unittest.TestCase):
                 "admin",
             )
             lab.spawn("worker-0")
-            wait_for(lab.settled)
+            # The kills above may land inside an in-flight attempt, stranding its
+            # lease (30 s send, 90 s receive) until expiry; allow for that.
+            wait_for(lab.settled, timeout=120)
             self.assertEqual(
                 len(lab.api("/v1/messages", user=lab.recipient)["messages"]), 1
             )

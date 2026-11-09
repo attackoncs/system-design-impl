@@ -84,7 +84,8 @@ def replicate(config, store, stop, state):
     url = config["primary_urls"][store.shard]
     while not stop.is_set():
         try:
-            after = store.status()["position"]
+            with store.transaction() as db:
+                after = store.watermark(db)["position"]
             batch = http_json(
                 url + f"/internal/changes?after={after}",
                 config["internal_token"],

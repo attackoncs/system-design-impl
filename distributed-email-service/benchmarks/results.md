@@ -1,3 +1,11 @@
+# 2026-11-09 hot-path efficiency
+
+Replica polling and replica GET initialization checks now read only the
+metadata row (`Store.watermark` / `MailboxViews.watermark`) instead of
+`status()`, which counts all mails and pending outbox jobs. Full suite with
+`-W error -p no:asyncio` (copied to /tmp): 98 passed / 1 failed before and after,
+same environment-dependent SMTP network test.
+
 # 2026-11-05 source and concurrency review
 
 Python3.13.9, Windows11 build26100; all recipients are configured synthetic

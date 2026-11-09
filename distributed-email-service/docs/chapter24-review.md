@@ -1,3 +1,18 @@
+# 第24章热路径效率复核 — 2026-11-09
+
+问题：副本复制循环`replicate()`每次轮询（空闲约10次/秒）都调用`store.status()["position"]`，
+而`status()`会统计全部未删除邮件和未完成outbox并读取错误行；副本每个GET也调用
+`store.status()["lineage"]`判断是否已初始化。两处只需要metadata行。
+
+修复：`worker.py:replicate`在一个读事务中用已有的`Store.watermark(db)`读取position；
+`http.py`副本GET改用`MailboxViews.watermark()`（同一metadata行，未初始化时仍返回
+503 "replica not initialized"）。`/internal/status`仍返回完整计数，HTTP形状不变。
+
+验证：`-W error -p no:asyncio`完整套件，在/tmp副本中修前98通过/1失败、修后98通过/1失败，
+失败项相同（`test_real_smtp_attachment_search_read_conflict_and_delete`，环境相关）。
+在/mnt/e工作区直接运行时`test_lost_smtp_ack_scanner_retry_restart_and_read_failover`修前修后均超时失败，
+复制到/tmp后修前修后均通过，属文件系统速度问题。未做额外计时。
+
 # Chapter 24 source and concurrency review — 2026-11-05
 
 Read the complete local chapter (lines11227–11924), compared pinned Stalwart

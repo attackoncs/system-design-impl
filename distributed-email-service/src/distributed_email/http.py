@@ -211,8 +211,7 @@ def server(
             if role == "replica":
                 if method != "GET":
                     raise Error(409, "replicas are read-only")
-                if not store.status()["lineage"]:
-                    raise Error(503, "replica not initialized")
+                views.watermark()  # metadata-row read; 503 until initialized
             if path == "/v1/uploads" and method == "POST":
                 if set(body) != {"filename", "data"}:
                     raise ValueError("upload requires filename and data")
