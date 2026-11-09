@@ -24,6 +24,11 @@ UNITS = {
     },
 }
 
+# Derived from UNITS so the accepted unit names cannot drift from the table.
+BYTE_QUANTITY = re.compile(
+    r"\s*([0-9]+(?:\.[0-9]+)?)\s+(" + "|".join(map(re.escape, UNITS)) + r")\s*"
+)
+
 
 def number(value, low=0, high="1e30", low_open=False):
     if (
@@ -54,19 +59,15 @@ def number(value, low=0, high="1e30", low_open=False):
 
 
 def text(value):
-    return (
-        format(value, "f").rstrip("0").rstrip(".")
-        if "." in format(value, "f")
-        else format(value, "f")
-    )
+    """Plain decimal notation without trailing fractional zeros."""
+    formatted = format(value, "f")
+    return formatted.rstrip("0").rstrip(".") if "." in formatted else formatted
 
 
 def parse_bytes(value):
     if not isinstance(value, str) or len(value) > 120:
         raise ValueError("byte quantity must be a string with explicit units")
-    match = re.fullmatch(
-        r"\s*([0-9]+(?:\.[0-9]+)?)\s+(B|KB|MB|GB|TB|PB|KiB|MiB|GiB|TiB|PiB)\s*", value
-    )
+    match = BYTE_QUANTITY.fullmatch(value)
     if not match:
         raise ValueError(
             "use e.g. '1 MB' (decimal) or '1 MiB' (binary); lowercase b is bits"

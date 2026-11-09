@@ -43,29 +43,29 @@ flowchart LR
 
 ## 按这六站阅读源码
 
-1. [estimate](../src/capacity_estimation/model.py#L30)：先看最终返回的四组字段。输入是场景字典，输出是可序列化预算；知道字段在哪里生成后，再看公式。
+1. [estimate](../src/capacity_estimation/model.py#L121)：先看最终返回的四组字段。输入是场景字典，输出是可序列化预算；知道字段在哪里生成后，再看公式。
 2. [parse_scenario](../src/capacity_estimation/scenario.py#L31)：把案例中的字符串和整数变为 `values/n/sizes`。重点回答：默认值在哪里补齐，未知字段为何报错？
-3. [parse_bytes](../src/capacity_estimation/quantities.py#L64)：把 `"100 B"` 变成整数100。下一站回到 `estimate`，此时所有大小都已统一成字节。
-4. [estimate](../src/capacity_estimation/model.py#L30)：从 `dau` 顺着读到 `physical`，逐项核对上面的1000、2000、3600。
-5. [availability](../src/capacity_estimation/model.py#L11)：输入可用性百分比，输出不同周期的停机秒数。它是另一个独立预算，不会改变节点数量。
-6. [sweep](../src/capacity_estimation/model.py#L109)：在同一份基础场景上替换一个字段，返回多份估算；下一步比较变化前后的输出，而不是只看一个大数字。
+3. [parse_bytes](../src/capacity_estimation/quantities.py#L67)：把 `"100 B"` 变成整数100。下一站回到 `estimate`，此时所有大小都已统一成字节。
+4. [estimate](../src/capacity_estimation/model.py#L121)：从 `dau` 顺着读到 `physical`，逐项核对上面的1000、2000、3600。
+5. [availability](../src/capacity_estimation/model.py#L43)：输入可用性百分比，输出不同周期的停机秒数。它是另一个独立预算，不会改变节点数量。
+6. [sweep](../src/capacity_estimation/model.py#L136)：在同一份基础场景上替换一个字段，返回多份估算；下一步比较变化前后的输出，而不是只看一个大数字。
 
 ## 微观一：先厘清乘法顺序
 
-[model.py:32](../src/capacity_estimation/model.py#L32)
+[model.py:123](../src/capacity_estimation/model.py#L123)
 
 ```python
 values, n, sizes = parse_scenario(inputs)
-dau = n["monthly_active_users"] * n["daily_active_ratio"]
-writes = dau * n["writes_per_dau"]
-reads = dau * n["reads_per_dau"]
-average_record = (
-    sizes["metadata_size"] + n["media_fraction"] * sizes["media_size"]
-)
-daily_bytes = writes * average_record
-retained_bytes = daily_bytes * n["retention_days"]
-compressed = retained_bytes * n["compression_ratio"]
-physical = compressed * n["replicas"] * (1 + n["index_overhead_ratio"])
+serving, spare = _serving_nodes(n), int(n["spare_nodes"])
+return {
+    "assumptions": {key: _assumption(value) for key, value in values.items()},
+    "estimates": {
+        key: text(value) for key, value in _quantities(n, sizes).items()
+    },
+    "nodes": {"serving": serving, "spare": spare, "total": serving + spare},
+    "availability": availability(n["availability_percent"]),
+    "notes": list(NOTES),
+}
 ```
 
 `dau` 和 `writes` 先把“每人每天”变成“全系统每天”。`average_record` 体现只有 `media_fraction` 比例的记录携带媒体。`daily_bytes` 再乘保留天数得到逻辑存储；压缩、副本和索引依次作用到这个量。这里的索引开销作用在每一份压缩副本上，所以案例是 `2000 × 0.5 × 3 × 1.2`。
@@ -89,7 +89,7 @@ flowchart LR
   C --> T[整数相加：服务节点＋备用节点]
 ```
 
-[test_tiny_excess_over_one_server_still_requires_two](../tests/test_precision.py#L6)给出一个精度边界：令`a=1e-30`，合法输入的需求/能力可等于`1+4a³/(1-3a)`。这个值严格大于1，80位展示却可能看起来等于1。[estimate](../src/capacity_estimation/model.py#L30)因此用标准库Fraction保留原始输入比值，再用math.ceil取2台，不复用展示QPS取整。
+[test_tiny_excess_over_one_server_still_requires_two](../tests/test_precision.py#L6)给出一个精度边界：令`a=1e-30`，合法输入的需求/能力可等于`1+4a³/(1-3a)`。这个值严格大于1，80位展示却可能看起来等于1。[estimate](../src/capacity_estimation/model.py#L121)因此用标准库Fraction保留原始输入比值，再用math.ceil取2台，不复用展示QPS取整。
 
 [test_large_node_count_and_spare_are_exact_integers](../tests/test_precision.py#L24)还验证176位服务数量加1台备用，整数总数仍准确。高精度展示与离散配置决策是两个需求；计算器没有新增线程或后台服务。原书覆盖见[chapter03-review.md](../docs/chapter03-review.md)，上游实读范围见[open-source-review_cn.md](../docs/open-source-review_cn.md)。
 

@@ -1,3 +1,14 @@
+# 第03章：结构复审（2026-11-09）
+
+只改生产代码，未改测试与基准。审计结论：模块划分（`quantities`单位/精度、`scenario`输入、`model`公式、`cli`）合理，问题集中在`model.estimate`一个约90行的函数同时承担计算、报告组装和固定说明。
+
+- `estimate`拆为`_quantities`（Decimal流量/存储/网络/并发估算）、`_serving_nodes`（Fraction精确向上取整，注释说明为何不复用已舍入的QPS）和报告组装；`/ 86400`统一为`SECONDS_PER_DAY`，峰值QPS复用平均QPS。
+- 停机周期、可扫描字段、说明文字提升为模块常量`DOWNTIME_PERIODS`、`SWEEP_FIELDS`、`NOTES`。
+- `quantities.text`只格式化一次；字节单位正则由`UNITS`表生成（`BYTE_QUANTITY`），避免单位名两处维护。
+- 验证：默认场景、可用性与敏感度扫描的JSON输出修改前后逐字节相同；字节单位解析的接受/拒绝样例一致；16项测试通过（Python 3.14，`-W error`）。
+
+---
+
 # 第03章：原书与工程复审（2026-11-06）
 
 已通读根目录《System Design Interview.md》524–697行。此前已有14项参考实现测试和数值隔离，但缺少这一轮的章节复审与固定开源源码记录，README/任务仍部分写成9项。本轮补齐证据，并修复两项已复现的离散取整问题；没有重做已有公式或新增服务。
