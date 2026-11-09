@@ -57,6 +57,7 @@ _ADD_MEMBER = (
     "table.insert(c.members, ARGV[3]); table.sort(c.members)\n"
     "local result = cjson.encode(c)\n"
     "redis.call('HSET', KEYS[1], ARGV[1], result)\n"
+    "redis.call('HSET', KEYS[2], ARGV[3], redis.call('GET', KEYS[3]) or '0')\n"
     "return {'OK', result}\n"
 )
 
@@ -272,8 +273,10 @@ class RedisBackend:
         result = await self.write_confirmed(
             "eval",
             _ADD_MEMBER,
-            1,
+            3,
             self.key("channels"),
+            self.key("joined:" + identifier(channel_id)),
+            self.key("sequence"),
             identifier(channel_id),
             identifier(actor),
             identifier(user_id),
@@ -416,10 +419,13 @@ class RedisBackend:
         self._page(after, limit)
         if user_id not in (await self.get_channel(channel_id)).members:
             raise chat_system.models.ChatError("not a channel member")
-        # Batch both membership checks and message loads. All operations keep
-        # their page bound, including for new members with a long private past.
+        # Messages up to the sequence recorded when this user was added were
+        # never fanned out to them, so start after it instead of probing each
+        # hidden ID. Inbox checks below still decide visibility; owners and
+        # creation-time members have no record and start from 0.
+        joined = await self.redis.hget(self.key("joined:" + channel_id), user_id)
         found = []
-        cursor = after
+        cursor = max(after, int(joined or 0))
         while len(found) < limit:
             ids = await self.redis.zrangebyscore(
                 self.key("history:" + channel_id),

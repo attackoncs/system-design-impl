@@ -22,6 +22,15 @@ CREATE TABLE IF NOT EXISTS members (
     user TEXT NOT NULL,
     PRIMARY KEY (channel, user)
 );
+-- Highest message ID that existed when a member was added. Older messages were
+-- never fanned out to that member, so history can skip them. Missing rows (owners,
+-- creation-time members, older databases) mean 0: scan from the start.
+CREATE TABLE IF NOT EXISTS member_joins (
+    channel TEXT NOT NULL,
+    user TEXT NOT NULL,
+    joined_after INTEGER NOT NULL,
+    PRIMARY KEY (channel, user)
+);
 CREATE TABLE IF NOT EXISTS direct_pairs (
     first_user TEXT NOT NULL,
     second_user TEXT NOT NULL,
@@ -230,6 +239,11 @@ class SQLiteMessageStore:
                 "INSERT INTO members (channel, user) VALUES (?, ?)",
                 (channel_id, user_id),
             )
+            self.db.execute(
+                "INSERT INTO member_joins (channel, user, joined_after) "
+                "SELECT ?, ?, COALESCE(MAX(id), 0) FROM messages",
+                (channel_id, user_id),
+            )
             return self._get_channel(channel_id)
 
     def append(self, channel_id, sender_id, content, client_message_id):
@@ -373,11 +387,17 @@ class SQLiteMessageStore:
         with self._transaction():
             if user_id not in self._get_channel(channel_id).members:
                 raise ChatError("not a channel member")
+            # Skip pre-join history without probing each hidden message; the
+            # inbox join below still decides visibility.
+            joined = self.db.execute(
+                "SELECT joined_after FROM member_joins WHERE channel=? AND user=?",
+                (channel_id, user_id),
+            ).fetchone()
             rows = self.db.execute(
                 "SELECT m.id, m.channel, m.sender, m.content, m.created, m.client_id "
                 "FROM messages m JOIN inbox i ON i.message=m.id "
                 "WHERE m.channel=? AND i.user=? AND m.id>? ORDER BY m.id LIMIT ?",
-                (channel_id, user_id, after, limit),
+                (channel_id, user_id, max(after, joined[0] if joined else 0), limit),
             )
             try:
                 return self._read_messages(rows, byte_limit)

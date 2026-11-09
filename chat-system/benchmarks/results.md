@@ -1,3 +1,15 @@
+# History scan efficiency fix: 2026-11-09
+
+Adding a group member now records the highest message ID at that moment (SQLite
+`member_joins`, Redis `joined:<channel>` inside the atomic add script). `history`
+starts after it; inbox visibility checks are unchanged. Throwaway WSL2/Python
+3.14.4 measurement of a late joiner's first page: SQLite with 100,000 pre-join
+messages **20.3-27.1 ms -> 0.05 ms**; Redis path on fakeredis with 20,000 pre-join
+messages **624.8 ms -> 0.5 ms** (in-process simulation, not real Redis latency).
+Suite with `-W error -o asyncio_default_fixture_loop_scope=function`: **185 passed,
+18 skipped** before and after; the skips need `CHAT_TEST_REDIS_URL` (no real Redis
+was available this round).
+
 # Chapter 13 verification: 2026-11-05 / 2026-11-06
 
 The 11-05 owned Redis 8.0.5 run collected 203 cases: **202 passed, one skipped,

@@ -42,7 +42,7 @@ flowchart TB
 1. [ChatService.connect](../src/chat_system/service.py#L133)：看token如何得到用户身份；相同设备连接为何替换旧Session。输出不是用户资料，而是有界会话对象。
 2. [ChatService.create_direct](../src/chat_system/service.py#L287)：确认频道成员资格在消息发送前建立，direct对如何复用。
 3. [ChatService.send](../src/chat_system/service.py#L381)：跟踪hello和retry从参数进入持久化，再进入实时分发。
-4. [SQLiteMessageStore.append](../src/chat_system/store.py#L235)：重点看去重身份、正文冲突、消息和inbox是否在同一事务提交。
+4. [SQLiteMessageStore.append](../src/chat_system/store.py#L249)：重点看去重身份、正文冲突、消息和inbox是否在同一事务提交。
 5. [ChatService._deliver_live](../src/chat_system/service.py#L425)：看接收者队列满后的处理；实时失败不能删除已提交消息。
 6. [ChatService.sync](../src/chat_system/service.py#L463)：输入Session、after和limit，输出该用户可见消息；随后阅读 [ReconnectingChatClient.acknowledge](../src/chat_system/client.py#L253) 的整页确认约束。
 

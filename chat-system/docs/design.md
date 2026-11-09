@@ -80,7 +80,10 @@ sync/history retain their count-only semantics.
 
 New group members are not backfilled into previous inbox entries. History queries
 require current membership and an inbox entry, preventing accidental exposure of
-pre-join messages. Direct channel creation reuses an indexed unique pair. Legacy duplicate direct
+pre-join messages. Adding a member also records the highest message ID/sequence
+at that moment (SQLite `member_joins`, Redis `joined:<channel>`); history starts
+after it, so a late joiner does not probe the whole earlier channel history.
+Visibility is still decided by the inbox check. Direct channel creation reuses an indexed unique pair. Legacy duplicate direct
 channels retain their IDs/history; migration chooses one canonical pair for future
 creation without merging or deleting old history. Exact get_message lookup requires
 the original recipient inbox entry and hides missing/unauthorized IDs alike.
@@ -247,7 +250,8 @@ than treated as successful delivery. Provider side effects still require recipie
 message idempotency; a network timeout cannot prove that no delivery occurred.
 
 Presence probes deduplicate watched users and use bounded Redis pipelines. History
-checks recipient visibility in bounded batches instead of per-message round trips.
+checks recipient visibility in bounded batches instead of per-message round trips,
+starting after the member's recorded join sequence.
 SQLite IDs are signed integers; Redis sequence allocation stops before 2**53 to keep
 sorted-set ordering exact. History and streams have no automatic expiry. Neither the
 SQLite adapter nor the single Redis hash-slot deployment claims fifty-million-DAU

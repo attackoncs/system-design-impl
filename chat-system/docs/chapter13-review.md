@@ -1,5 +1,27 @@
 # 第13章原书核对与工程审查
 
+## 2026-11-09 效率复核
+
+核实后加入成员的历史查询代价随频道旧历史线性增长：Redis `history`从`after=0`起按页
+读取频道历史ID，并对每个ID做收件箱ZSCORE，直到凑够`limit`条可见消息；SQLite查询按
+`(channel,id)`索引从头扫描并逐条探测收件箱主键。新成员看不到加入前消息，这些探测全部落空。
+
+修复：`add_member`在同一原子操作中记录加入时的最大消息ID——SQLite写入新表
+`member_joins(channel,user,joined_after)`（与成员插入同一`BEGIN IMMEDIATE`事务），
+Redis在`_ADD_MEMBER`脚本中把`sequence`当前值写入`joined:<channel>`哈希。`history`从
+`max(after, joined_after)`开始扫描。授权语义不变：收件箱检查原样保留；此前的消息在
+加入前已原子扇出完毕，新成员本就不在收件人中。所有者、建群成员及旧数据没有记录，
+按0处理，行为与原来相同；本项目没有移除成员操作，不存在重新加入的情形。
+
+临时测量（WSL2 Linux，Python 3.14.4，不入库）：SQLite频道含10万条加入前消息，新成员
+`history`由 **20.3–27.1ms** 降到 **0.05ms**；Redis路径用fakeredis（含Lua）在2万条加入前
+消息下由 **624.8ms** 降到 **0.5ms**。fakeredis为进程内模拟，绝对值不代表真实Redis，
+但O(旧历史)次ZSCORE已消除。
+
+验证：`-W error -o asyncio_default_fixture_loop_scope=function`下修改前后均为
+**185 passed、18 skipped**。18项跳过需要`CHAT_TEST_REDIS_URL`真实Redis，本轮环境
+没有redis-server，因此Redis脚本改动只经fakeredis临时脚本验证，未经真实Redis套件。
+
 ## 2026-11-06 本轮收尾
 
 重新核对原书3855–4288行和现有SQLite/Redis两条路径，通过CodeGraph检查持久消息/成员收件箱、设备游标、会话/节点隔离、推送及Sentinel确认写入。本轮实际阅读[Tinode与Zulip固定源码](open-source-review_cn.md)，没有安装或运行上游，也未发现需要改动核心消息业务的新确认缺陷。
