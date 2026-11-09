@@ -66,7 +66,7 @@ python -m maps_service.cli gateway --port 8097 --regions examples/regions.json
 | GET/DELETE /v1/navigation/{id} | 本人读取/删除导航会话 |
 | POST /v1/navigation/{id}/position | 本人更新{origin: 节点/地址/坐标}并重算 |
 | GET /v1/navigation/{id}/events?after=N | 本人有限SSE页；Last-Event-ID重连最新路线 |
-| GET /health | 图/目录/交通版本、角色、就绪和已挂载后台组件状态 |
+| GET /health | 图/目录/交通版本、角色、就绪、缓存条目/字节和已挂载后台组件状态 |
 
 管理员Bearer接口：POST /internal/graph、/internal/traffic、/internal/aggregate，
 GET /internal/catalog分别导入图、设交通、聚合和导出公开目录。
@@ -103,7 +103,10 @@ XYZ支持z0..21、经度环绕和极区钳制。冷渲染默认限制5000候选�
 适合接CDN，但未部署云对象存储或CDN；旧代可保留归档，源站仍只服务active图，旧URL返回410。
 
 缓存固定条带合并冷加载，加载器不占全局LRU锁，返回数据隔离；邻接缓存每节点不可变JSON文本，再解析独立边对象，减少嵌套深拷贝。
-缓存条目预算不等于RSS。HTTP默认32处理器/10秒套接字期限，CLI用--concurrency/
+每个缓存有两道上限：条目数（瓦片128、邻接64）和字节预算（瓦片32 MiB、邻接16 MiB，
+CLI用--tile-cache-bytes/--adjacency-cache-bytes配置）。条目大小在插入时估算一次（编码后瓦片字节、
+缓存JSON文本长度，每个槽位另计8字节），按LRU淘汰直到两道上限都满足；单条超过预算时照常返回但不缓存。
+GET /health新增`caches`（条目、字节、命中、未命中、淘汰）。该预算只约束缓存负载，不等于进程RSS。HTTP默认32处理器/10秒套接字期限，CLI用--concurrency/
 --request-timeout配置，--navigation-interval/--max-navigation-sessions配置后台导航。
 绑定成功才启动后台组件，关闭排空处理器、复制、导航和维护；严格JSON/framing、私有正文前
 鉴权，直接传输拒绝重定向，仅在同region切换副本。系统DNS/SQLite/CPU不受套接字期限强制终止。

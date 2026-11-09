@@ -5,6 +5,7 @@ import socket
 import subprocess
 import sys
 import time
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 import uuid
 
@@ -81,8 +82,9 @@ class Cluster:
                 result = predicate()
                 if result:
                     return result
-            except (OSError, ValueError):
-                pass
+            except (OSError, ValueError) as exc:
+                if isinstance(exc, HTTPError):
+                    exc.close()  # HTTPError owns a response body.
             time.sleep(0.05)
         raise RuntimeError("condition timed out")
 

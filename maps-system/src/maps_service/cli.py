@@ -8,7 +8,7 @@ from .artifacts import TileArchive, precompute
 from .credentials import provision_token
 from .http import Gateway, Replicator, server
 from .maintenance import Maintenance
-from .store import Store
+from .store import ADJACENCY_CACHE_BYTES, TILE_CACHE_BYTES, Store
 from .tracking import NavigationTracker
 
 
@@ -39,6 +39,18 @@ def main(argv=None):
     parser.add_argument("--request-timeout", type=float, default=10)
     parser.add_argument("--navigation-interval", type=float, default=1)
     parser.add_argument("--max-navigation-sessions", type=int, default=128)
+    parser.add_argument(
+        "--tile-cache-bytes",
+        type=int,
+        default=TILE_CACHE_BYTES,
+        help="Byte budget for the in-process rendered tile LRU cache",
+    )
+    parser.add_argument(
+        "--adjacency-cache-bytes",
+        type=int,
+        default=ADJACENCY_CACHE_BYTES,
+        help="Byte budget for the in-process routing-tile adjacency LRU cache",
+    )
     args = parser.parse_args(argv)
     replicator = tracker = maintenance = None
     with ExitStack() as resources:
@@ -55,7 +67,12 @@ def main(argv=None):
                 request_timeout=args.request_timeout,
             )
         else:
-            store = Store(args.db, readonly=args.command == "replica")
+            store = Store(
+                args.db,
+                readonly=args.command == "replica",
+                tile_cache_bytes=args.tile_cache_bytes,
+                adjacency_cache_bytes=args.adjacency_cache_bytes,
+            )
             if args.command == "import":
                 if not args.graph:
                     parser.error("import requires --graph")

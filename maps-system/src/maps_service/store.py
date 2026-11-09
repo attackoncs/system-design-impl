@@ -21,9 +21,20 @@ from .catalog import prepare_graph, prepare_snapshot, install_graph
 from .telemetry import Telemetry
 import os
 
+TILE_CACHE_BYTES = 32 * 1024 * 1024
+ADJACENCY_CACHE_BYTES = 16 * 1024 * 1024
+
 
 class Store(Telemetry):
-    def __init__(self, path, readonly=False, clock=time.time):
+    def __init__(
+        self,
+        path,
+        readonly=False,
+        clock=time.time,
+        *,
+        tile_cache_bytes=TILE_CACHE_BYTES,
+        adjacency_cache_bytes=ADJACENCY_CACHE_BYTES,
+    ):
         if (
             not isinstance(path, (str, os.PathLike))
             or not str(path)
@@ -35,7 +46,10 @@ class Store(Telemetry):
         self.path, self.readonly, self.clock = str(path), readonly, clock
         self.now()
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        self.adjacency, self.tiles = Cache(64), Cache(128)
+        # Entry limits stay as a second bound; byte budgets cap payload memory
+        # because rendered tiles and dense routing tiles vary widely in size.
+        self.adjacency = Cache(64, adjacency_cache_bytes)
+        self.tiles = Cache(128, tile_cache_bytes)
         with closing(self.connect()) as db:
             deadline = time.monotonic() + 15
             while True:
@@ -197,6 +211,10 @@ class Store(Telemetry):
                 "role": "replica" if self.readonly else "primary",
                 "nodes": db.execute("SELECT count(*) FROM nodes").fetchone()[0],
                 "edges": db.execute("SELECT count(*) FROM edges").fetchone()[0],
+                "caches": {
+                    "tiles": self.tiles.stats(),
+                    "adjacency": self.adjacency.stats(),
+                },
             }
 
     def ready(self, db):

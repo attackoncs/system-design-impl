@@ -1,5 +1,22 @@
 # 第19章核对：地图系统
 
+## 2026-11-09 缓存字节预算
+
+原书把地图瓦片放在CDN/缓存前面，本实现的进程内缓存此前只按条目数限制，而细粒度瓦片和密集路由瓦片大小差异很大，
+内存实际上没有上界。本轮只补字节预算，MVT/gzip、样式字体、进程RSS上限仍未实现。
+
+- 覆盖缓存：`Store.tiles`（渲染PNG/GeoJSON瓦片，键为图/z/x/y/格式）和`Store.adjacency`（路由瓦片邻接，每节点不可变JSON文本）。
+  路由瓦片HTTP响应、地理编码、ETA和导航会话没有进程内缓存，不需要预算。
+- 实现：`src/maps_service/cache.py`的`Cache(capacity, max_bytes)`复用于两者；`estimate_bytes`在插入时对值估算一次
+  （bytes/str取长度，每个容器槽位或标量另计8字节），命中不重新计算。插入后按LRU淘汰直到条目数和字节数都不超限；
+  单值大于预算时照常返回但不缓存，计入`oversized`。仍在原缓存锁内完成，命中/淘汰均摊O(1)。
+- 默认值：瓦片128条/32 MiB，邻接64条/16 MiB；`Store(..., tile_cache_bytes=, adjacency_cache_bytes=)`及CLI
+  `--tile-cache-bytes`、`--adjacency-cache-bytes`可配置，0表示不缓存。
+- 可观测：`Store.health()`即`GET /health`新增可选字段`caches`，含`entries`、`bytes`、`max_entries`、`max_bytes`、
+  命中、未命中、淘汰和超大跳过次数，原有字段不变。
+- 验证：/tmp临时脚本确认100字节预算下5个30字节值只保留最近3个、访问后LRU顺序正确、101字节值返回但不缓存，
+  8线程并发后`bytes`等于各条目大小之和且不超预算；现有**113项测试全部通过**（`-W error`），未修改测试和基准代码。
+
 ## 2026-11-04 复核
 
 重读本章，并沿CodeGraph定位的路由、交通/定位、导航追踪、缓存、归档及网络链路

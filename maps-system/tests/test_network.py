@@ -32,6 +32,7 @@ class NetworkTests(unittest.TestCase):
                     raw=True,
                 )
             self.assertEqual(caught.exception.code, 304)
+            caught.exception.close()
             for region, expected in [("unknown", 400), ("isolated", 503)]:
                 with self.assertRaises(HTTPError) as caught:
                     request(
@@ -42,6 +43,7 @@ class NetworkTests(unittest.TestCase):
                         headers={"X-Region": region},
                     )
                 self.assertEqual(caught.exception.code, expected)
+                caught.exception.close()
             request(
                 primary,
                 "/internal/traffic",
@@ -57,6 +59,7 @@ class NetworkTests(unittest.TestCase):
             with self.assertRaises(HTTPError) as caught:
                 request(replica, "/v1/locations", "POST", {"reports": []}, "alice-demo")
             self.assertIn(caught.exception.code, (403, 401))
+            caught.exception.close()
             cluster.stop("primary")
             self.assertEqual(
                 request(
@@ -103,6 +106,7 @@ class NetworkTests(unittest.TestCase):
             with self.assertRaises(HTTPError) as caught:
                 request(primary, "/v1/locations", "POST", body)
             self.assertEqual(caught.exception.code, 401)
+            caught.exception.close()
             first = request(primary, "/v1/locations", "POST", body, "alice-demo")
             self.assertEqual(
                 request(primary, "/v1/locations", "POST", body, "alice-demo"), first
@@ -124,6 +128,7 @@ class NetworkTests(unittest.TestCase):
                 with self.assertRaises(HTTPError) as caught:
                     request(primary, path, method, data, token)
                 self.assertEqual(caught.exception.code, status)
+                caught.exception.close()
             meta = request(primary, "/health")
             oldpath = f"/v1/tiles/{meta['graph']}/0/0/0.geojson"
             request(primary, oldpath)
@@ -134,6 +139,7 @@ class NetworkTests(unittest.TestCase):
             with self.assertRaises(HTTPError) as caught:
                 request(primary, oldpath)
             self.assertEqual(caught.exception.code, 410)
+            caught.exception.close()
 
 
 if __name__ == "__main__":

@@ -72,7 +72,7 @@ are deployment work.
 | GET/DELETE /v1/navigation/{id} | Owner-only current state / remove session |
 | POST /v1/navigation/{id}/position | Owner-only {origin: node/address/coordinate object}; recalculate route |
 | GET /v1/navigation/{id}/events?after=N | Owner-only finite SSE page; Last-Event-ID resumes newest route state |
-| GET /health | Catalog/traffic versions, role, readiness and attached helper diagnostics |
+| GET /health | Catalog/traffic versions, role, readiness, cache entries/bytes and attached helper diagnostics |
 
 Admin Bearer APIs: POST /internal/graph replaces the graph; POST
 /internal/traffic accepts records and optional ttl; POST /internal/aggregate
@@ -129,8 +129,13 @@ No cloud object store or CDN is deployed.
 
 Cache modules coalesce cold loads outside the LRU lock and isolate mutable values;
 adjacency caches immutable per-node JSON text and parses independent edge records
-for each caller, avoiding repeated nested dictionary copies. Cache capacities are entry
-counts, not RSS limits. HTTP defaults to 32 handlers and a 10s socket request budget;
+for each caller, avoiding repeated nested dictionary copies. Each cache has two
+bounds: entries (tiles 128, adjacency 64) and a byte budget (tiles 32 MiB, adjacency
+16 MiB; --tile-cache-bytes/--adjacency-cache-bytes). Entry size is estimated once at
+insert (encoded tile bytes, cached JSON text, plus 8 bytes per slot); LRU entries are
+evicted until both bounds hold and an entry larger than the budget is served but not
+cached. GET /health reports `caches` (entries, bytes, hits, misses, evictions). The
+budget covers cached payload, not process RSS. HTTP defaults to 32 handlers and a 10s socket request budget;
 --concurrency/--request-timeout configure these. --navigation-interval and
 --max-navigation-sessions configure the owned navigation helper. Replication,
 maintenance and navigation start after bind and are drained on close. Strict

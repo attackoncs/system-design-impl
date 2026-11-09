@@ -141,12 +141,20 @@ pipelines remain extensions.
 
 ## Concurrency, roles and shutdown
 
-Adjacency and rendered tiles use bounded entry-count caches. Fixed 64 stripes
+Adjacency and rendered tiles use LRU caches bounded by both entry count (64/128)
+and bytes (16/32 MiB by default, configurable per Store and CLI). `estimate_bytes`
+sizes each value once at insert: bytes/str length, plus 8 bytes per container slot or
+scalar, so a tile is about its encoded payload and adjacency about its JSON text.
+Inserts evict least-recently-used entries until both bounds hold; a value larger
+than the byte budget is returned but not cached. Hits and evictions stay O(1)
+amortized under the existing cache lock; `/health` reports per-cache `entries`,
+`bytes`, hits, misses, evictions and oversized skips. Fixed 64 stripes
 coalesce cold loads outside the LRU lock; mutable values are isolated. Adjacency
 stores per-node immutable JSON text and parses independent edge records, avoiding
 repeated nested dictionary copies or copying an entire dense tile on
-every node visit. Entry counts do not imply fixed bytes/RSS; large fine tiles and
-graph construction still cost memory proportional to the data.
+every node visit. The byte budget bounds cached payload, not process RSS (object
+headers and allocator slack are uncounted); graph construction and request-local
+work still cost memory proportional to the data.
 
 Primary owns writes/tracking. Replica pulls authenticated full catalogs into its
 own database and retains the last complete snapshot on failure. Gateway accepts

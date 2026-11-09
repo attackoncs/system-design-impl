@@ -54,7 +54,10 @@ errors and 72.17 mixed QPS. These retain their original date and implementation.
   incremental replication, database write failover and archive retention/GC policy.
 - [ ] Production identity/TLS, deployment admission/telemetry, actual regions/CDN,
   object replication, backup recovery and sustained book-scale acceptance.
-- [ ] Byte/RSS cache budgets, MVT/gzip, complex styles/fonts and full mobile
+- [x] Byte budgets for in-process caches (2026-11-09): rendered tiles 32 MiB and
+  routing-tile adjacency 16 MiB by default (`--tile-cache-bytes`,
+  `--adjacency-cache-bytes`), sized once at insert, LRU-evicted, entry limits kept.
+- [ ] Process RSS limits, MVT/gzip, complex styles/fonts and full mobile
   viewport/navigation client; multi-stop optimization if explicitly selected.
 
 Only submit after a user request; preserve unrelated work and the existing local

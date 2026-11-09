@@ -216,6 +216,7 @@ class Gateway:
                         else "no-store",
                     )
                 except HTTPError as error:
+                    error.close()  # HTTPError owns a body; only the status is used.
                     if 400 <= error.code < 500:
                         raise Error(
                             error.code, "regional peer rejected request"

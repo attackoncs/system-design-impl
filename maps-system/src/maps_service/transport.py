@@ -16,6 +16,15 @@ from urllib.parse import urlsplit
 
 from .store import dumps
 
+
+def _rejected(url, status, reason, headers):
+    # HTTPError owns a file-like body; close the empty one now so a caller that
+    # only inspects code/headers never leaks it (ResourceWarning on Python 3.14).
+    error = HTTPError(url, status, reason, headers, None)
+    error.close()
+    return error
+
+
 MAX_CATALOG = 64 * 1024 * 1024
 MAX_BODY = 2 * 1024 * 1024
 MAX_PUBLIC = 16 * 1024 * 1024
@@ -197,12 +206,11 @@ def fetch(
             if response.status != 200:
                 # A redirect is evidence of a different endpoint, never authority
                 # to send the replication credential somewhere else.
-                raise HTTPError(
+                raise _rejected(
                     url,
                     response.status,
                     "upstream rejected request",
                     response.headers,
-                    None,
                 )
             lengths = response.headers.get_all("Content-Length", [])
             encodings = response.headers.get_all("Transfer-Encoding", [])

@@ -45,10 +45,10 @@ flowchart TB
 
 | 顺序 | 位置 | 本站要回答的问题 |
 |---|---|---|
-| 1 | [Store.import_graph](../src/maps_service/store.py#L163) | 节点与边怎样成为可用路网，导入失败是否原子 |
-| 2 | [Store.resolve](../src/maps_service/store.py#L294) | A、C或坐标怎样解析为图节点 |
+| 1 | [Store.import_graph](../src/maps_service/store.py#L177) | 节点与边怎样成为可用路网，导入失败是否原子 |
+| 2 | [Store.resolve](../src/maps_service/store.py#L312) | A、C或坐标怎样解析为图节点 |
 | 3 | [route](../src/maps_service/navigation.py#L89) | 哪些参数先校验，怎样固定路网与交通视图 |
-| 4 | [Store.outgoing](../src/maps_service/store.py#L350) | 给定节点和模式，哪些边允许进入搜索 |
+| 4 | [Store.outgoing](../src/maps_service/store.py#L368) | 给定节点和模式，哪些边允许进入搜索 |
 | 5 | [Telemetry.traffic](../src/maps_service/telemetry.py#L231) | bc速度和期限怎样保存，何时不再参与计算 |
 | 6 | [encode_polyline](../src/maps_service/navigation.py#L8) | 搜索路径怎样成为客户端几何；再看 [NavigationTracker.run_once](../src/maps_service/tracking.py#L328) |
 
