@@ -33,31 +33,31 @@ flowchart LR
 1. [EventLog.append](../src/ad_click/log.py#L44)：从点击数组到日志receipt。先找事件去重及批次原子性。
 2. [EventLog.read](../src/ad_click/log.py#L115)：从分区和after位置到连续page。记下page中的lineage和entry结构。
 3. [prepare_batch](../src/ad_click/records.py#L34)：核对Worker在拿写锁前冻结并验证哪些数据，防止调用方改动输入。
-4. [Aggregator.apply](../src/ad_click/aggregate.py#L21)：本章重点。依次读lineage检查、旧位置检查、新位置连续性、按事件去重和checkpoint提交。
-5. [Aggregator.totals](../src/ad_click/aggregate.py#L122)：从查询范围到广告总数，注意`closed`由查询终点与水位比较得出。
-6. [replay](../src/ad_click/recovery.py#L130)和[reconcile](../src/ad_click/recovery.py#L71)：把重放理解为再次应用受验证的日志，而不是直接把总数覆盖成某个猜测。
+4. [Aggregator.apply](../src/ad_click/aggregate.py#L44)：本章重点。依次读lineage检查、旧位置检查、新位置连续性、按事件去重和checkpoint提交。
+5. [Aggregator.totals](../src/ad_click/aggregate.py#L193)：从查询范围到广告总数，注意`closed`由查询终点与水位比较得出。
+6. [replay](../src/ad_click/recovery.py#L140)和[reconcile](../src/ad_click/recovery.py#L72)：把重放理解为再次应用受验证的日志，而不是直接把总数覆盖成某个猜测。
 
 ## 微观一：旧位置也要验证
 
-[aggregate.py:27](../src/ad_click/aggregate.py#L27)
+[aggregate.py:50](../src/ad_click/aggregate.py#L50)
 
 ```python
+were garbage-collected fail explicitly. New events older than the dedup
+horizon are counted as expired, never added to the buckets.
+"""
 batch = prepare_batch(batch, self.partition)
 with self.transaction(True) as db:
     cp = dict(db.execute("SELECT * FROM checkpoint").fetchone())
     if cp["lineage"] and cp["lineage"] != batch["lineage"]:
         raise Error(409, "queue lineage changed; explicit rebuild required")
     cp["lineage"] = batch["lineage"]
-    floor = db.execute(
-        "SELECT value FROM worker_meta WHERE key='position_floor'"
-    ).fetchone()[0]
+    meta = dict(db.execute("SELECT key,value FROM worker_meta"))
+    floor, replay_floor = meta["position_floor"], meta["replay_floor"]
     for entry in batch["entries"]:
         value, fingerprint, seq = entry["event"], entry["hash"], entry["seq"]
-        seen = db.execute(
-            "SELECT hash FROM seen WHERE event_id=?", (value["event_id"],)
-        ).fetchone()
-        if seen and seen[0] != fingerprint:
-            raise Error(409, "conflicting replay event")
+        # Decided before any ID lookup so the outcome never depends on
+        # how far GC has progressed (rebuild and reconcile agree).
+        too_old = seq > cp["seq"] and expired(
 ```
 
 事务内先检查lineage，再查询seen内容。`seq <= checkpoint`并非无条件返回：后面还会比较原位置receipt。否则，源日志在旧偏移换成不同事件时，消费者会把数据损坏当成成功重放。
@@ -66,26 +66,26 @@ with self.transaction(True) as db:
 
 ## 微观二：统计与输入进度一起提交
 
-[aggregate.py:62](../src/ad_click/aggregate.py#L62)
+[aggregate.py:85](../src/ad_click/aggregate.py#L85)
 
 ```python
+        if tuple(receipt) != (
+            value["event_id"],
+            fingerprint,
+            entry["accepted"],
+        ):
+            raise Error(409, "source position content changed")
+    elif seq >= floor or not seen:
+        raise Error(
+            409, "historical source position cannot be verified"
+        )
+    continue
+if seq != cp["seq"] + 1:
+    raise Error(409, "input offset gap")
 minute = value["click_timestamp"] // 60 * 60
-if not seen:
-    late = minute + 60 <= cp["watermark"]
-    db.execute(
-        "INSERT INTO seen VALUES(?,?)", (value["event_id"], fingerprint)
-    )
-    db.execute(
-        """INSERT INTO buckets VALUES(?,?,?,?,?,1,1)
-    ON CONFLICT(minute,ad_id,user_id,ip,country) DO UPDATE SET count=count+1,revision=revision+1""",
-        (
-            minute,
-            value["ad_id"],
-            value["user_id"],
-            value["ip"],
-            value["country"],
-        ),
-    )
+if too_old:
+    cp["expired"] += 1
+elif not seen:
 ```
 
 `minute`使用事件时间向下取整，而不是接收时间。`not seen`才允许更新桶；随后即便事件以前出现过，新输入位置仍有单独的receipt和checkpoint推进。由此可以接受“同一事件出现在后续合法位置”，同时不重复累计。

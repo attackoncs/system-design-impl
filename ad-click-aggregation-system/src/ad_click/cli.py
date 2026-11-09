@@ -6,6 +6,12 @@ from .aggregate import Aggregator
 from .common import dumps, integer
 from .http import WorkerLoop, server
 from .log import EventLog
+from .records import (
+    DEFAULT_DEDUP_HORIZON,
+    DEFAULT_REPLAY_HORIZON,
+    dedup_horizon,
+    replay_horizon,
+)
 from .service import reconcile, replay
 from .tailer import ingest_file
 from .transport import endpoint, loads, seconds, secret
@@ -39,7 +45,21 @@ def load_config(path):
             raise ValueError("service URL must be an origin")
     integer(config.get("lateness", 120), "lateness", 0, 86400)
     integer(config.get("max_events", 1_000_000), "max_events", 1, 10_000_000)
+    dedup_horizon(
+        config.get("dedup_horizon", DEFAULT_DEDUP_HORIZON), config.get("lateness", 120)
+    )
+    replay_horizon(config.get("replay_horizon", DEFAULT_REPLAY_HORIZON))
     return config
+
+
+def aggregator(config, path, partition):
+    return Aggregator(
+        path,
+        partition,
+        config.get("lateness", 120),
+        dedup_horizon=config.get("dedup_horizon", DEFAULT_DEDUP_HORIZON),
+        replay_horizon=config.get("replay_horizon", DEFAULT_REPLAY_HORIZON),
+    )
 
 
 def main(argv=None):
@@ -89,7 +109,7 @@ def main(argv=None):
         # Reserve the name atomically; a failed rebuild leaves its artifact for inspection.
         with output.open("xb"):
             pass
-        store = Aggregator(output, args.partition, config.get("lateness", 120))
+        store = aggregator(config, output, args.partition)
         print(dumps(replay(config, store)))
         return
     with ExitStack() as stack:
@@ -103,10 +123,8 @@ def main(argv=None):
             )
         if args.role == "worker":
             integer(args.partition, "partition", 0, config["partitions"] - 1)
-            store = Aggregator(
-                root / f"worker-{args.partition}.sqlite",
-                args.partition,
-                config.get("lateness", 120),
+            store = aggregator(
+                config, root / f"worker-{args.partition}.sqlite", args.partition
             )
             loop = WorkerLoop(config, store)
             stack.callback(loop.close)

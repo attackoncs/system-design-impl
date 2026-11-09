@@ -1,5 +1,46 @@
 # 第22章核对：广告点击事件聚合
 
+## 2026-11-09 热路径效率复核
+
+问题：`Aggregator.status()`除检查点行外还执行`SELECT count(*) FROM buckets`。
+`apply()`返回`self.status()`；`WorkerLoop.run_once`每次拉取前（空闲时约10次/秒）都调用
+`status()["seq"]`；`replay()`每个200事件页调用两次`status()`，桶数随重放增长，整体约O(N²)。
+
+修复：`status(counts=True)`增加`counts`参数，`counts=False`只读检查点行；`apply()`直接返回
+同一写事务内已提交的检查点（不含桶计数），一致性不弱于原先提交后再读。轮询和`replay()`
+改用`status(counts=False)`/`apply()`返回值；`/internal/status`仍返回`bucket_rows`，HTTP形状不变。
+tailer每次运行重新哈希[0, offset)前缀是有意的篡改/截断校验，本轮保持不变。
+
+验证：`-W error -p no:asyncio`完整套件修前74项通过、4项失败，修后同样74通过/4失败，失败集合一致
+（HTTP ResourceWarning及真实网络用例的环境问题，非本次改动引起）。临时测量（/tmp，非仓库）：
+20万桶时`status()`约5.98ms，`status(counts=False)`约0.53ms；1万桶时0.40ms/0.30ms。
+
+### 去重/状态GC
+
+问题：worker的`seen(event_id,hash)`与`input_positions`回执永久增长。原始日志无保留期、
+可从0重放，且入口`event_id`全局唯一；worker的`seen`是兼容源的纵深防御。
+
+策略：`dedup_horizon`（秒，默认7天，`null`关闭=原行为）以`max_event`（当前位置之前的
+分区最大事件时间）为基准；新位置`click_timestamp < max_event - dedup_horizon`时不计数、
+不写键，只增加检查点新计数`expired`，判断先于任何ID查找。要求视界≥`lateness`，故过期
+事件必在watermark之后。`replay_horizon`（位置数，默认100000，`null`关闭）：每次apply先
+把`worker_meta.replay_floor`抬到`seq-replay_horizon+1`，再删其下回执；低于下限的重放返回
+409，不回落到旧`position_floor`的按ID验证。迁移：`ALTER TABLE seen ADD COLUMN
+click_timestamp`（旧行NULL=永久保留）、`checkpoint.expired DEFAULT 0`、索引
+`seen_by_time`。GC在apply事务内、`before_commit`之前，每表每次最多512行，走索引/主键范围。
+
+安全论证：`max_event`单调不减，键被删时其事件时间低于当前截止点，之后同ID副本必然过期，
+只会少计（记入`expired`）不会重复计数；视界外仅丢失冲突负载检测（入口已全局拒绝ID复用）。
+`max_event`是源日志的确定性前缀最大值（不含墙钟/接收时间），`reconcile`以同一
+`records.expired()`镜像，`rebuild`复用同一`Aggregator`，故视界内外计数均与在线一致、与GC
+进度无关。差异仅在中途修改视界或旧库迁移前的历史，需重建新结果代。
+
+验证：/tmp临时脚本（非仓库）——3组随机负载（15%重复ID、10%最长30天迟到）：关闭视界时
+与HEAD版`Aggregator`的审计哈希和检查点逐项一致；开启时7事件小页+陈旧页重放的在线库与
+200事件页重建库哈希/检查点一致，计数与`expired`等于独立参考模型，伪造远端的`reconcile`
+匹配；回执稳定在1000条、旧页重放409、`seen`最小事件时间≥截止点；旧schema库迁移后NULL
+键保留。`EXPLAIN QUERY PLAN`确认两条删除均为索引范围。现有套件78项通过。
+
 ## 2026-11-04 源码复核
 
 重读本章，并用CodeGraph复核原始日志/聚合事务、文件检查点/恢复、精确归并及HTTP。

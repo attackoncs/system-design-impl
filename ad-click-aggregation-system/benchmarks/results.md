@@ -1,5 +1,14 @@
 # Validation and local measurements
 
+## Hot-path efficiency — 2026-11-09
+
+Worker polling, `apply()` and `replay()` no longer run `count(*)` over buckets:
+they read only the checkpoint row (`status(counts=False)`) or the checkpoint
+committed by `apply()`. `/internal/status` still reports `bucket_rows`.
+Full suite with `-W error -p no:asyncio`: 74 passed / 4 failed before and after
+(same four environment-dependent HTTP/network tests). Throwaway timing: with
+200000 buckets `status()` 5.98 ms vs `status(counts=False)` 0.53 ms.
+
 ## Source re-review — 2026-11-04 (Asia/Shanghai)
 
 Re-read chapter 22 and inspected raw storage/aggregation, tailer/checkpoints,

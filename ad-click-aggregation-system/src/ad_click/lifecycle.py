@@ -23,7 +23,8 @@ class WorkerLoop:
         # Lazy import prevents HTTP routing/service composition import cycles.
         from .service import log_page
 
-        batch = log_page(self.config, self.store.partition, self.store.status()["seq"])
+        position = self.store.status(counts=False)["seq"]
+        batch = log_page(self.config, self.store.partition, position)
         self.store.apply(batch)
         if not batch["entries"]:
             self.store.idle()

@@ -113,3 +113,36 @@ def parse_source_row(row):
         "accepted": accepted,
         "hash": row["hash"],
     }
+
+
+# Dedup/state GC policy shared by the online worker and batch reconciliation.
+# dedup_horizon: seconds of event time behind the partition's maximum event
+# time for which event IDs are remembered; None keeps every ID forever.
+# replay_horizon: source positions behind the checkpoint whose offset receipts
+# are kept for replay verification; None keeps every receipt forever.
+DEFAULT_DEDUP_HORIZON = 7 * 86400
+DEFAULT_REPLAY_HORIZON = 100_000
+MAX_DEDUP_HORIZON = 3650 * 86400
+
+
+def dedup_horizon(value, lateness):
+    if value is None:
+        return None
+    return integer(value, "dedup_horizon", lateness, MAX_DEDUP_HORIZON)
+
+
+def replay_horizon(value):
+    if value is None:
+        return None
+    return integer(value, "replay_horizon", 1000, MAX_POSITION)
+
+
+def expired(click_timestamp, max_event, horizon):
+    """True when an event is too old to deduplicate, so it must not be counted.
+
+    max_event is the partition's maximum event time *before* this position. It
+    is a deterministic prefix maximum of the source log, so online processing,
+    rebuild and reconciliation make identical decisions, and it never decreases,
+    so IDs older than max_event - horizon can be forgotten safely.
+    """
+    return horizon is not None and click_timestamp < max_event - horizon

@@ -63,5 +63,12 @@ The items below are historical **2026-10-20** evidence, not current measurements
   original-scale sustained workload and host/disk-loss recovery validation.
 - [ ] A second output queue/database-writer and physical distributed DAG, with an
   explicit external sink transactional contract before broader exactly-once claims.
-- [ ] TLS/tenant controls, privacy lifecycle, dedup/state GC, cloud cold storage and
-  a scalable distributed batch engine rather than the bounded local recovery tool.
+- [x] Dedup/state GC (2026-11-09): worker `seen` IDs are bounded by an event-time
+  dedup horizon (`dedup_horizon`, default 7 days behind the partition's max event
+  time; `null` disables), older new events are not counted but recorded in
+  `expired`; offset receipts are bounded by `replay_horizon` (default 100,000
+  positions; `null` disables) with a raised replay floor that rejects older replays.
+  Deletes are indexed and bounded per apply; rebuild/reconcile apply the same rule.
+- [ ] TLS/tenant controls, privacy lifecycle, cloud cold storage and a scalable
+  distributed batch engine rather than the bounded local recovery tool; raw-log
+  retention/archival is still manual migration.

@@ -7,6 +7,7 @@ from urllib.parse import urlencode
 
 from .common import Error, digest, dumps, event, http_json, integer
 from .query_service import checkpoint, finite, metadata
+from .records import DEFAULT_DEDUP_HORIZON, dedup_horizon, expired
 
 
 class Remote:
@@ -76,6 +77,10 @@ def reconcile(config, *, timeout=60, max_events=200000, max_dimensions=100000):
     """
     integer(max_events, "reconciliation events", 1, 1000000)
     integer(max_dimensions, "reconciliation dimensions", 1, 1000000)
+    # Mirror the online dedup horizon exactly: events it expires are not counted.
+    horizon = dedup_horizon(
+        config.get("dedup_horizon", DEFAULT_DEDUP_HORIZON), config.get("lateness", 120)
+    )
     remote = Remote(config, timeout)
     meta = remote.meta()
     scanned, results = 0, []
@@ -85,12 +90,17 @@ def reconcile(config, *, timeout=60, max_events=200000, max_dimensions=100000):
         scanned += cp["seq"]
         if scanned > max_events:
             raise Error(413, "reconciliation event budget exceeded")
-        after, counts, seen = 0, Counter(), {}
+        after, counts, seen, max_event = 0, Counter(), {}, 0
         while after < cp["seq"]:
             page = remote.page(partition, after, cp["seq"], cp["lineage"])
             for item in page["entries"]:
                 value = item["event"]
                 fingerprint = item["hash"]
+                old = expired(value["click_timestamp"], max_event, horizon)
+                max_event = max(max_event, value["click_timestamp"])
+                if old:
+                    after = item["seq"]
+                    continue
                 previous = seen.get(value["event_id"])
                 if previous is not None and previous != fingerprint:
                     raise Error(409, "conflicting duplicate in reconciliation source")
@@ -135,7 +145,7 @@ def replay(config, worker, until=None, *, timeout=60, max_events=200000):
     partition = integer(worker.partition, "partition", 0, len(meta["heads"]) - 1)
     head = meta["heads"][str(partition)]
     target = head if until is None else min(integer(until, "until", 0, 2**53), head)
-    current = worker.status()["seq"]
+    current = worker.status(counts=False)["seq"]
     if current > target:
         raise Error(409, "rebuild checkpoint exceeds target")
     if target - current > max_events:
@@ -143,8 +153,7 @@ def replay(config, worker, until=None, *, timeout=60, max_events=200000):
     # Bind the lineage even for a completely empty source partition.
     while True:
         page = remote.page(partition, current, target, meta["lineage"])
-        worker.apply(page)
-        updated = worker.status()["seq"]
+        updated = worker.apply(page)["seq"]
         if updated >= target:
             break
         if updated <= current:
