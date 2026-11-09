@@ -7,20 +7,8 @@ from .common import Error, integer
 from .assets import ASSETS
 
 
-def target(raw, role, method):
-    parsed = urlsplit(raw)
-    if (
-        not raw.startswith("/")
-        or raw.startswith("//")
-        or parsed.netloc
-        or parsed.scheme
-        or parsed.fragment
-        or "%" in parsed.path
-        or "\\" in raw
-        or "//" in parsed.path
-    ):
-        raise ValueError("canonical origin-form route required")
-    path = parsed.path
+def _routes(role):
+    """Return {path: allowed methods} for one lab role."""
     routes = {"/health": {"GET"}, "/admin/status": {"GET"}}
     if role in {"web", "single", "lb"}:
         routes.update({"/v1/login": {"POST"}, "/v1/profile": {"GET", "POST"}})
@@ -51,6 +39,24 @@ def target(raw, role, method):
                 for operation in ("get", "put", "delete")
             }
         )
+    return routes
+
+
+def target(raw, role, method):
+    parsed = urlsplit(raw)
+    if (
+        not raw.startswith("/")
+        or raw.startswith("//")
+        or parsed.netloc
+        or parsed.scheme
+        or parsed.fragment
+        or "%" in parsed.path
+        or "\\" in raw
+        or "//" in parsed.path
+    ):
+        raise ValueError("canonical origin-form route required")
+    path = parsed.path
+    routes = _routes(role)
     if path not in routes:
         raise Error(404, "route missing")
     if method not in routes[path]:

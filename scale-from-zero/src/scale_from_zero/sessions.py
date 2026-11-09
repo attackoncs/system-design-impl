@@ -1,4 +1,4 @@
-"""Focused persistence operations composed by Store."""
+"""Hashed, capacity-bounded session operations composed by Store."""
 
 import hashlib
 import secrets

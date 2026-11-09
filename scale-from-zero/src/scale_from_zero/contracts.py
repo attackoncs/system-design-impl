@@ -18,6 +18,13 @@ def fields(value, expected):
     return value
 
 
+def hex_identity(value, message):
+    """Require a 32-character lowercase hex identity (database id or claim token)."""
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{32}", value):
+        raise ValueError(message)
+    return value
+
+
 def timestamp(value):
     try:
         valid = (
@@ -84,20 +91,14 @@ def session(user, token):
 def job(value):
     value = freeze(value)
     fields(value, {"id", "token", "payload", "lease", "attempts", "source_id"})
-    if not isinstance(value["source_id"], str) or not re.fullmatch(
-        r"[0-9a-f]{32}", value["source_id"]
-    ):
-        raise ValueError("job source database identity required")
+    hex_identity(value["source_id"], "job source database identity required")
     payload = value["payload"]
     fields(payload, {"seq", "user", "version", "profile"})
     integer(payload["seq"], 1, 1000)
     record({key: payload[key] for key in ("user", "version", "profile")})
     if value["id"] != payload["user"] + "_" + str(payload["version"]):
         raise ValueError("job identity differs from payload")
-    if not isinstance(value["token"], str) or not re.fullmatch(
-        r"[0-9a-f]{32}", value["token"]
-    ):
-        raise ValueError("claim token required")
+    hex_identity(value["token"], "claim token required")
     timestamp(value["lease"])
     integer(value["attempts"], 1)
     return value

@@ -1,4 +1,4 @@
-"""Focused persistence operations composed by Store."""
+"""Partition binding and idempotent, fenced profile writes composed by Store."""
 
 from contextlib import nullcontext
 import json
@@ -13,9 +13,6 @@ class ProfileMixin:
         """Reject in-place routing changes; an actual reshard needs data migration."""
         integer(count, 1, 2)
         integer(index, 0, count - 1)
-        self.initialize(
-            "CREATE TABLE IF NOT EXISTS topology(id INTEGER PRIMARY KEY CHECK(id=1),count INTEGER,partition INTEGER);"
-        )
         with self.transaction() as db:
             old = db.execute("SELECT count,partition FROM topology").fetchone()
             if old and tuple(old) != (count, index):
@@ -76,8 +73,7 @@ class ProfileMixin:
         with self.connection() as db:
             self.check_partition(db, user)
             row = db.execute("SELECT * FROM users WHERE id=?", (user,)).fetchone()
-            with self._metrics_lock:
-                self._reads += 1
+            self._count_read()
             if not row:
                 raise Error(404, "profile missing")
             return {

@@ -1,8 +1,10 @@
+"""Stateless Web tier: login, session checks and the cache/replica/primary read path."""
+
 import hmac
 import threading
 
 from .common import Error, identifier, integer, request
-from .store import partition
+from .routing import partition
 from .contracts import (
     freeze,
     record,
@@ -10,7 +12,7 @@ from .contracts import (
     session as validate_session,
 )
 from .runtime import RequestContext
-from .assets import ASSETS as ASSETS
+from .assets import ASSETS as ASSETS  # compatibility re-export
 
 
 class App:
@@ -113,55 +115,68 @@ class App:
 
     def get(self, user, strong=False, min_version=0):
         integer(min_version)
-        source, value, generation, floor = "primary", None, None, min_version
         if self.store is not None or strong:
-            value = self.validate_record(self.primary(user, "get", {}), user)
+            value, source, floor = self._primary_record(user), "primary", min_version
         else:
-            try:
-                probe = self.cache("get", {"key": user, "min_version": min_version})
-                floor = integer(probe["min_version"], min_version)
-                generation = probe["generation"]
-                if not isinstance(generation, str) or len(generation) > 80:
-                    raise ValueError("cache generation required")
-                if probe["value"] is not None:
-                    value = self.validate_record(probe["value"], user)
-                    if value["version"] < floor:
-                        raise ValueError("cache below requested version")
-            except (Error, OSError, ValueError, TypeError, KeyError):
-                self._record_cache_error()
-                value, generation = None, None
-            if value is not None:
-                source = "cache"
-            else:
-                index = partition(user, len(self.config["primaries"]))
-                try:
-                    value = self.validate_record(
-                        request(
-                            self.config["replicas"][index] + "/internal/get",
-                            self.config["internal_token"],
-                            {"user": user},
-                            timeout=0.5,
-                            **self.context.options(),
-                        ),
-                        user,
-                    )
-                    if value["version"] < floor:
-                        value = None
-                    else:
-                        source = "replica"
-                except (Error, OSError):
-                    value = None
-                if value is None:
-                    value = self.validate_record(self.primary(user, "get", {}), user)
-                # A failed probe has no safe generation ticket; bypass filling.
-                if generation is not None:
-                    try:
-                        self.cache(
-                            "put",
-                            {"key": user, "value": value, "generation": generation},
-                        )
-                    except (Error, OSError):
-                        self._record_cache_error()
+            value, source, floor = self._eventual_read(user, min_version)
         if value["version"] < floor:
             raise Error(409, "requested version does not exist yet")
         return {**value, "source": source, "web_node": self.node}
+
+    def _primary_record(self, user):
+        return self.validate_record(self.primary(user, "get", {}), user)
+
+    def _eventual_read(self, user, min_version):
+        """Cache, then replica, then primary; refill only with a valid probe ticket."""
+        value, generation, floor = self._probe_cache(user, min_version)
+        if value is not None:
+            return value, "cache", floor
+        value, source = self._read_replica(user, floor), "replica"
+        if value is None:
+            value, source = self._primary_record(user), "primary"
+        # A failed probe has no safe generation ticket; bypass filling.
+        if generation is not None:
+            try:
+                self.cache(
+                    "put", {"key": user, "value": value, "generation": generation}
+                )
+            except (Error, OSError):
+                self._record_cache_error()
+        return value, source, floor
+
+    def _probe_cache(self, user, min_version):
+        """Return (value, generation ticket, version floor); failures yield no ticket."""
+        floor = min_version
+        try:
+            probe = self.cache("get", {"key": user, "min_version": min_version})
+            floor = integer(probe["min_version"], min_version)
+            generation = probe["generation"]
+            if not isinstance(generation, str) or len(generation) > 80:
+                raise ValueError("cache generation required")
+            value = None
+            if probe["value"] is not None:
+                value = self.validate_record(probe["value"], user)
+                if value["version"] < floor:
+                    raise ValueError("cache below requested version")
+            return value, generation, floor
+        except (Error, OSError, ValueError, TypeError, KeyError):
+            self._record_cache_error()
+            return None, None, floor
+
+    def _read_replica(self, user, floor):
+        """Return a replica record at or above floor, or None to fall back to primary."""
+        index = partition(user, len(self.config["primaries"]))
+        try:
+            value = self.validate_record(
+                request(
+                    self.config["replicas"][index] + "/internal/get",
+                    self.config["internal_token"],
+                    {"user": user},
+                    timeout=0.5,
+                    **self.context.options(),
+                ),
+                user,
+            )
+        except (Error, OSError):
+            return None
+        return value if value["version"] >= floor else None

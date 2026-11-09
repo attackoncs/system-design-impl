@@ -36,16 +36,16 @@ flowchart LR
 
 ## 按这六站进入代码
 
-1. [App.update](../src/scale_from_zero/app.py#L91)：输入Alice和修改体，输出带Web节点的版本记录。先确认主库结果被验证后才失效缓存。
-2. [ProfileMixin.update](../src/scale_from_zero/profiles.py#L27)：真正的版本检查和事务写入。找到 requests/users/changes/jobs 同事务提交的位置。
-3. [App.get](../src/scale_from_zero/app.py#L114)：带 `strong`、`min_version` 的读策略；输入版本下限，输出资料及 `source`。
-4. [Cache.probe](../src/scale_from_zero/cache.py#L58)：缓存不仅返回value，还返回generation与版本下限。下一站看这些元数据怎样约束回填。
-5. [Cache.put](../src/scale_from_zero/cache.py#L102) 与 [Cache.delete](../src/scale_from_zero/cache.py#L144)：失效会使旧票据无效，旧版本无法借未完成读重新写入。
-6. [ReplicationMixin.replicate](../src/scale_from_zero/replication.py#L102)：后台读取变更并推进副本；最后再看 [Fence.promote](../src/scale_from_zero/leadership.py#L141)，理解为何落后副本不能直接提升。
+1. [App.update](../src/scale_from_zero/app.py#L93)：输入Alice和修改体，输出带Web节点的版本记录。先确认主库结果被验证后才失效缓存。
+2. [ProfileMixin.update](../src/scale_from_zero/profiles.py#L24)：真正的版本检查和事务写入。找到 requests/users/changes/jobs 同事务提交的位置。
+3. [App.get](../src/scale_from_zero/app.py#L116)：带 `strong`、`min_version` 的读策略；输入版本下限，输出资料及 `source`。
+4. [Cache.probe](../src/scale_from_zero/cache.py#L55)：缓存不仅返回value，还返回generation与版本下限。下一站看这些元数据怎样约束回填。
+5. [Cache.put](../src/scale_from_zero/cache.py#L99) 与 [Cache.delete](../src/scale_from_zero/cache.py#L141)：失效会使旧票据无效，旧版本无法借未完成读重新写入。
+6. [ReplicationMixin.replicate](../src/scale_from_zero/replication.py#L96)：后台读取变更并推进副本；最后再看 [Fence.promote](../src/scale_from_zero/leadership.py#L136)，理解为何落后副本不能直接提升。
 
 ## 微观一：请求身份和资料版本是两层保护
 
-[profiles.py:36](../src/scale_from_zero/profiles.py#L36)
+[profiles.py:33](../src/scale_from_zero/profiles.py#L33)
 
 ```python
 old = db.execute(
@@ -70,7 +70,7 @@ if seq > 1000:
 
 ## 微观二：缓存失效后，旧读不能复活旧值
 
-[cache.py:109](../src/scale_from_zero/cache.py#L109)
+[cache.py:106](../src/scale_from_zero/cache.py#L106)
 
 ```python
 with self._lock:
@@ -117,7 +117,7 @@ sequenceDiagram
 
 ### 微观三：不能检查完租约就把它放下
 
-[Fence.writing](../src/scale_from_zero/leadership.py#L69)把Fence写事务所有权保持到资料事务及游标发布完成。[ProfileMixin.update](../src/scale_from_zero/profiles.py#L27)按Fence→资料库顺序取锁，在资料事务内调用保护内publisher，正常流程是资料先提交、Fence后提交。
+[Fence.writing](../src/scale_from_zero/leadership.py#L88)把Fence写事务所有权保持到资料事务及游标发布完成。[ProfileMixin.update](../src/scale_from_zero/profiles.py#L24)按Fence→资料库顺序取锁，在资料事务内调用保护内publisher，正常流程是资料先提交、Fence后提交。
 
 ```mermaid
 sequenceDiagram

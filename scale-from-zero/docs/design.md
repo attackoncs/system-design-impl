@@ -1,5 +1,16 @@
 # Chapter 2 — Staged scaling laboratory
 
+## 2026-11-09: Module layout after the structure pass
+
+| Layer | Modules and single responsibility |
+|---|---|
+| Shared primitives | `common` (Error, canonical JSON, validators, SQLite connection policy, `request` error mapping); `contracts` (frozen RPC values; `hex_identity` for database ids/claim tokens); `routing` (`partition`); `runtime` (per-thread I/O budget) |
+| Persistence | `persistence.ClockedDatabase` (writer-sampled clock); `schema` (DDL and `source_identity`); mixins `profiles`, `sessions`, `jobs`, `replication`; `store.Store` composition root (owns read counter via `_count_read`); `consumer.Consumer` |
+| Domain components | `app.App` (login/session/write; eventual read split into `_probe_cache`, `_read_replica`, refill); `cache.Cache`/`CacheCluster` (member failures isolated by one `_each` helper); `balancer.LoadBalancer`; `leadership.Fence` (lease checks via `_held`/`_ahead`, epoch writes via `_take`); `regions.GeoDNS`; `assets` |
+| Adapters | `routes` (role route table `_routes` + query validation); `http` (parse/authenticate, then one method per concern: `admin_status`, `backends`, `database_internal`/`user_operation`, `cache_internal`, `forward`, `edge_asset`, `web`); `transport`; `server_runtime`; `workers`; `cli` (`load_config`, `node_role`, `build_component`, `build_worker`, `serve_role`) |
+
+Public imports are unchanged (`store.partition`/`store.Consumer`, `app.ASSETS`, `app.request`, `cli.Store`/`cli.PeriodicWorker`/`cli.server`). Behavior, HTTP shapes, retry and consistency semantics are unchanged.
+
 ## 2026-11-06: Write ownership and invalid TTLs
 
 `Fence.writing()` acquires the shared fence transaction before the profile writer and holds it until the profile transaction has committed and its cursor is published. Its protected publisher checks the current clock inside the profile transaction; expiry rolls back users/requests/changes/jobs. Promotion waits for this ownership and then checks the latest cursor. The existing standalone renew/publish methods remain available but are not substitutes for this critical section. Profile commits before fence commit: process failure between the two can leave an unacknowledged write and still requires retained-disk recovery, not a cross-file atomic transaction or production HA. Cache TTL validation occurs before any value/accounting changes. The current suite is77 tests and5 subcases; older figures below remain historical.

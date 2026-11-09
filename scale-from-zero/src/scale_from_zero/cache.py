@@ -49,11 +49,8 @@ class Cache:
     def _victim(self):
         if self.policy != "lfu":
             return next(iter(self.values))
-        least = min(self._freq[key] for key in self.values)
-        for key in self.values:
-            if self._freq[key] == least:
-                return key
-        return next(iter(self.values))
+        # min() keeps the first minimum, so frequency ties fall back to insertion order.
+        return min(self.values, key=self._freq.__getitem__)
 
     def probe(self, key, min_version=0):
         integer(min_version)
@@ -184,42 +181,36 @@ class CacheCluster:
         self._lock = threading.Lock()
         self.errors = 0
 
+    def _failed(self):
+        with self._lock:
+            self.errors += 1
+
+    def _each(self, call):
+        """Apply call to every member, counting and isolating member failures."""
+        results = []
+        for cache in self._members:
+            try:
+                results.append(call(cache))
+            except Exception:
+                self._failed()
+        return results
+
     def get(self, key, min_version=0):
         for cache in self._members:
             try:
                 value = cache.get(key, min_version)
             except Exception:
-                with self._lock:
-                    self.errors += 1
+                self._failed()
                 continue
             if value is not None:
                 return value
         return None
 
     def put(self, key, value, generation=None):
-        stored = False
-        for cache in self._members:
-            try:
-                stored = bool(cache.put(key, value, generation)) or stored
-            except Exception:
-                with self._lock:
-                    self.errors += 1
-        return stored
+        return any(self._each(lambda cache: bool(cache.put(key, value, generation))))
 
     def delete(self, key, min_version=0):
-        for cache in self._members:
-            try:
-                cache.delete(key, min_version)
-            except Exception:
-                with self._lock:
-                    self.errors += 1
+        self._each(lambda cache: cache.delete(key, min_version))
 
     def set(self, key, value, ttl):
-        stored = False
-        for cache in self._members:
-            try:
-                stored = bool(cache.set(key, value, ttl)) or stored
-            except Exception:
-                with self._lock:
-                    self.errors += 1
-        return stored
+        return any(self._each(lambda cache: bool(cache.set(key, value, ttl))))

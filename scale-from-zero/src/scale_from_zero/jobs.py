@@ -1,9 +1,10 @@
-"""Focused persistence operations composed by Store."""
+"""Leased outbox claim/ack operations composed by Store."""
 
 import json
 import secrets
 from .common import integer
 from .contracts import job as validate_job
+from .schema import source_identity
 
 
 class JobMixin:
@@ -27,19 +28,14 @@ class JobMixin:
                 "payload": json.loads(row["payload"]),
                 "lease": self.now() + lease_seconds,
                 "attempts": row["attempts"] + 1,
-                "source_id": db.execute(
-                    "SELECT value FROM identity WHERE id=1"
-                ).fetchone()[0],
+                "source_id": source_identity(db),
             }
 
     def ack(self, job):
         job = validate_job(job)
         with self.transaction() as db:
             old = db.execute("SELECT * FROM jobs WHERE id=?", (job["id"],)).fetchone()
-            if (
-                job["source_id"]
-                != db.execute("SELECT value FROM identity WHERE id=1").fetchone()[0]
-            ):
+            if job["source_id"] != source_identity(db):
                 return {"acknowledged": False}
             if (
                 old is None

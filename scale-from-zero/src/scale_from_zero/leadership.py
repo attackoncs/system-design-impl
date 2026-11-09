@@ -23,9 +23,9 @@ class Fence:
         self.holder = identifier(holder)
         self.clock = clock
         self._thread = threading.Lock()
-        db = sqlite3.connect(path, timeout=5, isolation_level=None)
+        self._path = path
+        db = self._connect()
         try:
-            db.execute("PRAGMA busy_timeout=5000")
             db.execute(
                 """CREATE TABLE IF NOT EXISTS fence(
                     id INTEGER PRIMARY KEY CHECK(id=1),
@@ -38,7 +38,6 @@ class Fence:
             db.execute("INSERT OR IGNORE INTO fence VALUES(1,0,'',-1,0)")
         finally:
             db.close()
-        self._path = path
 
     def _connect(self):
         db = sqlite3.connect(self._path, timeout=5, isolation_level=None)
@@ -65,25 +64,39 @@ class Fence:
         with self._transaction() as db:
             return mutate(db, timestamp(self.clock()))
 
+    def _held(self, db, now):
+        """Return the current row, failing closed unless this holder's lease is live."""
+        row = _row(db)
+        if row[1] != self.holder or row[3] <= now:
+            raise Error(403, "database lease is not held")
+        return row
+
+    def _take(self, db, epoch, cursor, now, lease_seconds):
+        expires = now + lease_seconds
+        db.execute(
+            "UPDATE fence SET epoch=?, holder=?, cursor=?, expires=? WHERE id=1",
+            (epoch, self.holder, cursor, expires),
+        )
+        return {
+            "epoch": epoch,
+            "holder": self.holder,
+            "cursor": cursor,
+            "expires": expires,
+        }
+
     @contextmanager
     def writing(self, lease_seconds=2):
         """Exclude promotion until a profile transaction commits and publishes."""
         lease_seconds = integer(lease_seconds, 1, 60)
         with self._transaction() as db:
-            _epoch, holder, _cursor, expires = _row(db)
             now = timestamp(self.clock())
-            if holder != self.holder or expires <= now:
-                raise Error(403, "database lease is not held")
+            self._held(db, now)
             db.execute("UPDATE fence SET expires=? WHERE id=1", (now + lease_seconds,))
 
             def publish(cursor):
                 cursor = integer(cursor, 0, 1000)
                 now = timestamp(self.clock())
-                _epoch, holder, published, expires = _row(db)
-                if holder != self.holder or expires <= now:
-                    raise Error(403, "database lease is not held")
-                if cursor < published:
-                    raise Error(409, "published cursor is ahead of this database")
+                _ahead(cursor, self._held(db, now)[2])
                 db.execute(
                     "UPDATE fence SET cursor=?,expires=? WHERE id=1",
                     (cursor, now + lease_seconds),
@@ -94,17 +107,10 @@ class Fence:
     def status(self):
         db = self._connect()
         try:
-            row = db.execute(
-                "SELECT epoch, holder, cursor, expires FROM fence WHERE id=1"
-            ).fetchone()
+            epoch, holder, cursor, expires = _row(db)
         finally:
             db.close()
-        return {
-            "epoch": row["epoch"],
-            "holder": row["holder"],
-            "cursor": row["cursor"],
-            "expires": row["expires"],
-        }
+        return {"epoch": epoch, "holder": holder, "cursor": cursor, "expires": expires}
 
     def holds(self):
         row = self.status()
@@ -121,20 +127,9 @@ class Fence:
                 if expires > now:
                     raise Error(409, "another writer holds the lease")
                 raise Error(409, "lease expired; promote the replica explicitly")
-            if cursor < published:
-                raise Error(409, "published cursor is ahead of this database")
+            _ahead(cursor, published)
             new_epoch = 1 if holder == "" else epoch
-            expires_at = now + lease_seconds
-            db.execute(
-                "UPDATE fence SET epoch=?, holder=?, cursor=?, expires=? WHERE id=1",
-                (new_epoch, self.holder, cursor, expires_at),
-            )
-            return {
-                "epoch": new_epoch,
-                "holder": self.holder,
-                "cursor": cursor,
-                "expires": expires_at,
-            }
+            return self._take(db, new_epoch, cursor, now, lease_seconds)
 
         return self._exclusive(mutate)
 
@@ -155,17 +150,7 @@ class Fence:
             new_epoch = epoch if holder == self.holder and expires > now else epoch + 1
             if holder == "" and epoch == 0:
                 new_epoch = 1
-            expires_at = now + lease_seconds
-            db.execute(
-                "UPDATE fence SET epoch=?, holder=?, cursor=?, expires=? WHERE id=1",
-                (new_epoch, self.holder, cursor, expires_at),
-            )
-            return {
-                "epoch": new_epoch,
-                "holder": self.holder,
-                "cursor": cursor,
-                "expires": expires_at,
-            }
+            return self._take(db, new_epoch, cursor, now, lease_seconds)
 
         return self._exclusive(mutate)
 
@@ -174,11 +159,8 @@ class Fence:
         lease_seconds = integer(lease_seconds, 1, 60)
 
         def mutate(db, now):
-            epoch, holder, _published, expires = _row(db)
-            if holder != self.holder or expires <= now:
-                raise Error(403, "database lease is not held")
-            expires_at = now + lease_seconds
-            db.execute("UPDATE fence SET expires=? WHERE id=1", (expires_at,))
+            epoch = self._held(db, now)[0]
+            db.execute("UPDATE fence SET expires=? WHERE id=1", (now + lease_seconds,))
             return epoch
 
         return self._exclusive(mutate)
@@ -188,15 +170,16 @@ class Fence:
         cursor = integer(cursor, 0, 1000)
 
         def mutate(db, now):
-            _epoch, holder, published, expires = _row(db)
-            if holder != self.holder or expires <= now:
-                raise Error(403, "database lease is not held")
-            if cursor < published:
-                raise Error(409, "published cursor is ahead of this database")
+            _ahead(cursor, self._held(db, now)[2])
             db.execute("UPDATE fence SET cursor=? WHERE id=1", (cursor,))
             return cursor
 
         return self._exclusive(mutate)
+
+
+def _ahead(cursor, published):
+    if cursor < published:
+        raise Error(409, "published cursor is ahead of this database")
 
 
 def _row(db):

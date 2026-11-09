@@ -2,18 +2,24 @@
 
 import json
 
-from .common import Error, integer, checksum, encode
-from .contracts import change as validate_change, fields, freeze
+from .common import Error, integer, encode
+from .contracts import change as validate_change, fields, freeze, hex_identity
+from .schema import source_identity
+
+EMPTY_HASH = "0" * 64
+
+
+def _tail(db):
+    """Return (count, head hash) of the retained change history."""
+    tail = db.execute("SELECT seq,hash FROM changes ORDER BY seq DESC LIMIT 1").fetchone()
+    return (tail[0], tail[1]) if tail else (0, EMPTY_HASH)
 
 
 class ReplicationMixin:
     def changes(self, after):
         integer(after)
         with self.read_transaction() as db:
-            tail = db.execute(
-                "SELECT seq,hash FROM changes ORDER BY seq DESC LIMIT 1"
-            ).fetchone()
-            count, head = (tail[0], tail[1]) if tail else (0, "0" * 64)
+            count, head = _tail(db)
             if after > count:
                 raise Error(409, "replica cursor ahead of source")
             previous = (
@@ -24,11 +30,7 @@ class ReplicationMixin:
             bound = db.execute(
                 "SELECT source_id FROM replication_source WHERE id=1"
             ).fetchone()
-            source_id = (
-                bound[0]
-                if bound
-                else db.execute("SELECT value FROM identity WHERE id=1").fetchone()[0]
-            )
+            source_id = bound[0] if bound else source_identity(db)
             rows = [
                 {
                     "seq": row["seq"],
@@ -45,7 +47,7 @@ class ReplicationMixin:
                 "changes": rows,
                 "source_id": source_id,
                 "after": after,
-                "previous_hash": previous[0] if previous else "0" * 64,
+                "previous_hash": previous[0] if previous else EMPTY_HASH,
                 "count": count,
                 "head": head,
             }
@@ -57,12 +59,7 @@ class ReplicationMixin:
         )
         integer(feed["after"])
         integer(feed["count"], feed["after"], 1000)
-        if (
-            not isinstance(feed["source_id"], str)
-            or len(feed["source_id"]) != 32
-            or any(char not in "0123456789abcdef" for char in feed["source_id"])
-        ):
-            raise ValueError("source database identity required")
+        hex_identity(feed["source_id"], "source database identity required")
         if not isinstance(feed["changes"], list) or len(feed["changes"]) > 100:
             raise ValueError("bounded changes list required")
         changes = [validate_change(row) for row in feed["changes"]]
@@ -71,10 +68,7 @@ class ReplicationMixin:
         ):
             raise Error(409, "source omitted or reordered changes")
         with self.transaction() as db:
-            tail = db.execute(
-                "SELECT seq,hash FROM changes ORDER BY seq DESC LIMIT 1"
-            ).fetchone()
-            count, head = (tail[0], tail[1]) if tail else (0, "0" * 64)
+            count, head = _tail(db)
             old = db.execute(
                 "SELECT source_id FROM replication_source WHERE id=1"
             ).fetchone()
@@ -104,9 +98,6 @@ class ReplicationMixin:
             change = validate_change(change)
         except ValueError:
             raise Error(409, "invalid replication record") from None
-        data = {key: change[key] for key in ("seq", "user", "version", "profile")}
-        if checksum(data) != change["hash"]:
-            raise Error(409, "replication checksum mismatch")
         with self.transaction() as db:
             self._replicate(db, change)
 

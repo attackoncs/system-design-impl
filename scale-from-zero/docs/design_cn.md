@@ -1,5 +1,16 @@
 # 第 2 章 — 分阶段扩容实验
 
+## 2026-11-09：结构整理后的模块划分
+
+| 层 | 模块与单一职责 |
+|---|---|
+| 共享基础 | `common`（Error、规范JSON、校验器、SQLite连接策略、`request`错误映射）；`contracts`（冻结RPC值；`hex_identity`校验库ID/领取令牌）；`routing`（`partition`）；`runtime`（每线程I/O预算） |
+| 持久层 | `persistence.ClockedDatabase`（写锁后取时钟）；`schema`（DDL与`source_identity`）；`profiles`、`sessions`、`jobs`、`replication`混入；`store.Store`组合根（经`_count_read`持有读计数）；`consumer.Consumer` |
+| 领域组件 | `app.App`（登录/会话/写入；最终一致读拆为`_probe_cache`、`_read_replica`与回填）；`cache.Cache`/`CacheCluster`（成员故障统一由`_each`隔离）；`balancer.LoadBalancer`；`leadership.Fence`（租约校验`_held`/`_ahead`，纪元写入`_take`）；`regions.GeoDNS`；`assets` |
+| 适配层 | `routes`（角色路由表`_routes`与查询校验）；`http`（先解析/鉴权，再按关注点分方法：`admin_status`、`backends`、`database_internal`/`user_operation`、`cache_internal`、`forward`、`edge_asset`、`web`）；`transport`；`server_runtime`；`workers`；`cli`（`load_config`、`node_role`、`build_component`、`build_worker`、`serve_role`） |
+
+公共导入不变（`store.partition`/`store.Consumer`、`app.ASSETS`、`app.request`、`cli.Store`/`cli.PeriodicWorker`/`cli.server`）。行为、HTTP形状、重试与一致性语义不变。
+
 ## 2026-11-06：写入所有权与无效TTL
 
 `Fence.writing()`先获取共享Fence写事务，再获取资料写事务，直到资料提交并发布游标后才释放所有权。保护内的publisher在资料事务内按当前时钟核验到期；失效会回滚users/requests/changes/jobs。提升先等待所有权，再检查最新游标。原有独立续租/发布API保留，但不能代替该临界区。资料先提交、Fence后提交，进程在两者之间崩溃仍可能留下未确认写，依赖保留原盘恢复，不是跨库原子事务或生产HA。缓存TTL在任何值/统计修改之前校验。当前77项及5子用例，下面旧数字保留历史含义。

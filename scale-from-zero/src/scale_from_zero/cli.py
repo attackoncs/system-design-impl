@@ -1,3 +1,5 @@
+"""Validate a private lab topology and run one service process with owned cleanup."""
+
 import argparse
 import ipaddress
 import re
@@ -135,38 +137,38 @@ def load_config(path):
     return config
 
 
-def serve_role(args, config):
-    config = freeze(config)
-    node = args.node
-    role = (
-        "primary"
-        if node.startswith("primary")
-        else "replica"
-        if node.startswith("replica")
-        else "web"
-        if node.startswith("web")
-        else node
-    )
-    index = int(node[-1]) if role in ("primary", "replica", "web") else 0
-    root = Path(args.root)
-    worker = None
+def node_role(node):
+    """Map a service name such as primary1 or web3 to its role and shard/Web index."""
+    for role in ("primary", "replica", "web"):
+        if node.startswith(role):
+            return role, int(node[-1])
+    return node, 0
+
+
+def build_component(role, node, index, root, config):
+    """Create the object a role's HTTP handler serves (store, cache, consumer or app)."""
     if role in ("primary", "replica"):
         store = Store(root / (node + ".sqlite"))
         store.bind_partition(len(config["primaries"]), index)
-    elif role == "cache":
-        store = Cache(capacity=32, ttl=2)
-    elif role == "worker":
-        store = Consumer(root / "worker.sqlite")
-    elif role == "single":
-        store = App(config, node, Store(root / "single.sqlite"))
-    elif role == "web":
-        store = App(config, node)
-    else:
-        store = None
+        return store
+    if role == "cache":
+        return Cache(capacity=32, ttl=2)
+    if role == "worker":
+        return Consumer(root / "worker.sqlite")
+    if role == "single":
+        return App(config, node, Store(root / "single.sqlite"))
+    if role == "web":
+        return App(config, node)
+    return None
+
+
+def build_worker(role, component, index, root, config):
+    """Create, but do not start, the role's owned background worker, if any."""
+    worker = None
     if role == "replica":
         worker = PeriodicWorker(
             lambda: replicate_once(
-                store,
+                component,
                 config["primaries"][index],
                 config["internal_token"],
                 deadline=time.monotonic() + 3,
@@ -174,21 +176,32 @@ def serve_role(args, config):
             ),
             "replication",
         )
-    elif role in ("worker", "single"):
-        consumer = (
-            store if role == "worker" else Consumer(root / "single-consumer.sqlite")
+    elif role == "single":
+        consumer = Consumer(root / "single-consumer.sqlite")
+        worker = PeriodicWorker(
+            lambda: consume_local_once(component.store, consumer), "outbox-consumer"
         )
-        if role == "single":
-            step = lambda: consume_local_once(store.store, consumer)
-        else:
-            step = lambda: consume_remote_once(
+    elif role == "worker":
+        worker = PeriodicWorker(
+            lambda: consume_remote_once(
                 config["primaries"],
                 config["internal_token"],
-                consumer,
+                component,
                 deadline=time.monotonic() + 5,
                 cancel=worker.cancel,
-            )
-        worker = PeriodicWorker(step, "outbox-consumer")
+            ),
+            "outbox-consumer",
+        )
+    return worker
+
+
+def serve_role(args, config):
+    config = freeze(config)
+    node = args.node
+    role, index = node_role(node)
+    root = Path(args.root)
+    store = build_component(role, node, index, root, config)
+    worker = build_worker(role, store, index, root, config)
     parsed = urlsplit(config["services"][node])
     instance = server(role, store, config, index, parsed.hostname, parsed.port)
     with ExitStack() as cleanup:

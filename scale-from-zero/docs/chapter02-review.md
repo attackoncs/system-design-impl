@@ -1,5 +1,25 @@
 # 第2章复审
 
+## 2026-11-09：生产代码结构整理（仅src）
+
+先通读本复审、双语设计与README，再逐模块审计`src/scale_from_zero`的职责、公共导入（tests/examples/tools用到的路径及`patch("scale_from_zero.app.request")`、`cli.Store/PeriodicWorker/server`、`profiles.validate_update`）、重复、过长函数、混合关注点、死代码与锁/线程边界。只在发现具体问题处修改，未改变行为、HTTP形状、重试或一致性语义；未改测试与基准代码。
+
+| 审计发现 | 修改与理由 |
+|---|---|
+| `common.shard_for/entry/verify`无任何引用；`shard_for`还是不校验count的`routing.partition`副本 | 删除死代码，补模块说明 |
+| `http.dispatch`约200行，在一个函数里混合全部角色的管理、内部RPC、转发、边缘和Web逻辑 | 保留原检查顺序，拆为`admin_status`、`backends`、`database_internal`/`user_operation`（字段表`USER_OPERATIONS`）、`cache_internal`、`forward`、`edge_asset`、`web`；合并两条相同的`store.status()`分支；删除一次性`rpc`包装；`Cache`改为顶层导入；`gate`无重入，改为普通Lock；ASSETS/partition改从定义模块导入 |
+| `App.get`约50行混合缓存探测、副本读、主库回退、回填 | 拆为`_eventual_read`、`_probe_cache`、`_read_replica`、`_primary_record`；失败探测后floor的保留方式与原实现逐步一致，仍经模块级`request` |
+| `Fence`中“租约未持有”检查重复4次、“游标超前”3次，heartbeat/promote的写行与返回字典重复，`__init__`复制了`_connect` | 抽出`_held`、`_ahead`、`_take`，`__init__`复用`_connect`；错误码/文案与加锁顺序不变 |
+| `CacheCluster`四个方法各自复制try/计数循环；`Cache._victim`末尾回退不可达 | 抽出`_each`/`_failed`；LFU用`min(..., key=)`（并列时取插入序首项，与原循环相同） |
+| identity查询在jobs×2、replication×1重复；复制尾部查询重复；32位hex校验在contracts×2与replication×1重复 | `schema.source_identity`、`replication._tail`/`EMPTY_HASH`、`contracts.hex_identity`（保留各自错误文案） |
+| `replicate()`在`validate_change`已校验校验和后再算一遍（不可达）；`bind_partition`重复建`topology`表（SCHEMA已建）；`ProfileMixin.get`直接改Store私有计数 | 删除重复校验与建表；读计数改由`Store._count_read`拥有 |
+| `assets.fetch_asset`边缘/源端两段请求+校验重复 | 抽出`_fetch` |
+| `routes.target`内联角色路由表；`cli.serve_role`同时推导角色、构造组件和后台线程 | 抽出`_routes`；拆为`node_role`、`build_component`、`build_worker`，`serve_role`只负责生命周期（ExitStack顺序不变） |
+
+**刻意保留：** `transport.request`的单一截止时间闭包与`HTTPError`抛出（由`common.request`关闭）；`Cache.put`每次扫描过期项（容量上限1000，改成堆不会更简单）；Fence独立`assert_held`/`publish`（设计文档声明保留）；`store.partition/Consumer`、`app.ASSETS`兼容再导出；`server_runtime`、`balancer`、`workers`、`regions`、`consumer`、`sessions`无具体问题未动。
+
+**验证：** 改前完整套件 **77项＋5子用例/66.93秒**；改后同一命令（`-W error`）**77项＋5子用例/66.13秒**，无跳过。src总行数2613→2605（删死代码，同时新增模块/函数说明）。未重新压测。
+
 ## 2026-11-06：补齐开源源码与并发复核
 
 再次通读原书26–523行、现有双语需求/设计/任务，并用CodeGraph核查资料事务、租约、复制、缓存、轮询路由和本地GeoDNS。此前已有73项及10-27/10-29审查；本轮补齐缺失的[GitHub固定源码对照](open-source-review_cn.md)，不是将已有功能重新计作新增实现。

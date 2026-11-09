@@ -12,3 +12,8 @@ CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,version INTEGER,profile TEX
         CREATE TRIGGER IF NOT EXISTS changes_no_update BEFORE UPDATE ON changes BEGIN SELECT RAISE(ABORT,'immutable profile history'); END;
         CREATE TRIGGER IF NOT EXISTS changes_no_delete BEFORE DELETE ON changes BEGIN SELECT RAISE(ABORT,'immutable profile history'); END;
 """
+
+
+def source_identity(db):
+    """Durable random identity of this database, bound by replicas and consumers."""
+    return db.execute("SELECT value FROM identity WHERE id=1").fetchone()[0]

@@ -1,3 +1,5 @@
+"""Shared errors, canonical JSON, input validators and SQLite connection policy."""
+
 from contextlib import contextmanager
 import hashlib
 import json
@@ -33,10 +35,6 @@ def integer(value, minimum=0, maximum=10**12):
     if type(value) is not int or not minimum <= value <= maximum:
         raise ValueError("integer cents/sequence outside reference limits")
     return value
-
-
-def shard_for(account, count):
-    return int(hashlib.sha256(identifier(account).encode()).hexdigest(), 16) % count
 
 
 def request(url, token, body=None, timeout=10, *, deadline=None, cancel=None):
@@ -101,17 +99,3 @@ class Database:
             except BaseException:
                 db.rollback()
                 raise
-
-
-def entry(seq, previous, event):
-    value = {"seq": seq, "previous": previous, "event": event}
-    return {**value, "hash": checksum(value)}
-
-
-def verify(rows):
-    previous = "0" * 64
-    for index, row in enumerate(rows, 1):
-        if row != entry(index, previous, row["event"]):
-            raise ValueError("event log checksum or sequence mismatch")
-        previous = row["hash"]
-    return previous
