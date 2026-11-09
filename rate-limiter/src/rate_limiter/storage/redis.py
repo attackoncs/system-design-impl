@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any
 import math
 from functools import lru_cache
+from typing import Any
 
 import redis
 from redis.backoff import NoBackoff
 from redis.retry import Retry
 
 from rate_limiter.storage import base as storage_base
-from rate_limiter.storage.clocks import with_server_clock
+from rate_limiter.storage.clocks import clock_key, with_server_clock
 
 
 class RedisStorage(storage_base.BaseStorage):
@@ -117,9 +117,16 @@ class RedisStorage(storage_base.BaseStorage):
         """
         return self._scripts(script)(keys=keys, args=args)
 
-    def execute_algorithm(self, lua_script, memory_script, keys, args):
+    def execute_algorithm(
+        self,
+        lua_script: str,
+        memory_script: Any,
+        keys: list[str],
+        args: list[str],
+    ) -> Any:
+        """Run the Lua algorithm wrapped with Redis TIME and a clock watermark."""
         return self.execute_atomic(
-            with_server_clock(lua_script), [*keys, keys[0] + ":clock-v2"], args
+            with_server_clock(lua_script), [*keys, clock_key(keys)], args
         )
 
     def close(self) -> None:

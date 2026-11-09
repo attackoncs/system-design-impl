@@ -101,18 +101,12 @@ def rate_limit(
         ```
     """
 
-    # Convert algorithm string to enum
-    try:
-        algo = rate_limiter_config.Algorithm(algorithm.lower())
-    except ValueError as error:
-        raise ValueError(
-            f"Unknown algorithm: {algorithm}. Valid options:"
-            f" {', '.join(a.value for a in rate_limiter_config.Algorithm)}"
-        ) from error
-
     # Validate and construct once, including when a caller supplies the backend.
     rule = rate_limiter_config.RateLimitRule(
-        limit=limit, window=window, algorithm=algo, key_func=key_func
+        limit=limit,
+        window=window,
+        algorithm=rate_limiter_config.parse_algorithm(algorithm),
+        key_func=key_func,
     )
     if limiter is None:
         limiter = rate_limiter_core.RateLimiter(

@@ -5,6 +5,16 @@ share responses.py; neither storage nor algorithms import a web framework.
 rule_files.py owns strict file parsing and an optional joinable poller; queue.py
 owns optional FIFO execution. See [review](chapter05-review.md).
 
+Module layout (src/rate_limiter): config.py holds rule models plus
+`parse_algorithm` and `RateLimitRule.effective_limit`; keys.py holds resolvers
+and the `KEY_TYPE_FUNCTIONS` table; core.py snapshots rules, selects subjects,
+applies the failure policy and records metrics. algorithms/base.py owns the
+result decoder, `BaseAlgorithm._execute` (args + clock TTL -> backend -> decoded
+result) and shared bucket/window TTL helpers; each algorithm module only holds
+its Lua script, its Python twin and key layout. storage/clocks.py owns the clock
+watermark key and policy for both backends. middleware/configuration.py builds
+rules for both HTTP adapters without importing a framework.
+
 ```mermaid
 flowchart LR
   Request --> Adapter[Flask / ASGI / decorator]

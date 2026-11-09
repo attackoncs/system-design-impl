@@ -9,7 +9,10 @@ import flask
 
 from rate_limiter import config as rate_limiter_config
 from rate_limiter import core as rate_limiter_core
-from rate_limiter.middleware.configuration import RateLimitConfig, build_rule
+from rate_limiter.middleware.configuration import (  # noqa: F401
+    RateLimitConfig,
+    build_rule,
+)
 from rate_limiter.responses import rate_limit_headers, rejection_body
 
 
@@ -92,16 +95,11 @@ class RateLimitExtension:
         Returns:
             Optional error response dict if rate limited, None otherwise.
         """
-        # Check rate limits
         result = self.limiter.check_request(flask.request)
-
-        # If rate limited, store the result and return error response
-        if not result.allowed:
-            flask.g.rate_limit_result = result
-            return self._rate_limit_response(result)
-
-        # Store the result for header injection
+        # Keep the result for after_request header injection.
         flask.g.rate_limit_result = result
+        if not result.allowed:
+            return self._rate_limit_response(result)
         return None
 
     def _rate_limit_response(self, result) -> dict:
@@ -171,11 +169,9 @@ def rate_limit(
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            # Check rate limit
             result = local_limiter.check_request(flask.request)
-
             if not result.allowed:
-                # Return 429 response
+                # Route-level decorator keeps its historical fixed-429 body.
                 response = flask.jsonify(
                     {
                         "error": "Too Many Requests",
@@ -188,8 +184,6 @@ def rate_limit(
                 )
                 response.status_code = 429
                 return response
-
-            # Call the original function
             return func(*args, **kwargs)
 
         return wrapper
@@ -233,6 +227,7 @@ def create_rate_limited_app(
         )
         ```
     """
-    config = RateLimitConfig()
-    config.add_rule(limit=limit, window=window, algorithm=algorithm, key_type=key_type)
-    return RateLimitExtension(app, config=config.get_config())
+    rule = build_rule(limit, window, algorithm, key_type)
+    return RateLimitExtension(
+        app, config=rate_limiter_config.RateLimiterConfig(rules=[rule])
+    )

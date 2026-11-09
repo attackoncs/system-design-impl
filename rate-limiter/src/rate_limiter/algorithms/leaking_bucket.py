@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import time
 from typing import Any
 
@@ -43,105 +42,74 @@ if elapsed > 0 and drain_rate > 0 then
     queue_count = math.max(0, queue_count - elapsed * drain_rate)
 end
 
--- TTL for storage keys: enough time to drain a full queue plus buffer
-local ttl = math.ceil(capacity / drain_rate) + 1
-
--- Attempt to add to queue
-if queue_count + 1 <= capacity then
+-- A whole request must fit
+local allowed = queue_count + 1 <= capacity
+if allowed then
     queue_count = queue_count + 1
-    redis.call('SET', KEYS[1], tostring(queue_count))
-    redis.call('EXPIRE', KEYS[1], ttl)
-    redis.call('SET', KEYS[2], tostring(now))
-    redis.call('EXPIRE', KEYS[2], ttl)
-
-    local remaining = math.floor(capacity - queue_count)
-    local reset_after = queue_count / drain_rate
-
-    return {1, remaining, capacity, tostring(reset_after), tostring(0)}
-else
-    redis.call('SET', KEYS[1], tostring(queue_count))
-    redis.call('EXPIRE', KEYS[1], ttl)
-    redis.call('SET', KEYS[2], tostring(now))
-    redis.call('EXPIRE', KEYS[2], ttl)
-
-    local retry_after = (queue_count - capacity + 1) / drain_rate
-    local reset_after = queue_count / drain_rate
-
-    return {0, 0, capacity, tostring(reset_after), tostring(retry_after)}
 end
+
+-- Persist state for both outcomes; TTL covers draining a full queue plus buffer
+local ttl = math.ceil(capacity / drain_rate) + 1
+redis.call('SET', KEYS[1], tostring(queue_count))
+redis.call('EXPIRE', KEYS[1], ttl)
+redis.call('SET', KEYS[2], tostring(now))
+redis.call('EXPIRE', KEYS[2], ttl)
+
+local reset_after = queue_count / drain_rate
+if allowed then
+    local remaining = math.floor(capacity - queue_count)
+    return {1, remaining, capacity, tostring(reset_after), tostring(0)}
+end
+local retry_after = (queue_count - capacity + 1) / drain_rate
+return {0, 0, capacity, tostring(reset_after), tostring(retry_after)}
 """
 
 
 def _memory_leaking_bucket_script(
     keys: list[str], args: list[str], storage: Any
 ) -> list[Any]:
-    """Atomic leaking bucket logic for the in-memory backend.
-
-    This callable is passed to MemoryStorage.execute_atomic and runs
-    under the storage's threading lock for atomicity.
+    """Python twin of LUA_SCRIPT, run by MemoryStorage under its lock.
 
     Args:
         keys: [queue_count_key, last_drain_key]
-        args: [capacity, drain_rate, current_time]
+        args: [capacity, drain_rate, current_time, ...]
         storage: The MemoryStorage instance (use get_unlocked/set_unlocked).
 
     Returns:
-        A list: [allowed (1 or 0), remaining (int), limit (int), reset_after
-        (float), retry_after (float)]
+        [allowed (1/0), remaining, limit, reset_after, retry_after]
     """
-    queue_count_key = keys[0]
-    last_drain_key = keys[1]
-
+    queue_count_key, last_drain_key = keys[0], keys[1]
     capacity = float(args[0])
     drain_rate = float(args[1])
     now = float(args[2])
 
-    # Get current state from storage
     raw_queue_count = storage.get_unlocked(queue_count_key)
     raw_last_drain = storage.get_unlocked(last_drain_key)
+    queue_count = 0.0 if raw_queue_count is None else float(raw_queue_count)
+    last_drain = now if raw_last_drain is None else float(raw_last_drain)
 
-    # Initialize if first request
-    if raw_queue_count is None:
-        queue_count = 0.0
-    else:
-        queue_count = float(raw_queue_count)
-
-    if raw_last_drain is None:
-        last_drain = now
-    else:
-        last_drain = float(raw_last_drain)
-
-    # Calculate elapsed time and drain the queue
+    # Drain virtual occupancy based on elapsed time
     elapsed = now - last_drain
     if elapsed > 0 and drain_rate > 0:
         queue_count = max(0.0, queue_count - elapsed * drain_rate)
 
-    # TTL for storage keys: enough time to drain a full queue plus buffer
-    ttl = int(capacity / drain_rate) + 1 if drain_rate > 0 else None
-
-    # Attempt to add to queue
-    if queue_count + 1 <= capacity:
+    # A whole request must fit
+    allowed = queue_count + 1 <= capacity
+    if allowed:
         queue_count += 1
-        # Update storage
-        storage.set_unlocked(queue_count_key, str(queue_count), ttl)
-        storage.set_unlocked(last_drain_key, str(now), ttl)
 
-        remaining = int(capacity - queue_count)
-        # Time until queue is fully drained
-        reset_after = queue_count / drain_rate if drain_rate > 0 else 0.0
+    # Persist state for both outcomes; TTL covers draining a full queue
+    ttl = int(capacity / drain_rate) + 1 if drain_rate > 0 else None
+    storage.set_unlocked(queue_count_key, str(queue_count), ttl)
+    storage.set_unlocked(last_drain_key, str(now), ttl)
 
-        return [1, remaining, int(capacity), reset_after, 0.0]
-    else:
-        # Queue is full — calculate time until one item drains
-        storage.set_unlocked(queue_count_key, str(queue_count), ttl)
-        storage.set_unlocked(last_drain_key, str(now), ttl)
-
-        retry_after = (
-            (queue_count - capacity + 1) / drain_rate if drain_rate > 0 else 0.0
-        )
-        reset_after = queue_count / drain_rate if drain_rate > 0 else 0.0
-
-        return [0, 0, int(capacity), reset_after, retry_after]
+    # Time until the queue is fully drained
+    reset_after = queue_count / drain_rate if drain_rate > 0 else 0.0
+    if allowed:
+        return [1, int(capacity - queue_count), int(capacity), reset_after, 0.0]
+    # Time until enough space drains for one whole request
+    retry_after = (queue_count - capacity + 1) / drain_rate if drain_rate > 0 else 0.0
+    return [0, 0, int(capacity), reset_after, retry_after]
 
 
 class LeakingBucketAlgorithm(algorithms_base.BaseAlgorithm):
@@ -162,36 +130,13 @@ class LeakingBucketAlgorithm(algorithms_base.BaseAlgorithm):
         rule: rate_limiter_config.RateLimitRule,
         storage: storage_base.BaseStorage,
     ) -> algorithms_base.RateLimitResult:
-        """Check if a request should be allowed under the leaking bucket
-        algorithm.
-
-        Args:
-            key: Unique identifier for the rate limit subject.
-            rule: The rate limiting rule to apply.
-            storage: Storage backend to use for state.
-
-        Returns:
-            RateLimitResult indicating if the request is allowed
-            and associated metadata.
-        """
-        capacity = rule.capacity or rule.limit
-        drain_rate = rule.limit / rule.window if rule.window > 0 else 0.0
-        now = time.time()
-
-        queue_count_key = f"{key}:queue_count"
-        last_drain_key = f"{key}:last_drain"
-
-        keys = [queue_count_key, last_drain_key]
-        args = [str(capacity), str(drain_rate), str(now)]
-
-        args.append(
-            str(
-                2 * max(rule.window, math.ceil(capacity * rule.window / rule.limit)) + 1
-            )
+        """Admit one request for ``key`` if it fits in the virtual queue."""
+        capacity, drain_rate, clock_ttl = algorithms_base.bucket_parameters(rule)
+        return self._execute(
+            storage,
+            LUA_SCRIPT,
+            _memory_leaking_bucket_script,
+            [f"{key}:queue_count", f"{key}:last_drain"],
+            [str(capacity), str(drain_rate), str(time.time())],
+            clock_ttl,
         )
-
-        result = storage.execute_algorithm(
-            LUA_SCRIPT, _memory_leaking_bucket_script, keys, args
-        )
-
-        return algorithms_base.RateLimitResult.from_storage(result)

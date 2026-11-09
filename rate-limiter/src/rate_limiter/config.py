@@ -17,6 +17,17 @@ class Algorithm(enum.Enum):
     SLIDING_WINDOW_COUNTER = "sliding_window_counter"
 
 
+def parse_algorithm(name: str) -> Algorithm:
+    """Resolve a case-insensitive algorithm name used by decorators/adapters."""
+    try:
+        return Algorithm(name.lower())
+    except ValueError as error:
+        raise ValueError(
+            f"Unknown algorithm: {name}. Valid options:"
+            f" {', '.join(item.value for item in Algorithm)}"
+        ) from error
+
+
 @dataclasses.dataclass
 class RateLimitRule:
     """A single rate limiting rule.
@@ -73,6 +84,11 @@ class RateLimitRule:
                 raise ValueError("capacity applies only to token and leaking buckets")
             if self.capacity * self.window > 1_000_000_000 * self.limit:
                 raise ValueError("bucket drain time must not exceed 1000000000 seconds")
+
+    @property
+    def effective_limit(self) -> int:
+        """Limit reported to clients: bucket capacity when set, else limit."""
+        return self.capacity or self.limit
 
 
 @dataclasses.dataclass

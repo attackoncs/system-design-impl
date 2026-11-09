@@ -36,31 +36,31 @@ flowchart LR
 
 ## 六站阅读路线
 
-1. [RateLimitRule.__post_init__](../src/rate_limiter/config.py#L43)：先确认持续速率和capacity含义，非法规则应在接收请求前失败。
-2. [RateLimiter.check](../src/rate_limiter/core.py#L128)：输入主体字符串与规则，输出判定；规则被复制，调用方后续修改不影响这次检查。
-3. [RateLimiter._state_key](../src/rate_limiter/core.py#L146)：同主体但不同规则参数必须隔离状态。读完后再观察Redis或内存中的实际键。
-4. [TokenBucketAlgorithm.check](../src/rate_limiter/algorithms/token_bucket.py#L160)：计算capacity、refill_rate，把算法参数交给存储；此处还没有直接扣额度。
-5. [MemoryStorage.execute_algorithm](../src/rate_limiter/storage/memory.py#L102)：在锁内取得时间水位并调用算法实现；这一步把并发读改写变成一个整体。
-6. [_memory_token_bucket_script](../src/rate_limiter/algorithms/token_bucket.py#L76)：读令牌、补令牌、决定是否扣1并写回；返回后再看 [RateLimiter._evaluate](../src/rate_limiter/core.py#L169) 的异常策略和指标。
+1. [RateLimitRule.__post_init__](../src/rate_limiter/config.py#L54)：先确认持续速率和capacity含义，非法规则应在接收请求前失败。
+2. [RateLimiter.check](../src/rate_limiter/core.py#L141)：输入主体字符串与规则，输出判定；规则被复制，调用方后续修改不影响这次检查。
+3. [RateLimiter._state_key](../src/rate_limiter/core.py#L158)：同主体但不同规则参数必须隔离状态。读完后再观察Redis或内存中的实际键。
+4. [TokenBucketAlgorithm.check](../src/rate_limiter/algorithms/token_bucket.py#L126)：计算capacity、refill_rate，把算法参数交给存储；此处还没有直接扣额度。
+5. [MemoryStorage.execute_algorithm](../src/rate_limiter/storage/memory.py#L100)：在锁内取得时间水位并调用算法实现；这一步把并发读改写变成一个整体。
+6. [_memory_token_bucket_script](../src/rate_limiter/algorithms/token_bucket.py#L67)：读令牌、补令牌、决定是否扣1并写回；返回后再看 [RateLimiter._evaluate](../src/rate_limiter/core.py#L173) 的异常策略和指标。
 
 ## 微观一：额度与时间必须在同一把锁内
 
-[memory.py:110](../src/rate_limiter/storage/memory.py#L110)
+[memory.py:108](../src/rate_limiter/storage/memory.py#L108)
 
 ```python
 with self._lock:
     self._sweep()
-    args = list(args)
+    # Sample inside the lock and clamp to the retained high watermark.
     wall = checked_time(
         self._clock() if self._clock is not None else time.time()
     )
-    clock_key = keys[0] + ":clock-v2"
-    previous = self.get_unlocked(clock_key)
+    watermark_key = clock_key(keys)
+    previous = self.get_unlocked(watermark_key)
     now = max(wall, checked_time(previous)) if previous is not None else wall
+    args = list(args)
     args[2] = str(now)
     result = memory_script(keys, args, self)
-    self.set_unlocked(clock_key, str(now), int(args[-1]))
-    return delay_for_clock_regression(result, now - wall)
+    self.set_unlocked(watermark_key, str(now), int(args[-1]))
 ```
 
 锁内先清理过期状态，再取得当前时间；`now=max(wall,previous)` 不让已经观察过的时间倒退。随后整个Python算法在这把锁内运行，同时写令牌与补充时间，最后保存水位。
@@ -69,27 +69,27 @@ with self._lock:
 
 ## 微观二：令牌不足也要保存补充状态
 
-[token_bucket.py:115](../src/rate_limiter/algorithms/token_bucket.py#L115)
+[token_bucket.py:90](../src/rate_limiter/algorithms/token_bucket.py#L90)
 
 ```python
-# Calculate refilled tokens based on elapsed time
+# Refill based on elapsed time
 elapsed = now - last_refill
 if elapsed > 0:
     tokens = min(capacity, tokens + elapsed * refill_rate)
 
-# TTL for storage keys: enough time to cover a full refill cycle plus buffer
-ttl = int(capacity / refill_rate) + 1 if refill_rate > 0 else None
-
 # Attempt to consume one token
-if tokens >= 1:
+allowed = tokens >= 1
+if allowed:
     tokens -= 1
-    # Update storage
-    storage.set_unlocked(tokens_key, str(tokens), ttl)
-    storage.set_unlocked(last_refill_key, str(now), ttl)
 
-    remaining = int(tokens)
-    # Time until bucket is fully refilled
-    reset_after = (capacity - tokens) / refill_rate if refill_rate > 0 else 0.0
+# Persist state for both outcomes; TTL covers a full refill cycle
+ttl = int(capacity / refill_rate) + 1 if refill_rate > 0 else None
+storage.set_unlocked(tokens_key, str(tokens), ttl)
+storage.set_unlocked(last_refill_key, str(now), ttl)
+
+# Time until the bucket is full again
+reset_after = (capacity - tokens) / refill_rate if refill_rate > 0 else 0.0
+if allowed:
 ```
 
 先算 `elapsed`，按时间补充并受capacity限制。足够1个就扣除；剩余小数会保存，返回给调用方的 `remaining` 则取整数。继续读函数后半部：拒绝时也保存当前令牌和时间，再用 `(1-tokens)/refill_rate` 得到等待时间，避免丢失部分补充。
@@ -107,7 +107,7 @@ flowchart TD
 
 额度不足是正常业务拒绝。存储异常则由 `_evaluate` 依据 `fail_open` 决定放行还是拒绝，同时增加 `storage_errors`。放行策略提高可用性，也可能让依赖故障期间失去限流约束；它不是算法计算出的“额度足够”。
 
-多规则检查 [RateLimiter.check_request](../src/rate_limiter/core.py#L206) 会组合结果，但不是跨规则事务。即使最终被某条规则拒绝，其他规则的原子检查也可能已消耗额度。
+多规则检查 [RateLimiter.check_request](../src/rate_limiter/core.py#L214) 会组合结果，但不是跨规则事务。即使最终被某条规则拒绝，其他规则的原子检查也可能已消耗额度。
 
 - [test_shared_memory_has_exact_concurrent_admission](../tests/test_chapter05_review.py#L102)：多个线程并发检查同一主体，允许数量应恰好等于额度。
 - [test_clock_regression_never_resets_quota](../tests/test_chapter05_review.py#L67)：时钟回退不能凭空恢复已消耗额度。

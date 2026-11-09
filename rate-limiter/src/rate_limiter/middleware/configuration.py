@@ -15,20 +15,8 @@ def build_rule(
     path_pattern: Optional[str] = None,
 ) -> config.RateLimitRule:
     """Resolve a named algorithm and request key function consistently."""
-    try:
-        selected = config.Algorithm(algorithm.lower())
-    except ValueError as error:
-        raise ValueError(
-            f"Unknown algorithm: {algorithm}. Valid options:"
-            f" {', '.join(item.value for item in config.Algorithm)}"
-        ) from error
-    functions = {
-        "ip": keys.ip_key,
-        "user_id": keys.user_id_key,
-        "path": keys.path_key,
-        "method": keys.method_key,
-    }
-    if key_type not in functions:
+    selected = config.parse_algorithm(algorithm)
+    if key_type not in keys.KEY_TYPE_FUNCTIONS:
         raise ValueError(f"Unknown key type: {key_type}")
     return config.RateLimitRule(
         limit=limit,

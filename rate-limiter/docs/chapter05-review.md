@@ -1,3 +1,54 @@
+# 第5章生产代码结构复审 — 2026-11-09
+
+本轮只做src/结构与质量重构，不改测试/基准，不改HTTP状态与头、Lua语义、
+fail-open/closed策略、错误类型和存储键布局。先读本文件、设计文档与README，
+保留下文记录的有意决策（v2状态键、接纳日志、单Redis主节点等）。
+
+## 审计发现
+
+| 位置 | 问题 |
+|---|---|
+| decorators.py / middleware/configuration.py | 算法名解析与错误信息逐字重复 |
+| core.py / middleware/configuration.py | key_type到提取函数的映射表重复两份 |
+| core.py | `capacity or limit`出现5次；fail-open/closed结果内联在异常分支；三处1..8192键校验重复；解析器名为超长f-string；无规则早返回与`_most_restrictive_result`空结果重复；`reload_rules`局部导入 |
+| 五个算法 | check()都重复“拼参数→追加时钟TTL→execute_algorithm→from_storage”；两种桶重复速率与时钟TTL公式 |
+| 桶/固定窗口/日志的Lua与Python回调 | 允许/拒绝两个分支重复相同的SET/EXPIRE写入；滑动计数Lua用逐行字符串拼接，难读 |
+| storage/memory.py | “过期即删除”在get_unlocked与_increment_raw重复；时钟键后缀`:clock-v2`在内存/Redis各写一遍 |
+| rule_files.py | read_rules与RuleReloader.poll重复64KiB有界读取 |
+| middleware | Flask钩子在两个分支重复写g；两个create_rate_limited_app为一条规则构造RateLimitConfig中间对象；FastAPI头开关条件重复 |
+
+锁边界审计：配置快照在RateLimiter锁内复制、存储IO在锁外；内存算法在存储RLock内
+采样时钟；RuleReloader锁→limiter锁单向获取，无反向路径。未发现需要修改的并发问题。
+
+## 改动
+
+- config.py：新增`parse_algorithm()`（原错误信息不变）与`RateLimitRule.effective_limit`属性。
+- keys.py：新增`KEY_TYPE_FUNCTIONS`，核心与build_rule共用。
+- core.py：`_checked_key`/`_callable_name`/`_rule_applies`/`_failure_result`小函数；
+  算法类型表`_ALGORITHM_TYPES`；删除冗余早返回；顶层导入read_rules。
+- algorithms/base.py：`BaseAlgorithm._execute()`统一执行与结果校验；
+  `bucket_parameters()`与`window_clock_ttl()`集中TTL公式。
+- 五个算法：check()缩为一次`_execute`调用；Lua与Python回调把写入提到分支之外，
+  滑动计数Lua改为三引号脚本，日志解析提取`_parse_log`。键名与返回值逐项不变。
+- storage：`clocks.clock_key()`；内存`_drop_if_expired()`替代`_is_expired`；
+  Redis `execute_algorithm`补类型和文档。
+- rule_files.py：`_read_bounded()`。
+- middleware：`build_rule`直接构造配置；FastAPI `_headers_enabled()`；Flask钩子简化。
+  `middleware.flask/fastapi.RateLimitConfig`继续作为兼容再导出。
+
+## 有意保留
+
+路由级Flask `rate_limit`仍返回固定429且正文不含retry_after；通用装饰器仍返回
+字典；算法内`time.time()`仍作为自定义后端的客户端时间（测试也在模块上打补丁）；
+`{key}:{window}:{limit}:...`冗余键段保留以免重置线上配额；`rate > 0`防御保留。
+所有公共导入路径不变。
+
+## 验证
+
+重构前后均为265项通过（`-W error`）。另以旧/新代码对比：五算法×25组随机
+规则×40步，在fakeredis上直接执行新旧Lua（固定ARGV时间）返回值完全一致
+（10000次）；内存后端注入时钟时五算法新旧结果逐项一致。src行数3341→3077。
+
 # 第5章复审记录 — 2026-10-27
 
 后续的2026-10-31复核见[章节覆盖与开源代码对照](open-source-review_cn.md)，

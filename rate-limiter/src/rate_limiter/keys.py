@@ -162,6 +162,15 @@ def method_key(request: Any) -> str:
     return "UNKNOWN"
 
 
+# Built-in resolvers selected by RateLimitRule.key_type ("custom" uses key_func).
+KEY_TYPE_FUNCTIONS: dict[str, KeyFunc] = {
+    "ip": ip_key,
+    "user_id": user_id_key,
+    "path": path_key,
+    "method": method_key,
+}
+
+
 def header_key(header_name: str) -> KeyFunc:
     """Create a key function that extracts a specific header.
 

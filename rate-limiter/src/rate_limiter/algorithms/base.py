@@ -5,6 +5,7 @@ from __future__ import annotations
 import abc
 import dataclasses
 import math
+from typing import Any, Callable
 
 from rate_limiter import config
 from rate_limiter.storage import base
@@ -85,3 +86,39 @@ class BaseAlgorithm(abc.ABC):
             RateLimitResult indicating if the request is allowed
             and associated metadata.
         """
+
+    @staticmethod
+    def _execute(
+        storage: base.BaseStorage,
+        lua_script: str,
+        memory_script: Callable[[list[str], list[str], Any], list[Any]],
+        keys: list[str],
+        args: list[str],
+        clock_ttl: int,
+    ) -> RateLimitResult:
+        """Run one atomic check on either backend and validate its result.
+
+        ``args[2]`` is the client-side time; both bundled backends replace it
+        with their own clamped clock. The clock-watermark TTL goes last.
+        """
+        result = storage.execute_algorithm(
+            lua_script, memory_script, keys, [*args, str(clock_ttl)]
+        )
+        return RateLimitResult.from_storage(result)
+
+
+def bucket_parameters(rule: config.RateLimitRule) -> tuple[int, float, int]:
+    """Return (capacity, rate per second, clock TTL) shared by both buckets.
+
+    The clock watermark outlives two windows or two full drains, whichever
+    is longer.
+    """
+    capacity = rule.effective_limit
+    rate = rule.limit / rule.window if rule.window > 0 else 0.0
+    clock_ttl = 2 * max(rule.window, math.ceil(capacity * rule.window / rule.limit)) + 1
+    return capacity, rate, clock_ttl
+
+
+def window_clock_ttl(rule: config.RateLimitRule) -> int:
+    """Clock-watermark TTL for the three window algorithms: two windows."""
+    return 2 * rule.window + 1

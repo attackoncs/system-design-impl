@@ -2,11 +2,23 @@
 
 from __future__ import annotations
 
+import warnings
+
 import fastapi
 import rate_limiter.config
 import rate_limiter.core
 import rate_limiter.middleware.fastapi
-import starlette.testclient
+
+# Starlette >= 1.10 warns at import when only `httpx` (not `httpx2`) backs its
+# TestClient. That upstream deprecation is not a rate-limiter defect, so ignore
+# exactly that category here; everything else stays an error under -W error.
+with warnings.catch_warnings():
+    try:
+        from starlette.exceptions import StarletteDeprecationWarning
+    except ImportError:  # older Starlette has no such category
+        StarletteDeprecationWarning = DeprecationWarning
+    warnings.simplefilter("ignore", StarletteDeprecationWarning)
+    import starlette.testclient
 
 # ---------------------------------------------------------------------------
 # Helpers

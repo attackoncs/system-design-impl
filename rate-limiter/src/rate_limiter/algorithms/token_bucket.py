@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import time
 from typing import Any
 
@@ -43,106 +42,73 @@ if elapsed > 0 then
     tokens = math.min(capacity, tokens + elapsed * refill_rate)
 end
 
--- TTL for storage keys: enough time to cover a full refill cycle plus buffer
-local ttl = math.ceil(capacity / refill_rate) + 1
-
 -- Attempt to consume one token
-if tokens >= 1 then
+local allowed = tokens >= 1
+if allowed then
     tokens = tokens - 1
-    redis.call('SET', KEYS[1], tostring(tokens))
-    redis.call('EXPIRE', KEYS[1], ttl)
-    redis.call('SET', KEYS[2], tostring(now))
-    redis.call('EXPIRE', KEYS[2], ttl)
-
-    local remaining = math.floor(tokens)
-    local reset_after = (capacity - tokens) / refill_rate
-
-    return {1, remaining, capacity, tostring(reset_after), tostring(0)}
-else
-    redis.call('SET', KEYS[1], tostring(tokens))
-    redis.call('EXPIRE', KEYS[1], ttl)
-    redis.call('SET', KEYS[2], tostring(now))
-    redis.call('EXPIRE', KEYS[2], ttl)
-
-    local deficit = 1.0 - tokens
-    local retry_after = deficit / refill_rate
-    local reset_after = (capacity - tokens) / refill_rate
-
-    return {0, 0, capacity, tostring(reset_after), tostring(retry_after)}
 end
+
+-- Persist state for both outcomes; TTL covers a full refill cycle plus buffer
+local ttl = math.ceil(capacity / refill_rate) + 1
+redis.call('SET', KEYS[1], tostring(tokens))
+redis.call('EXPIRE', KEYS[1], ttl)
+redis.call('SET', KEYS[2], tostring(now))
+redis.call('EXPIRE', KEYS[2], ttl)
+
+local reset_after = (capacity - tokens) / refill_rate
+if allowed then
+    return {1, math.floor(tokens), capacity, tostring(reset_after), tostring(0)}
+end
+local retry_after = (1.0 - tokens) / refill_rate
+return {0, 0, capacity, tostring(reset_after), tostring(retry_after)}
 """
 
 
 def _memory_token_bucket_script(
     keys: list[str], args: list[str], storage: Any
 ) -> list[Any]:
-    """Atomic token bucket logic for the in-memory backend.
-
-    This callable is passed to MemoryStorage.execute_atomic and runs
-    under the storage's threading lock for atomicity.
+    """Python twin of LUA_SCRIPT, run by MemoryStorage under its lock.
 
     Args:
         keys: [tokens_key, last_refill_key]
-        args: [capacity, refill_rate, current_time]
+        args: [capacity, refill_rate, current_time, ...]
         storage: The MemoryStorage instance (use get_unlocked/set_unlocked).
 
     Returns:
-        A list: [allowed (1 or 0), remaining (int), limit (int), reset_after
-        (float), retry_after (float)]
+        [allowed (1/0), remaining, limit, reset_after, retry_after]
     """
-    tokens_key = keys[0]
-    last_refill_key = keys[1]
-
+    tokens_key, last_refill_key = keys[0], keys[1]
     capacity = float(args[0])
     refill_rate = float(args[1])
     now = float(args[2])
 
-    # Get current state from storage
     raw_tokens = storage.get_unlocked(tokens_key)
     raw_last_refill = storage.get_unlocked(last_refill_key)
+    tokens = capacity if raw_tokens is None else float(raw_tokens)
+    last_refill = now if raw_last_refill is None else float(raw_last_refill)
 
-    # Initialize if first request
-    if raw_tokens is None:
-        tokens = capacity
-    else:
-        tokens = float(raw_tokens)
-
-    if raw_last_refill is None:
-        last_refill = now
-    else:
-        last_refill = float(raw_last_refill)
-
-    # Calculate refilled tokens based on elapsed time
+    # Refill based on elapsed time
     elapsed = now - last_refill
     if elapsed > 0:
         tokens = min(capacity, tokens + elapsed * refill_rate)
 
-    # TTL for storage keys: enough time to cover a full refill cycle plus buffer
-    ttl = int(capacity / refill_rate) + 1 if refill_rate > 0 else None
-
     # Attempt to consume one token
-    if tokens >= 1:
+    allowed = tokens >= 1
+    if allowed:
         tokens -= 1
-        # Update storage
-        storage.set_unlocked(tokens_key, str(tokens), ttl)
-        storage.set_unlocked(last_refill_key, str(now), ttl)
 
-        remaining = int(tokens)
-        # Time until bucket is fully refilled
-        reset_after = (capacity - tokens) / refill_rate if refill_rate > 0 else 0.0
+    # Persist state for both outcomes; TTL covers a full refill cycle
+    ttl = int(capacity / refill_rate) + 1 if refill_rate > 0 else None
+    storage.set_unlocked(tokens_key, str(tokens), ttl)
+    storage.set_unlocked(last_refill_key, str(now), ttl)
 
-        return [1, remaining, int(capacity), reset_after, 0.0]
-    else:
-        # Denied — calculate how long until one token is available
-        storage.set_unlocked(tokens_key, str(tokens), ttl)
-        storage.set_unlocked(last_refill_key, str(now), ttl)
-
-        # Time until at least 1 token is refilled
-        deficit = 1.0 - tokens
-        retry_after = deficit / refill_rate if refill_rate > 0 else 0.0
-        reset_after = (capacity - tokens) / refill_rate if refill_rate > 0 else 0.0
-
-        return [0, 0, int(capacity), reset_after, retry_after]
+    # Time until the bucket is full again
+    reset_after = (capacity - tokens) / refill_rate if refill_rate > 0 else 0.0
+    if allowed:
+        return [1, int(tokens), int(capacity), reset_after, 0.0]
+    # Time until at least one token is refilled
+    retry_after = (1.0 - tokens) / refill_rate if refill_rate > 0 else 0.0
+    return [0, 0, int(capacity), reset_after, retry_after]
 
 
 class TokenBucketAlgorithm(algorithms_base.BaseAlgorithm):
@@ -163,36 +129,13 @@ class TokenBucketAlgorithm(algorithms_base.BaseAlgorithm):
         rule: rate_limiter_config.RateLimitRule,
         storage: storage_base.BaseStorage,
     ) -> algorithms_base.RateLimitResult:
-        """Check if a request should be allowed under the token bucket
-        algorithm.
-
-        Args:
-            key: Unique identifier for the rate limit subject.
-            rule: The rate limiting rule to apply.
-            storage: Storage backend to use for state.
-
-        Returns:
-            RateLimitResult indicating if the request is allowed
-            and associated metadata.
-        """
-        capacity = rule.capacity or rule.limit
-        refill_rate = rule.limit / rule.window if rule.window > 0 else 0.0
-        now = time.time()
-
-        tokens_key = f"{key}:tokens"
-        last_refill_key = f"{key}:last_refill"
-
-        keys = [tokens_key, last_refill_key]
-        args = [str(capacity), str(refill_rate), str(now)]
-
-        args.append(
-            str(
-                2 * max(rule.window, math.ceil(capacity * rule.window / rule.limit)) + 1
-            )
+        """Consume one token for ``key`` if available."""
+        capacity, refill_rate, clock_ttl = algorithms_base.bucket_parameters(rule)
+        return self._execute(
+            storage,
+            LUA_SCRIPT,
+            _memory_token_bucket_script,
+            [f"{key}:tokens", f"{key}:last_refill"],
+            [str(capacity), str(refill_rate), str(time.time())],
+            clock_ttl,
         )
-
-        result = storage.execute_algorithm(
-            LUA_SCRIPT, _memory_token_bucket_script, keys, args
-        )
-
-        return algorithms_base.RateLimitResult.from_storage(result)

@@ -47,111 +47,72 @@ if window_start ~= current_window then
     window_start = current_window
 end
 
--- TTL for storage keys: window duration plus buffer
-local ttl = window + 1
-
--- Check if request is allowed
-if counter < limit then
+local allowed = counter < limit
+if allowed then
     counter = counter + 1
-    -- Update storage
-    redis.call('SET', KEYS[1], tostring(window_start))
-    redis.call('EXPIRE', KEYS[1], ttl)
-    redis.call('SET', KEYS[2], tostring(counter))
-    redis.call('EXPIRE', KEYS[2], ttl)
-
-    local remaining = limit - counter
-    -- Time until current window resets
-    local reset_after = window_start + window - now
-
-    return {1, remaining, limit, tostring(reset_after), tostring(0)}
-else
-    -- Denied — calculate retry_after
-    redis.call('SET', KEYS[1], tostring(window_start))
-    redis.call('EXPIRE', KEYS[1], ttl)
-    redis.call('SET', KEYS[2], tostring(counter))
-    redis.call('EXPIRE', KEYS[2], ttl)
-
-    -- Time until next window starts
-    local retry_after = window_start + window - now
-    local reset_after = window_start + window - now
-
-    return {0, 0, limit, tostring(reset_after), tostring(retry_after)}
 end
+
+-- Persist state for both outcomes; TTL is the window plus buffer
+local ttl = window + 1
+redis.call('SET', KEYS[1], tostring(window_start))
+redis.call('EXPIRE', KEYS[1], ttl)
+redis.call('SET', KEYS[2], tostring(counter))
+redis.call('EXPIRE', KEYS[2], ttl)
+
+-- Time until the current window ends (also the retry delay when denied)
+local reset_after = window_start + window - now
+if allowed then
+    return {1, limit - counter, limit, tostring(reset_after), tostring(0)}
+end
+return {0, 0, limit, tostring(reset_after), tostring(reset_after)}
 """
 
 
 def _memory_fixed_window_script(
     keys: list[str], args: list[str], storage: Any
 ) -> list[Any]:
-    """Atomic fixed window counter logic for the in-memory backend.
-
-    This callable is passed to MemoryStorage.execute_atomic and runs
-    under the storage's threading lock for atomicity.
+    """Python twin of LUA_SCRIPT, run by MemoryStorage under its lock.
 
     Args:
         keys: [window_start_key, counter_key]
-        args: [window, limit, current_time]
+        args: [window, limit, current_time, ...]
         storage: The MemoryStorage instance (use get_unlocked/set_unlocked).
 
     Returns:
-        A list: [allowed (1 or 0), remaining (int), limit (int), reset_after
-        (float), retry_after (float)]
+        [allowed (1/0), remaining, limit, reset_after, retry_after]
     """
-    window_start_key = keys[0]
-    counter_key = keys[1]
-
+    window_start_key, counter_key = keys[0], keys[1]
     window = int(args[0])
     limit = int(args[1])
     now = float(args[2])
 
-    # Get current state from storage
     raw_window_start = storage.get_unlocked(window_start_key)
     raw_counter = storage.get_unlocked(counter_key)
-
-    # Calculate current window start
     current_window = math.floor(now / window) * window
-
-    # Initialize if first request
-    if raw_window_start is None:
-        window_start = current_window
-    else:
-        window_start = float(raw_window_start)
-
-    if raw_counter is None:
-        counter = 0
-    else:
-        counter = int(raw_counter)
+    window_start = (
+        current_window if raw_window_start is None else float(raw_window_start)
+    )
+    counter = 0 if raw_counter is None else int(raw_counter)
 
     # Reset if we've moved to a new window
     if window_start != current_window:
         counter = 0
         window_start = current_window
 
-    # TTL for storage keys: window duration plus buffer
-    ttl = window + 1
-
-    # Check if request is allowed
-    if counter < limit:
+    allowed = counter < limit
+    if allowed:
         counter += 1
-        # Update storage
-        storage.set_unlocked(window_start_key, str(window_start), ttl)
-        storage.set_unlocked(counter_key, str(counter), ttl)
 
-        remaining = limit - counter
-        # Time until current window resets
-        reset_after = window_start + window - now
+    # Persist state for both outcomes; TTL is the window plus buffer
+    ttl = window + 1
+    storage.set_unlocked(window_start_key, str(window_start), ttl)
+    storage.set_unlocked(counter_key, str(counter), ttl)
 
-        return [1, remaining, limit, reset_after, 0.0]
-    else:
-        # Denied — calculate retry_after
-        storage.set_unlocked(window_start_key, str(window_start), ttl)
-        storage.set_unlocked(counter_key, str(counter), ttl)
-
-        # Time until next window starts
-        retry_after = window_start + window - now
-        reset_after = window_start + window - now
-
-        return [0, 0, limit, reset_after, retry_after]
+    # Time until the current window ends (also the retry delay when denied)
+    reset_after = window_start + window - now
+    if allowed:
+        return [1, limit - counter, limit, reset_after, 0.0]
+    return [0, 0, limit, reset_after, reset_after]
 
 
 class FixedWindowAlgorithm(algorithms_base.BaseAlgorithm):
@@ -173,35 +134,14 @@ class FixedWindowAlgorithm(algorithms_base.BaseAlgorithm):
         rule: rate_limiter_config.RateLimitRule,
         storage: storage_base.BaseStorage,
     ) -> algorithms_base.RateLimitResult:
-        """Check if a request should be allowed under the fixed window
-        algorithm.
-
-        Args:
-            key: Unique identifier for the rate limit subject.
-            rule: The rate limiting rule to apply.
-            storage: Storage backend to use for state.
-
-        Returns:
-            RateLimitResult indicating if the request is allowed
-            and associated metadata.
-        """
-        window = rule.window
-        limit = rule.limit
-        now = time.time()
-
-        # Include rule parameters in the key to ensure different rules are
-        # isolated
-        rule_suffix = f":{window}:{limit}"
-        window_start_key = f"{key}{rule_suffix}:window_start"
-        counter_key = f"{key}{rule_suffix}:counter"
-
-        keys = [window_start_key, counter_key]
-        args = [str(window), str(limit), str(now)]
-
-        args.append(str(2 * rule.window + 1))
-
-        result = storage.execute_algorithm(
-            LUA_SCRIPT, _memory_fixed_window_script, keys, args
+        """Count one request for ``key`` in the current fixed window."""
+        # Storage key layout {key}:{window}:{limit}:... is kept stable.
+        prefix = f"{key}:{rule.window}:{rule.limit}"
+        return self._execute(
+            storage,
+            LUA_SCRIPT,
+            _memory_fixed_window_script,
+            [f"{prefix}:window_start", f"{prefix}:counter"],
+            [str(rule.window), str(rule.limit), str(time.time())],
+            algorithms_base.window_clock_ttl(rule),
         )
-
-        return algorithms_base.RateLimitResult.from_storage(result)

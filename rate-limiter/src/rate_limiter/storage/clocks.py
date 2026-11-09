@@ -4,16 +4,26 @@ from __future__ import annotations
 
 import math
 from functools import lru_cache
+from typing import Any
+
+CLOCK_KEY_SUFFIX = ":clock-v2"
 
 
-def checked_time(value) -> float:
+def clock_key(keys: list[str]) -> str:
+    """Per-bucket high-watermark key, derived from the algorithm's first key."""
+    return keys[0] + CLOCK_KEY_SUFFIX
+
+
+def checked_time(value: Any) -> float:
+    """Parse a stored/sampled clock, rejecting non-finite or absurd values."""
     number = float(value)
     if not math.isfinite(number) or not 0 <= number <= 1e12:
         raise ValueError("clock must be finite and in 0..1e12")
     return number
 
 
-def delay_for_clock_regression(result, skew):
+def delay_for_clock_regression(result: list[Any], skew: float) -> list[Any]:
+    """Add a clamped clock regression to reset (and retry, when denied)."""
     if skew:
         result[3] = float(result[3]) + skew
         if not int(result[0]):

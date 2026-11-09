@@ -21,12 +21,20 @@ def _unique_fields(pairs):
     return result
 
 
-def read_rules(path) -> list[RateLimitRule]:
+_MAX_RULE_FILE_BYTES = 65_536
+
+
+def _read_bounded(path) -> bytes:
+    """Read at most one byte past the limit so oversized files are rejected."""
     with Path(path).open("rb") as stream:
-        payload = stream.read(65_537)
-    if len(payload) > 65_536:
+        payload = stream.read(_MAX_RULE_FILE_BYTES + 1)
+    if len(payload) > _MAX_RULE_FILE_BYTES:
         raise ValueError("rule file exceeds 64 KiB")
-    return parse_rules(payload)
+    return payload
+
+
+def read_rules(path) -> list[RateLimitRule]:
+    return parse_rules(_read_bounded(path))
 
 
 def parse_rules(payload: bytes) -> list[RateLimitRule]:
@@ -82,10 +90,7 @@ class RuleReloader:
         with self._lock:
             try:
                 # Parse exactly the bounded bytes associated with this digest.
-                with self.path.open("rb") as stream:
-                    payload = stream.read(65_537)
-                if len(payload) > 65_536:
-                    raise ValueError("rule file exceeds 64 KiB")
+                payload = _read_bounded(self.path)
                 digest = hashlib.sha256(payload).digest()
                 if digest == self._digest:
                     return False

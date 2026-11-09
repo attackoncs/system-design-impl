@@ -24,11 +24,44 @@ from rate_limiter.algorithms import (
     sliding_window_log,
     token_bucket,
 )
+from rate_limiter.rule_files import read_rules
 from rate_limiter.storage import base as storage_base
 from rate_limiter.storage import memory as storage_memory
 from rate_limiter.storage import redis as storage_redis
 
 logger = logging.getLogger(__name__)
+
+_ALGORITHM_TYPES: dict[rate_limiter_config.Algorithm, type] = {
+    rate_limiter_config.Algorithm.TOKEN_BUCKET: token_bucket.TokenBucketAlgorithm,
+    rate_limiter_config.Algorithm.LEAKING_BUCKET: (
+        leaking_bucket.LeakingBucketAlgorithm
+    ),
+    rate_limiter_config.Algorithm.FIXED_WINDOW: fixed_window.FixedWindowAlgorithm,
+    rate_limiter_config.Algorithm.SLIDING_WINDOW_LOG: (
+        sliding_window_log.SlidingWindowLogAlgorithm
+    ),
+    rate_limiter_config.Algorithm.SLIDING_WINDOW_COUNTER: (
+        sliding_window_counter.SlidingWindowCounterAlgorithm
+    ),
+}
+
+_MAX_KEY_LENGTH = 8192
+
+
+def _checked_key(key: Any, message: str) -> str:
+    """Bound subject length before any rule charges storage."""
+    if not isinstance(key, str) or not 1 <= len(key) <= _MAX_KEY_LENGTH:
+        raise ValueError(message)
+    return key
+
+
+def _callable_name(func: Any) -> Optional[str]:
+    """Stable module-qualified name of a key resolver (part of policy identity)."""
+    if func is None:
+        return None
+    module = getattr(func, "__module__", type(func).__module__)
+    qualname = getattr(func, "__qualname__", type(func).__qualname__)
+    return f"{module}.{qualname}"
 
 
 @lru_cache(maxsize=512)
@@ -102,28 +135,8 @@ class RateLimiter:
         rate_limiter_config.Algorithm,
         algorithms_base.BaseAlgorithm,
     ]:
-        """Load all algorithm implementations.
-
-        Returns:
-            Dictionary mapping Algorithm enum to algorithm instances.
-        """
-        return {
-            rate_limiter_config.Algorithm.TOKEN_BUCKET: (
-                token_bucket.TokenBucketAlgorithm()
-            ),
-            rate_limiter_config.Algorithm.LEAKING_BUCKET: (
-                leaking_bucket.LeakingBucketAlgorithm()
-            ),
-            rate_limiter_config.Algorithm.FIXED_WINDOW: (
-                fixed_window.FixedWindowAlgorithm()
-            ),
-            rate_limiter_config.Algorithm.SLIDING_WINDOW_LOG: (
-                sliding_window_log.SlidingWindowLogAlgorithm()
-            ),
-            rate_limiter_config.Algorithm.SLIDING_WINDOW_COUNTER: (
-                sliding_window_counter.SlidingWindowCounterAlgorithm()
-            ),
-        }
+        """Create one stateless instance per supported algorithm."""
+        return {algorithm: cls() for algorithm, cls in _ALGORITHM_TYPES.items()}
 
     def check(
         self, key: str, rule: rate_limiter_config.RateLimitRule
@@ -139,24 +152,15 @@ class RateLimiter:
             metadata.
         """
         rule = dataclasses.replace(rule)
-        if not isinstance(key, str) or not 1 <= len(key) <= 8192:
-            raise ValueError("key must have 1..8192 characters")
+        _checked_key(key, "key must have 1..8192 characters")
         return self._evaluate(self._state_key(key, rule), rule)
 
     def _state_key(self, key, rule):
-        resolver = rule.key_func
-        resolver_name = (
-            None
-            if resolver is None
-            else (
-                f"{getattr(resolver, '__module__', type(resolver).__module__)}.{getattr(resolver, '__qualname__', type(resolver).__qualname__)}"
-            )
-        )
         identity = (
             rule.name,
             rule.path_pattern,
             rule.key_type,
-            resolver_name,
+            _callable_name(rule.key_func),
             rule.capacity,
             rule.window,
             rule.limit,
@@ -171,7 +175,7 @@ class RateLimiter:
         failed = False
         try:
             result = algorithm.check(key, rule, self._storage)
-            if result.limit != (rule.capacity or rule.limit):
+            if result.limit != rule.effective_limit:
                 raise ValueError("storage returned the wrong limit")
         # Isolate this operation; record failures before continuing.
         except Exception as e:  # pylint: disable=broad-exception-caught
@@ -181,27 +185,31 @@ class RateLimiter:
                 "fail-open" if self._config.fail_open else "fail-closed",
                 type(e).__name__,
             )
-            if self._config.fail_open:
-                result = algorithms_base.RateLimitResult(
-                    allowed=True,
-                    remaining=rule.capacity or rule.limit,
-                    limit=rule.capacity or rule.limit,
-                    reset_after=0.0,
-                    retry_after=None,
-                )
-            else:
-                result = algorithms_base.RateLimitResult(
-                    allowed=False,
-                    remaining=0,
-                    limit=rule.capacity or rule.limit,
-                    reset_after=float(rule.window),
-                    retry_after=float(rule.window),
-                )
+            result = self._failure_result(rule)
         with self._lock:
             self._metrics["checks"] += 1
             self._metrics["allowed" if result.allowed else "denied"] += 1
             self._metrics["storage_errors"] += int(failed)
         return result
+
+    def _failure_result(self, rule) -> algorithms_base.RateLimitResult:
+        """Apply the configured fail-open/fail-closed policy to one rule."""
+        limit = rule.effective_limit
+        if self._config.fail_open:
+            return algorithms_base.RateLimitResult(
+                allowed=True,
+                remaining=limit,
+                limit=limit,
+                reset_after=0.0,
+                retry_after=None,
+            )
+        return algorithms_base.RateLimitResult(
+            allowed=False,
+            remaining=0,
+            limit=limit,
+            reset_after=float(rule.window),
+            retry_after=float(rule.window),
+        )
 
     def check_request(
         self,
@@ -234,41 +242,32 @@ class RateLimiter:
         else:
             rules = self._copy_rules(rules)
 
-        if not rules:
-            # No rules to check, allow by default
-            return algorithms_base.RateLimitResult(
-                allowed=True,
-                remaining=0,
-                limit=0,
-                reset_after=0.0,
-                retry_after=None,
-            )
-
         results = []
         seen = set()
         for rule in rules:
-            if rule.path_pattern is not None and (
-                isinstance(request_context, str)
-                or not fnmatch.fnmatchcase(
-                    rate_limiter_keys.path_key(request_context), rule.path_pattern
-                )
-            ):
+            if not self._rule_applies(request_context, rule):
                 continue
-            # Determine key for this rule
-            key = self._resolve_key(request_context, rule)
-
-            # Include rule parameters in the key to ensure different rules are
-            # isolated
-            full_key = self._state_key(key, rule)
+            # The state key includes policy identity, so different rules are
+            # isolated and identical rules are charged once per request.
+            full_key = self._state_key(self._resolve_key(request_context, rule), rule)
             if full_key in seen:
                 continue
             seen.add(full_key)
+            results.append(self._evaluate(full_key, rule))
 
-            result = self._evaluate(full_key, rule)
-            results.append(result)
-
-        # Return the most restrictive result
+        # No applicable rules allows by default.
         return self._most_restrictive_result(results)
+
+    @staticmethod
+    def _rule_applies(
+        request_context: Any, rule: rate_limiter_config.RateLimitRule
+    ) -> bool:
+        """Path-filtered rules match only request objects with a matching path."""
+        if rule.path_pattern is None:
+            return True
+        return not isinstance(request_context, str) and fnmatch.fnmatchcase(
+            rate_limiter_keys.path_key(request_context), rule.path_pattern
+        )
 
     def _resolve_key(
         self, request_context: Any, rule: rate_limiter_config.RateLimitRule
@@ -284,26 +283,15 @@ class RateLimiter:
         """
         # If request_context is a plain string, use it directly as the key
         if isinstance(request_context, str):
-            if not 1 <= len(request_context) <= 8192:
-                raise ValueError("key must have 1..8192 characters")
-            return request_context
+            return _checked_key(request_context, "key must have 1..8192 characters")
 
-        # Use rule's custom key function if provided
         # Selectors are resolved before storage, outside the config lock.
-        functions = {
-            "ip": rate_limiter_keys.ip_key,
-            "user_id": rate_limiter_keys.user_id_key,
-            "path": rate_limiter_keys.path_key,
-            "method": rate_limiter_keys.method_key,
-        }
-        key = (
-            rule.key_func(request_context)
-            if rule.key_func is not None
-            else functions[rule.key_type](request_context)
+        resolver = rule.key_func
+        if resolver is None:
+            resolver = rate_limiter_keys.KEY_TYPE_FUNCTIONS[rule.key_type]
+        return _checked_key(
+            resolver(request_context), "resolved key must have 1..8192 characters"
         )
-        if not isinstance(key, str) or not 1 <= len(key) <= 8192:
-            raise ValueError("resolved key must have 1..8192 characters")
-        return key
 
     def _most_restrictive_result(
         self, results: list[algorithms_base.RateLimitResult]
@@ -321,11 +309,7 @@ class RateLimiter:
         """
         if not results:
             return algorithms_base.RateLimitResult(
-                allowed=True,
-                remaining=0,
-                limit=0,
-                reset_after=0.0,
-                retry_after=None,
+                allowed=True, remaining=0, limit=0, reset_after=0.0, retry_after=None
             )
 
         # Find any denied results
@@ -354,8 +338,6 @@ class RateLimiter:
 
     def reload_rules(self, path) -> int:
         """Validate a complete JSON rule file, then atomically publish it."""
-        from rate_limiter.rule_files import read_rules
-
         rules = read_rules(path)
         self.update_rules(rules)
         return len(rules)

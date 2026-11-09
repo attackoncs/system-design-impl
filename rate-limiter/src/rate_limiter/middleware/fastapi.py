@@ -11,7 +11,10 @@ import starlette.responses
 
 from rate_limiter import config as rate_limiter_config
 from rate_limiter import core as rate_limiter_core
-from rate_limiter.middleware.configuration import RateLimitConfig
+from rate_limiter.middleware.configuration import (  # noqa: F401
+    RateLimitConfig,
+    build_rule,
+)
 from rate_limiter.responses import rate_limit_headers, rejection_body
 
 
@@ -55,24 +58,19 @@ class RateLimitMiddleware(starlette.middleware.base.BaseHTTPMiddleware):
         Returns:
             The response, either rate limited (429) or the actual response.
         """
-        # Check rate limits
         # Storage backends are synchronous (Redis may wait on network I/O).
         # Use Starlette's bounded worker pool to keep the event loop responsive.
         result = await run_in_threadpool(self.limiter.check_request, request)
-
-        # If rate limited, return 429 response
         if not result.allowed:
-            response = self._rate_limit_response(result)
-            return response
+            return self._rate_limit_response(result)
 
-        # Process the request
         response = await call_next(request)
-
-        # Add rate limit headers if enabled
-        if self.auto_headers and self.limiter.config.include_headers:
+        if self._headers_enabled():
             self._add_rate_limit_headers(response, result)
-
         return response
+
+    def _headers_enabled(self) -> bool:
+        return self.auto_headers and self.limiter.config.include_headers
 
     def _rate_limit_response(self, result) -> starlette.responses.JSONResponse:
         """Create a 429 Too Many Requests response.
@@ -83,11 +81,7 @@ class RateLimitMiddleware(starlette.middleware.base.BaseHTTPMiddleware):
         Returns:
             JSONResponse with 429 status and error details.
         """
-        headers = (
-            rate_limit_headers(result)
-            if self.auto_headers and self.limiter.config.include_headers
-            else {}
-        )
+        headers = rate_limit_headers(result) if self._headers_enabled() else {}
         return starlette.responses.JSONResponse(
             status_code=self.limiter.config.default_response_code,
             content=rejection_body(result),
@@ -134,6 +128,7 @@ def create_rate_limited_app(
         )
         ```
     """
-    config = RateLimitConfig()
-    config.add_rule(limit=limit, window=window, algorithm=algorithm, key_type=key_type)
-    return RateLimitMiddleware(app, config=config.get_config())
+    rule = build_rule(limit, window, algorithm, key_type)
+    return RateLimitMiddleware(
+        app, config=rate_limiter_config.RateLimiterConfig(rules=[rule])
+    )

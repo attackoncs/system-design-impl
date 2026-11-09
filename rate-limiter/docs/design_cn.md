@@ -4,6 +4,14 @@
 Flask/FastAPI。rule_files.py负责有界JSON解析、完整校验及可停止轮询；
 queue.py负责可选FIFO执行。[章节映射](chapter05-review.md)。
 
+模块划分（src/rate_limiter）：config.py含规则模型、`parse_algorithm`和
+`RateLimitRule.effective_limit`；keys.py含提取函数及`KEY_TYPE_FUNCTIONS`表；
+core.py负责规则快照、主体选择、失败策略和指标。algorithms/base.py负责结果
+解码、`BaseAlgorithm._execute`（参数+时钟TTL→后端→解码）及桶/窗口TTL公共
+函数；各算法模块只保留Lua脚本、对应Python回调与键布局。storage/clocks.py
+统一两种后端的时钟高水位键与策略。middleware/configuration.py为两个HTTP
+适配器构造规则且不导入框架。
+
 ## 策略与并发
 
 构造/更新复制配置与规则，读取返回副本；请求在短RLock内获取规则集合快照，

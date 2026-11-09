@@ -25,140 +25,95 @@ local request_id = ARGV[4]
 local cutoff = now - window
 redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', cutoff)
 
--- Count current entries
+-- Count current entries; only accepted requests are logged
 local count = redis.call('ZCARD', KEYS[1])
-
--- Check if we can add this request
-if count < limit then
-    -- Allow request and add timestamp to log
+local allowed = count < limit
+if allowed then
     redis.call('ZADD', KEYS[1], now, request_id)
-
-    -- Set TTL to ensure cleanup (window + 1 second buffer)
-    redis.call('EXPIRE', KEYS[1], math.ceil(window) + 1)
-
-    local remaining = limit - count - 1
-
-    -- Find oldest entry to calculate reset time
-    -- ZRANGEBYSCORE returns flat array: [member1, score1, member2, score2, ...]
-    local oldest_entries = redis.call('ZRANGE', KEYS[1], 0, 0, 'WITHSCORES')
-    local reset_after
-    if #oldest_entries >= 2 then
-        local oldest_time = tonumber(oldest_entries[2])
-        reset_after = oldest_time + window - now
-    else
-        reset_after = window
-    end
-
-    return {1, remaining, limit, tostring(reset_after), tostring(0)}
-else
-    -- Deny request
-
-    -- Find oldest entry to calculate retry time
-    local oldest_entries = redis.call('ZRANGE', KEYS[1], 0, 0, 'WITHSCORES')
-    local retry_after
-    if #oldest_entries >= 2 then
-        local oldest_time = tonumber(oldest_entries[2])
-        retry_after = oldest_time + window - now
-    else
-        retry_after = window
-    end
-
-    -- Set TTL to ensure cleanup
-    redis.call('EXPIRE', KEYS[1], math.ceil(window) + 1)
-
-    return {0, 0, limit, tostring(retry_after), tostring(retry_after)}
 end
+
+-- Set TTL to ensure cleanup (window + 1 second buffer)
+redis.call('EXPIRE', KEYS[1], math.ceil(window) + 1)
+
+-- Time until the oldest logged entry leaves the window
+-- ZRANGE WITHSCORES returns a flat array: [member1, score1, ...]
+local oldest_entries = redis.call('ZRANGE', KEYS[1], 0, 0, 'WITHSCORES')
+local until_oldest_expires
+if #oldest_entries >= 2 then
+    until_oldest_expires = tonumber(oldest_entries[2]) + window - now
+else
+    until_oldest_expires = window
+end
+
+if allowed then
+    local remaining = limit - count - 1
+    return {1, remaining, limit, tostring(until_oldest_expires), tostring(0)}
+end
+return {0, 0, limit, tostring(until_oldest_expires), tostring(until_oldest_expires)}
 """
+
+
+def _parse_log(raw_log: str | None) -> list[tuple[float, str]]:
+    """Decode "timestamp,id;timestamp,id;..." into (timestamp, id) pairs."""
+    entries = []
+    for entry in (raw_log or "").split(";"):
+        parts = entry.split(",") if entry else []
+        if len(parts) == 2:
+            entries.append((float(parts[0]), parts[1]))
+    return entries
 
 
 def _memory_sliding_window_log_script(
     keys: list[str], args: list[str], storage: Any
 ) -> list[Any]:
-    """Atomic sliding window log logic for the in-memory backend.
-
-    This callable is passed to MemoryStorage.execute_atomic and runs
-    under the storage's threading lock for atomicity.
+    """Python twin of LUA_SCRIPT, run by MemoryStorage under its lock.
 
     Args:
         keys: [log_key]
-        args: [limit, window, current_time, request_id]
+        args: [limit, window, current_time, request_id, ...]
         storage: The MemoryStorage instance (use get_unlocked/set_unlocked).
 
     Returns:
-        A list: [allowed (1 or 0), remaining (int), limit (int), reset_after
-        (float), retry_after (float)]
+        [allowed (1/0), remaining, limit, reset_after, retry_after]
     """
     log_key = keys[0]
-
     limit = int(args[0])
     window = int(args[1])
     now = float(args[2])
     request_id = args[3]
 
-    # Get current log from storage
-    raw_log = storage.get_unlocked(log_key)
-
-    if raw_log is None:
-        log_entries = []
-    else:
-        # Parse stored log entries (format: "timestamp1,id1;timestamp2,id2;...")
-        log_entries = []
-        if raw_log:
-            for entry in raw_log.split(";"):
-                if entry:
-                    parts = entry.split(",")
-                    if len(parts) == 2:
-                        timestamp, entry_id = float(parts[0]), parts[1]
-                        log_entries.append((timestamp, entry_id))
-
-    # Remove expired entries (older than window)
+    # Drop entries older than the window; only accepted requests are logged
     cutoff = now - window
-    current_entries = [(ts, entry_id) for ts, entry_id in log_entries if ts > cutoff]
+    entries = [
+        (ts, entry_id)
+        for ts, entry_id in _parse_log(storage.get_unlocked(log_key))
+        if ts > cutoff
+    ]
+    allowed = len(entries) < limit
+    if allowed:
+        entries.append((now, request_id))
 
-    # Check if we can add this request
-    if len(current_entries) < limit:
-        # Allow request and add timestamp to log
-        current_entries.append((now, request_id))
+    # Persist the pruned log for both outcomes to maintain its TTL
+    log_str = ";".join(f"{ts},{entry_id}" for ts, entry_id in entries)
+    storage.set_unlocked(log_key, log_str, window + 1)
 
-        # Store updated log
-        log_str = ";".join([f"{ts},{entry_id}" for ts, entry_id in current_entries])
-        ttl = window + 1
-        storage.set_unlocked(log_key, log_str, ttl)
-
-        remaining = limit - len(current_entries)
-
-        # Calculate reset time (when oldest entry expires)
-        if current_entries:
-            oldest_time = min(ts for ts, _ in current_entries)
-            reset_after = oldest_time + window - now
-        else:
-            reset_after = window
-
-        return [1, remaining, limit, reset_after, 0.0]
+    # Time until the oldest logged entry leaves the window
+    if entries:
+        until_oldest_expires = min(ts for ts, _ in entries) + window - now
     else:
-        # Deny request
-
-        # Calculate retry time (when oldest entry expires)
-        if current_entries:
-            oldest_time = min(ts for ts, _ in current_entries)
-            retry_after = oldest_time + window - now
-        else:
-            retry_after = window
-
-        # Store log (even if denied, to maintain TTL)
-        log_str = ";".join([f"{ts},{entry_id}" for ts, entry_id in current_entries])
-        ttl = window + 1
-        storage.set_unlocked(log_key, log_str, ttl)
-
-        return [0, 0, limit, retry_after, retry_after]
+        until_oldest_expires = window
+    if allowed:
+        return [1, limit - len(entries), limit, until_oldest_expires, 0.0]
+    return [0, 0, limit, until_oldest_expires, until_oldest_expires]
 
 
 class SlidingWindowLogAlgorithm(algorithms_base.BaseAlgorithm):
     """Sliding Window Log rate limiting algorithm.
 
-    The sliding window log algorithm maintains a log of all request timestamps
-    within the current window. It provides precise rate limiting but uses more
-    memory than other algorithms as it stores individual request timestamps.
+    The sliding window log algorithm maintains a log of accepted request
+    timestamps within the current window. It provides precise rate limiting
+    but uses more memory than other algorithms as it stores individual
+    request timestamps.
 
     - Window size = rule.window seconds
     - Maximum requests per window = rule.limit
@@ -173,35 +128,14 @@ class SlidingWindowLogAlgorithm(algorithms_base.BaseAlgorithm):
         rule: rate_limiter_config.RateLimitRule,
         storage: storage_base.BaseStorage,
     ) -> algorithms_base.RateLimitResult:
-        """Check if a request should be allowed under the sliding window log
-        algorithm.
-
-        Args:
-            key: Unique identifier for the rate limit subject.
-            rule: The rate limiting rule to apply.
-            storage: Storage backend to use for state.
-
-        Returns:
-            RateLimitResult indicating if the request is allowed
-            and associated metadata.
-        """
-        now = time.time()
-
-        # Generate unique request ID for this request
+        """Log one accepted request for ``key`` if the window has room."""
+        # A unique member keeps same-timestamp requests distinct.
         request_id = uuid.uuid4().hex
-
-        # Include rule parameters in the key to ensure different rules are
-        # isolated
-        rule_suffix = f":{rule.window}:{rule.limit}"
-        log_key = f"{key}{rule_suffix}:log"
-
-        keys = [log_key]
-        args = [str(rule.limit), str(rule.window), str(now), request_id]
-
-        args.append(str(2 * rule.window + 1))
-
-        result = storage.execute_algorithm(
-            LUA_SCRIPT, _memory_sliding_window_log_script, keys, args
+        return self._execute(
+            storage,
+            LUA_SCRIPT,
+            _memory_sliding_window_log_script,
+            [f"{key}:{rule.window}:{rule.limit}:log"],
+            [str(rule.limit), str(rule.window), str(time.time()), request_id],
+            algorithms_base.window_clock_ttl(rule),
         )
-
-        return algorithms_base.RateLimitResult.from_storage(result)

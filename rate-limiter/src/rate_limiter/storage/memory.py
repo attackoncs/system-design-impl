@@ -8,7 +8,11 @@ from collections import OrderedDict
 from typing import Any
 
 from rate_limiter.storage import base as storage_base
-from rate_limiter.storage.clocks import checked_time, delay_for_clock_regression
+from rate_limiter.storage.clocks import (
+    checked_time,
+    clock_key,
+    delay_for_clock_regression,
+)
 
 
 class MemoryStorage(storage_base.BaseStorage):
@@ -43,18 +47,12 @@ class MemoryStorage(storage_base.BaseStorage):
             else:
                 self._expiry[key] = expiry
 
-    def _is_expired(self, key: str) -> bool:
-        """Check if a key has expired.
-
-        Args:
-            key: The storage key to check.
-
-        Returns:
-            True if the key exists in _expiry and its expiry time has passed.
-        """
-        if key in self._expiry:
-            return time.monotonic() >= self._expiry[key]
-        return False
+    def _drop_if_expired(self, key: str) -> None:
+        """Remove a key whose monotonic deadline has passed (caller holds lock)."""
+        expiry = self._expiry.get(key)
+        if expiry is not None and time.monotonic() >= expiry:
+            self._data.pop(key, None)
+            self._expiry.pop(key, None)
 
     def get(self, key: str) -> str | None:
         """Get a value by key, returning None if expired or missing.
@@ -109,16 +107,17 @@ class MemoryStorage(storage_base.BaseStorage):
         """Execute the Python implementation of an atomic algorithm."""
         with self._lock:
             self._sweep()
-            args = list(args)
+            # Sample inside the lock and clamp to the retained high watermark.
             wall = checked_time(
                 self._clock() if self._clock is not None else time.time()
             )
-            clock_key = keys[0] + ":clock-v2"
-            previous = self.get_unlocked(clock_key)
+            watermark_key = clock_key(keys)
+            previous = self.get_unlocked(watermark_key)
             now = max(wall, checked_time(previous)) if previous is not None else wall
+            args = list(args)
             args[2] = str(now)
             result = memory_script(keys, args, self)
-            self.set_unlocked(clock_key, str(now), int(args[-1]))
+            self.set_unlocked(watermark_key, str(now), int(args[-1]))
             return delay_for_clock_regression(result, now - wall)
 
     def execute_atomic(self, script: Any, keys: list[str], args: list[str]) -> Any:
@@ -161,10 +160,7 @@ class MemoryStorage(storage_base.BaseStorage):
         Returns:
             The stored value as a string, or None if expired or missing.
         """
-        if self._is_expired(key):
-            self._data.pop(key, None)
-            self._expiry.pop(key, None)
-            return None
+        self._drop_if_expired(key)
         return self._data.get(key)
 
     def set_unlocked(self, key: str, value: str, ttl: int | None = None) -> None:
@@ -202,10 +198,7 @@ class MemoryStorage(storage_base.BaseStorage):
         Returns:
             The new value after incrementing.
         """
-        if self._is_expired(key):
-            self._data.pop(key, None)
-            self._expiry.pop(key, None)
-
+        self._drop_if_expired(key)
         current = int(self._data.get(key, "0"))
         new_value = current + amount
         # Match Redis INCRBY: preserve an existing TTL unless one is supplied.
