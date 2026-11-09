@@ -41,16 +41,16 @@ flowchart TB
 
 ## 六站源码路线
 
-1. [Sequencer.submit](../src/stock_exchange/storage.py#L111)：输入owner、kind和body，输出seq及ACCEPTED。看去重索引和日志怎样同事务提交。
-2. [Engine.apply](../src/stock_exchange/storage.py#L297)：核对前缀、序号和hash，确定哪些命令可以应用。
+1. [Sequencer.submit](../src/stock_exchange/storage.py#L112)：输入owner、kind和body，输出seq及ACCEPTED。看去重索引和日志怎样同事务提交。
+2. [Engine.apply](../src/stock_exchange/storage.py#L312)：核对前缀、序号和hash，确定哪些命令可以应用。
 3. [reduce_command](../src/stock_exchange/matching.py#L46)：核心业务。先跟new订单的校验、资金／持仓预留，再跟撮合循环。
 4. [OrderBook.best](../src/stock_exchange/order_book.py#L88)与[OrderBook.consume](../src/stock_exchange/order_book.py#L77)：看最佳价格如何定位，以及同价队列怎样保留时间顺序。
-5. [market_batch](../src/stock_exchange/storage.py#L209)：比较新旧状态，把该命令的增量输出读清楚，别误认为行情会重新撮合。
-6. [Market.apply](../src/stock_exchange/market.py#L86)及[Engine.replay](../src/stock_exchange/storage.py#L253)：前者检查行情增量，后者从命令重建权威撮合状态。
+5. [market_batch](../src/stock_exchange/storage.py#L210)：比较新旧状态，把该命令的增量输出读清楚，别误认为行情会重新撮合。
+6. [Market.apply](../src/stock_exchange/market.py#L86)及[Engine.replay](../src/stock_exchange/storage.py#L254)：前者检查行情增量，后者从命令重建权威撮合状态。
 
 ## 微观一：已收到的seq也不能无条件忽略
 
-[storage.py:303](../src/stock_exchange/storage.py#L303)
+[storage.py:318](../src/stock_exchange/storage.py#L318)
 
 ```python
 with self.transaction() as db:
@@ -129,12 +129,12 @@ flowchart TD
   A --> F["发布前后及消费端核验epoch和前缀"]
 ```
 
-[storage.py:196](../src/stock_exchange/storage.py#L196)
+[storage.py:197](../src/stock_exchange/storage.py#L197)
 
 ```python
     expected = {}
     for row in rows:
-        expected = reduce_command(expected, row["event"])
+        expected = apply_command(expected, row["event"])
     if replica["state_hash"] != checksum(expected):
         raise Error(
             409, "candidate state differs from independent sequencer replay"

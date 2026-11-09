@@ -97,7 +97,7 @@ Use the admin credential:
 
 After primary failure, keep the sequencer available, allow backup replay to catch up, then promote manually. A concurrent new command can cause promotion to return 409; retry after catch-up. Old engines cannot publish through `/internal/serve` or feed after the active epoch changes. The inactive node may continue computing the same command prefix as a standby; these are replicated projections, not additional external trades. A restarted gateway retains the selected node and epoch. Engine publication fails closed when the sequencer/control service is unavailable.
 
-Snapshots are fsynced and atomically replaced. Startup checks the entire command hash chain and validates snapshot state against its replay prefix before applying tail commands. Replay never resubmits a client order or sends a trade externally. This prioritizes validation over startup speed; logs are retained, not compacted. Raw administrative/internal replica reads are distinct from active publication.
+Snapshots are fsynced and atomically replaced. Startup checks the entire command hash chain and validates snapshot state against its replay prefix before applying tail commands. Replay never resubmits a client order or sends a trade externally. This still prioritizes validation over skipping history, but it is now a single linear pass (about 8.3 s → 0.3 s at the 1,000-command cap); logs are retained, not compacted. Raw administrative/internal replica reads are distinct from active publication.
 
 ## Measured limits
 

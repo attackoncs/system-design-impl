@@ -45,6 +45,16 @@ def release(state, order, reason):
 
 def reduce_command(state, command):
     """Pure sequenced matching, replaying commands never emits network orders."""
+    return apply_command(copy.deepcopy(state), command)
+
+
+def apply_command(state, command):
+    """Apply one sequenced command to a caller-owned state in place.
+
+    Replay loops own their state; copying it per command made replay
+    O(commands x state). On error the state may be partially updated and must
+    be discarded with the failed replay or rolled-back transaction.
+    """
     if not isinstance(command, dict):
         raise ValueError("command object required")
     if command.get("kind") == "genesis":
@@ -87,7 +97,6 @@ def reduce_command(state, command):
         raise ValueError("command sequence or timestamp regressed/gapped")
     if command["owner"] not in state["accounts"]:
         raise ValueError("unknown command owner")
-    state = copy.deepcopy(state)
     state["last_seq"], state["last_timestamp"] = command["seq"], command["timestamp"]
     owner, body, seq, stamp = (
         command["owner"],

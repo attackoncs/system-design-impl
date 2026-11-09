@@ -1,9 +1,10 @@
+import copy
 import json
 import threading
 from pathlib import Path
 
 from .common import Database, Error, checksum, encode, entry, integer, verify
-from .matching import audit, book, reduce_command
+from .matching import apply_command, audit, book, reduce_command
 from .contracts import (
     freeze,
     fields,
@@ -83,7 +84,7 @@ class Sequencer(Log):
             replay, expected = {}, set()
             for row in self.rows(db):
                 event = row["event"]
-                replay = reduce_command(replay, event)
+                replay = apply_command(replay, event)
                 if event["kind"] != "genesis":
                     expected.add(
                         (
@@ -195,7 +196,7 @@ class Sequencer(Log):
                 raise Error(409, "promotion requires complete sequencer prefix")
             expected = {}
             for row in rows:
-                expected = reduce_command(expected, row["event"])
+                expected = apply_command(expected, row["event"])
             if replica["state_hash"] != checksum(expected):
                 raise Error(
                     409, "candidate state differs from independent sequencer replay"
@@ -254,7 +255,7 @@ class Engine(Log):
         verify(rows)
         state = {}
         for row in rows:
-            state = reduce_command(state, row["event"])
+            state = apply_command(state, row["event"])
         return state
 
     def rebuild(self):
@@ -262,37 +263,51 @@ class Engine(Log):
             return self._rebuild()
 
     def _rebuild(self):
+        """One linear, hash-verified pass from genesis.
+
+        The same pass checks the snapshot against the replayed prefix at its
+        sequence and rebuilds the retained market-delta window; only states
+        inside that window are copied (``retention`` copies, not one per row).
+        """
         with self.transaction() as db:
             rows = self.rows(db)
-            state = self.replay(rows)
-            path = Path(str(self.path) + ".snapshot.json")
-            if path.exists():
-                value = json.loads(path.read_text())
-                payload = value["payload"]
-                seq = integer(payload["seq"], 1, len(rows))
-                prefix = self.replay(rows[:seq])
-                if (
-                    value["checksum"] != checksum(payload)
-                    or payload["head"] != rows[seq - 1]["hash"]
-                    or not compatible(payload["state"], prefix)
-                ):
-                    raise ValueError("snapshot checksum or replay mismatch")
-                state = prefix
-                for row in rows[seq:]:
-                    state = reduce_command(state, row["event"])
+            verify(rows)
+            snapshot = self._load_snapshot(rows)
+            window = len(rows) - self.retention
             db.execute("DELETE FROM batches")
-            previous = {}
+            state = {}
             for row in rows:
-                updated = reduce_command(previous, row["event"])
-                if row["seq"] > len(rows) - self.retention:
+                previous = copy.deepcopy(state) if row["seq"] > window else None
+                state = apply_command(state, row["event"])
+                if previous is not None:
                     db.execute(
                         "INSERT INTO batches VALUES(?,?)",
-                        (row["seq"], encode(market_batch(previous, updated, row))),
+                        (row["seq"], encode(market_batch(previous, state, row))),
                     )
-                previous = updated
+                if (
+                    snapshot is not None
+                    and row["seq"] == snapshot["seq"]
+                    and not compatible(snapshot["state"], state)
+                ):
+                    raise ValueError("snapshot checksum or replay mismatch")
             db.execute(
                 "INSERT OR REPLACE INTO projection VALUES(1,?)", (encode(state),)
             )
+
+    def _load_snapshot(self, rows):
+        """Checksum- and head-checked snapshot payload, or None when absent."""
+        path = Path(str(self.path) + ".snapshot.json")
+        if not path.exists():
+            return None
+        value = json.loads(path.read_text())
+        payload = value["payload"]
+        seq = integer(payload["seq"], 1, len(rows))
+        if (
+            value["checksum"] != checksum(payload)
+            or payload["head"] != rows[seq - 1]["hash"]
+        ):
+            raise ValueError("snapshot checksum or replay mismatch")
+        return payload
 
     def apply(self, row):
         row = freeze(row)
@@ -312,12 +327,15 @@ class Engine(Log):
                 return
             if row != entry(tail["seq"] + 1, tail["hash"], row["event"]):
                 raise Error(409, "command sequence/checksum gap")
-            state = json.loads(db.execute("SELECT state FROM projection").fetchone()[0])
+            raw = db.execute("SELECT state FROM projection").fetchone()[0]
+            state = json.loads(raw)
             if state and not audit(state)["matches"]:
                 raise Error(
                     409, "read projection failed audit; rebuild before matching"
                 )
-            updated = reduce_command(state, row["event"])
+            # A second parse is an independent copy, far cheaper than deepcopy;
+            # market_batch needs both the previous and the updated state.
+            updated = apply_command(json.loads(raw), row["event"])
             batch = market_batch(state, updated, row)
             db.execute("INSERT INTO events VALUES(?,?)", (seq, encode(row)))
             db.execute(
