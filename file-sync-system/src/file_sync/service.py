@@ -25,10 +25,38 @@ class Conflict(ValueError):
     pass
 
 
+# Default change-event retention: 30 days and 100,000 rows per space.
+EVENT_MAX_AGE = 30 * 86400
+EVENT_MAX_PER_SPACE = 100_000
+
+
 class Drive:
-    def __init__(self, db, objects, block_size=4 * 1024**2, clock=time.time):
+    def __init__(
+        self,
+        db,
+        objects,
+        block_size=4 * 1024**2,
+        clock=time.time,
+        *,
+        event_max_age=EVENT_MAX_AGE,
+        event_max_per_space=EVENT_MAX_PER_SPACE,
+    ):
         if type(block_size) is not int or not 1 <= block_size <= 4 * 1024**2:
             raise ValueError("block size must be 1..4 MiB")
+        # Either retention bound may be None (disabled); devices whose cursor
+        # falls behind the retained window re-snapshot instead of missing events.
+        try:
+            valid_age = event_max_age is None or (
+                type(event_max_age) in (int, float)
+                and math.isfinite(event_max_age)
+                and event_max_age > 0
+            )
+        except OverflowError:
+            valid_age = False
+        if not valid_age or event_max_per_space is not None and (
+            type(event_max_per_space) is not int or event_max_per_space < 1
+        ):
+            raise ValueError("invalid event retention policy")
         self.clock, self.block_size = clock, block_size
         if not callable(clock):
             raise ValueError("clock must be callable")
@@ -55,6 +83,28 @@ class Drive:
                     time.sleep(0.01)
             self.db.executescript(SCHEMA)
             with self.transaction():
+                if "used" not in {
+                    row[1] for row in self.db.execute("PRAGMA table_info(users)")
+                }:
+                    # Pre-counter database: add and backfill users.used once,
+                    # atomically, from the revisions it summarizes.
+                    self.db.execute(
+                        "ALTER TABLE users ADD COLUMN used INTEGER NOT NULL DEFAULT 0"
+                    )
+                    self.db.execute(
+                        "UPDATE users SET used=(SELECT COALESCE(SUM(r.size),0) FROM revisions r JOIN files f ON r.file=f.id JOIN spaces s ON f.space=s.id WHERE s.owner=users.name)"
+                    )
+                if "created" not in {
+                    row[1] for row in self.db.execute("PRAGMA table_info(events)")
+                }:
+                    # Pre-retention database: start every retained event's age
+                    # now and count rows per space once; nothing was pruned yet.
+                    self.db.execute("ALTER TABLE events ADD COLUMN created REAL")
+                    self.db.execute("UPDATE events SET created=?", (clock(),))
+                    self.db.execute(
+                        "INSERT OR REPLACE INTO event_spaces(space,floor,retained) "
+                        "SELECT space,0,COUNT(*) FROM events GROUP BY space"
+                    )
                 self.db.execute(
                     "INSERT OR IGNORE INTO settings VALUES('master',?)",
                     (secrets.token_hex(32),),
@@ -83,6 +133,9 @@ class Drive:
                 self.transaction,
                 self._operations.condition,
                 self._operations.stopping,
+                clock,
+                event_max_age,
+                event_max_per_space,
             )
         except BaseException:
             self.db.close()
@@ -129,7 +182,9 @@ class Drive:
             raise ValueError("invalid user/quota")
         token = secrets.token_urlsafe(32)
         with self.transaction():
-            self.db.execute("INSERT OR IGNORE INTO users VALUES(?,?)", (user, quota))
+            self.db.execute(
+                "INSERT OR IGNORE INTO users(name,quota) VALUES(?,?)", (user, quota)
+            )
             self.db.execute(
                 "INSERT INTO tokens VALUES(?,?)",
                 (hashlib.sha256(token.encode()).hexdigest(), user),
@@ -176,18 +231,16 @@ class Drive:
 
     @owned
     def quota(self, owner):
+        # `used` is the stored size of every retained revision in the owner's
+        # spaces, maintained in the commit/prune transactions that change it.
         with self.read():
-            used = self.db.execute(
-                "SELECT COALESCE(SUM(r.size),0) FROM revisions r JOIN files f ON r.file=f.id JOIN spaces s ON f.space=s.id WHERE s.owner=?",
-                (owner,),
-            ).fetchone()[0]
             reserved = self.db.execute(
                 "SELECT COALESCE(SUM(u.size),0) FROM uploads u JOIN spaces s ON u.space=s.id WHERE s.owner=? AND u.state='OPEN'",
                 (owner,),
             ).fetchone()[0]
-            maximum = self.db.execute(
-                "SELECT quota FROM users WHERE name=?", (owner,)
-            ).fetchone()[0]
+            used, maximum = self.db.execute(
+                "SELECT used,quota FROM users WHERE name=?", (owner,)
+            ).fetchone()
             return {"used": used, "reserved": reserved, "limit": maximum}
 
     @owned
@@ -457,6 +510,10 @@ class Drive:
                     "UPDATE blocks SET refs=refs+1 WHERE space=? AND digest=?",
                     (row["space"], block["digest"]),
                 )
+            self.db.execute(
+                "UPDATE users SET used=used+? WHERE name=(SELECT owner FROM spaces WHERE id=?)",
+                (row["size"], row["space"]),
+            )
             self.db.execute("UPDATE files SET head=? WHERE id=?", (revision, file))
             result = {
                 "file": file,
@@ -638,6 +695,75 @@ class Drive:
         )
 
     @owned
+    def snapshot(self, token, device, space=None):
+        """Current heads plus the event cursor they reflect, for re-snapshots.
+
+        One write transaction reads the file heads, the cursor and records the
+        delivery, so no event at or below the cursor is missing from the heads
+        and every later event is either still retained or flagged by a floor.
+        Without `space`, covers every workspace the user can read.
+        """
+        user = self.auth(token)
+        with self.transaction():
+            if (
+                self.db.execute(
+                    "SELECT 1 FROM devices WHERE id=? AND user=?", (device, user)
+                ).fetchone()
+                is None
+            ):
+                raise PermissionError("device registration required")
+            if space is None:
+                spaces = [
+                    row[0]
+                    for row in self.db.execute(
+                        "SELECT space FROM members WHERE user=? ORDER BY space", (user,)
+                    )
+                ]
+            else:
+                self.access(user, space)
+                spaces = [space]
+            files = []
+            for current in spaces:
+                files.extend(
+                    {
+                        "file": row["id"],
+                        "space": current,
+                        "path": row["path"],
+                        "revision": row["head"],
+                        "version": row["version"],
+                        "deleted": bool(row["deleted"]),
+                    }
+                    for row in self.db.execute(
+                        "SELECT f.id,f.path,f.head,r.version,r.deleted FROM files f "
+                        "JOIN revisions r ON r.id=f.head WHERE f.space=? ORDER BY f.path",
+                        (current,),
+                    )
+                )
+            cursor = self.events.high()
+            self.db.execute(
+                "UPDATE devices SET delivered=MAX(delivered,?) WHERE id=?",
+                (cursor, device),
+            )
+            return {"cursor": cursor, "files": files}
+
+    @owned
+    def expire_events(self, budget=1000):
+        """Maintenance sweep: apply retention to idle spaces as well.
+
+        Appends already prune their own space incrementally; this catches spaces
+        that stopped receiving events. One short transaction per space.
+        """
+        if type(budget) is not int or budget < 1:
+            raise ValueError("invalid retention budget")
+        with self.read():
+            spaces = [r[0] for r in self.db.execute("SELECT space FROM event_spaces")]
+        removed = 0
+        for space in spaces:
+            with self.transaction():
+                removed += self.events.retain(space, budget)
+        return removed
+
+    @owned
     def ack(self, token, device, cursor):
         """Acknowledge only monotonic, previously delivered durable positions."""
         return self.events.ack(self.auth(token), device, cursor)
@@ -667,7 +793,7 @@ class Drive:
             if role != "owner":
                 raise PermissionError("owner required")
             rows = self.db.execute(
-                "SELECT id,blocks FROM revisions WHERE file=? ORDER BY rowid DESC",
+                "SELECT id,size,blocks FROM revisions WHERE file=? ORDER BY rowid DESC",
                 (file,),
             ).fetchall()
             remove = [r for r in rows[keep:] if r["id"] != meta["revision"]]
@@ -678,6 +804,10 @@ class Drive:
                         (meta["space"], block["digest"]),
                     )
                 self.db.execute("DELETE FROM revisions WHERE id=?", (row["id"],))
+            self.db.execute(
+                "UPDATE users SET used=used-? WHERE name=(SELECT owner FROM spaces WHERE id=?)",
+                (sum(row["size"] for row in remove), meta["space"]),
+            )
             return len(remove)
 
     @owned
@@ -736,4 +866,4 @@ class Drive:
                         else:
                             path.unlink()
                         removed += 1
-            return {"removed_objects": removed}
+        return {"removed_objects": removed, "expired_events": self.expire_events()}

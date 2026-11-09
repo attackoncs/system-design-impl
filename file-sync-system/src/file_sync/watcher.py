@@ -22,6 +22,12 @@ class SyncWatcher:
     and local deletes, then applies notifications. Work is serial and bounded;
     rapid rewrites are retried on the next cycle. Preserved local-conflict copies
     remain local until explicitly pushed or renamed by the user.
+
+    Change detection is stat-based, like rsync's quick check: a file whose
+    (size, mtime_ns) still equals the stat last verified by hashing is skipped
+    without being read. An edit that preserves both size and mtime_ns (for
+    example a tool that restores mtime) is therefore not noticed; an explicit
+    client.push always rehashes and uploads such a file.
     """
 
     def __init__(self, client, space, *, interval=1, poll_wait=1, max_files=10000):
@@ -72,19 +78,30 @@ class SyncWatcher:
             paths = self._scan(stop)
             existing = set(paths)
             rows = client.db.execute(
-                "SELECT path,deleted FROM files WHERE space=?", (self.space,)
+                "SELECT path,deleted,size,mtime_ns FROM files WHERE space=?",
+                (self.space,),
             ).fetchall()
+            verified = {
+                path: (size, mtime)
+                for path, deleted, size, mtime in rows
+                if not deleted and size is not None
+            }
+            pending = {row[0] for row in client.db.execute("SELECT path FROM pending")}
             report = {"pushed": 0, "deleted": 0, "events": 0}
             failure = None
             for relative in paths:
                 if stop.is_set():
                     return report
                 try:
+                    if relative in verified and relative not in pending:
+                        item = os.stat(client.root / relative, follow_symlinks=False)
+                        if verified[relative] == (item.st_size, item.st_mtime_ns):
+                            continue  # Unchanged since last hash: skip reading.
                     result = client.push(self.space, relative)
                     report["pushed"] += not result.get("unchanged", False)
                 except OSError as error:
                     failure = failure or error
-            for relative, deleted in rows:
+            for relative, deleted, _size, _mtime in rows:
                 if stop.is_set():
                     return report
                 # Recheck the actual path: a scan excludes symlinks and protected

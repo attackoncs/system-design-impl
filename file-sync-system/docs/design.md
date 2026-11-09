@@ -28,7 +28,9 @@ its session records that result so a retry cannot create multiple copies. A stal
 delete is rejected. Revisions and tombstones remain available until explicit
 retention pruning. Quota counts logical bytes across retained revisions, including
 conflicts, plus open upload reservations; physical dedup savings do not increase
-the logical quota. Retention never removes the current head.
+the logical quota. Retention never removes the current head. Retained bytes are a
+`users.used` counter updated in the commit/prune transactions (backfilled once when
+an older database is opened), so upload admission does not sum all revisions.
 
 ## Storage and security
 
@@ -65,6 +67,10 @@ names and symlinks; the client checks containment and reserves its state directo
 An OS ownership lock enforces one client process per device folder. Automatic sync
 binds one workspace, has a directory-entry limit and capped failure backoff; protected
 conflict copies remain local. This is polling/scanning, not a native OS watcher.
+The scan skips files whose (size, mtime_ns) equal the stat last verified by hashing
+(stored per file in client state; NULL after any remote update or for pre-upgrade
+rows means hash); files modified within 2 s are always hashed, and explicit push
+always rehashes. Same-size, same-mtime edits are the accepted stat-detection gap.
 The reference assumes no hostile privileged local filesystem races. HTTP binds to
 loopback; remote use needs TLS. The device cache defaults to a 64 MiB disk budget.
 
@@ -84,12 +90,39 @@ changes response cannot advance the local cursor or acknowledgement. Complete
 close-delimited responses without Content-Length remain supported. Connections,
 responses and deadline timers close on both success and failure.
 
+### Event retention and re-snapshot
+
+Policy: per workspace, events older than `event_max_age` (default 30 days) and rows
+beyond `event_max_per_space` (default 100,000) are pruned; either bound may be
+disabled. `event_spaces(space, floor, retained)` tracks a row counter and a floor.
+Pruning only ever deletes an oldest prefix of one workspace (`events(space, seq)`
+index, `DELETE ... WHERE space=? AND seq<=?`) and raises the floor in the same
+transaction, so "seq <= floor" is exactly the pruned set. Every append prunes at most
+`max(64, 2 * rows added)` rows of its own workspace (amortized, no count scans);
+`cleanup`/`expire_events` sweeps workspaces that went idle. The log high-water mark
+comes from `sqlite_sequence`, so cursors stay valid even if every row is pruned.
+Old databases gain `events.created` (set to the open time) and per-space counters once.
+
+Consistency: `changes` reads the high-water mark, the floors of the user's
+workspaces and the events in one read transaction. If any floor exceeds the cursor
+it returns no events, the same cursor and `resnapshot: true`; otherwise every event
+after the cursor is still present in that snapshot, so no gap is delivered.
+`POST /snapshot` reads current heads, the high-water mark H and records delivery of
+H in one `BEGIN IMMEDIATE` transaction: all events <= H are reflected in the heads
+and events > H are either retained or, if later pruned, raise a floor above H and
+trigger another re-snapshot. The client applies heads newer than its local version
+through the normal `apply` path (dirty local files become local-conflict copies,
+tombstones delete), then persists and acknowledges H; a failure keeps the old cursor.
+The check is conservative: pruning in any of a user's workspaces may force a cheap
+re-snapshot (unchanged versions are skipped without requests). One snapshot response
+is bounded by the 4 MiB client JSON limit (tens of thousands of files).
+
 ## Limits and validation
 
 Fixed-size chunks reuse unchanged aligned blocks, not rsync-style byte shifting.
 SQLite/local storage provide a runnable persistence reference; multi-host HA,
-replicated object storage, bounded production event retention and mobile watchers
-remain extensions. Simple uploads reuse the resumable state machine up to one block;
+replicated object storage, sustained stress testing of event retention and mobile
+watchers remain extensions. Simple uploads reuse the resumable state machine up to one block;
 large files retain the manifest/session flow. File history supports an optional limit.
 
 See [chapter audit](chapter16-review.md) for current executed evidence.

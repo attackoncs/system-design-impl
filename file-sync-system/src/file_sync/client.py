@@ -8,6 +8,7 @@ import os
 import re
 import stat
 import threading
+import time
 from pathlib import Path
 import sqlite3
 from urllib.error import HTTPError
@@ -17,6 +18,9 @@ import uuid
 from .paths import safe_path
 from .manifests import normalize
 from .client_transport import request as transport_request
+
+# Minimum age of a file's mtime before its stat may stand in for its hash.
+STAT_SETTLE_NS = 2 * 10**9
 
 
 def serialized(method):
@@ -109,18 +113,23 @@ class DeviceClient:
             self.db.executescript("""
                 CREATE TABLE IF NOT EXISTS files (
                     file TEXT PRIMARY KEY,path TEXT,revision TEXT,checksum TEXT,
-                    space TEXT,version INTEGER,deleted INTEGER NOT NULL DEFAULT 0
+                    space TEXT,version INTEGER,deleted INTEGER NOT NULL DEFAULT 0,
+                    size INTEGER,mtime_ns INTEGER
                 );
                 CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY,value TEXT);
                 CREATE TABLE IF NOT EXISTS pending(path TEXT PRIMARY KEY,payload TEXT);
                 CREATE TABLE IF NOT EXISTS local_copies(path TEXT PRIMARY KEY);
             """)
-            if "deleted" not in {
-                row[1] for row in self.db.execute("PRAGMA table_info(files)")
-            }:
-                self.db.execute(
-                    "ALTER TABLE files ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0"
-                )
+            columns = {row[1] for row in self.db.execute("PRAGMA table_info(files)")}
+            for column, kind in (
+                ("deleted", "INTEGER NOT NULL DEFAULT 0"),
+                # Local (size, mtime_ns) last verified to hash to `checksum`;
+                # NULL (including every pre-upgrade row) means unknown: hash.
+                ("size", "INTEGER"),
+                ("mtime_ns", "INTEGER"),
+            ):
+                if column not in columns:
+                    self.db.execute(f"ALTER TABLE files ADD COLUMN {column} {kind}")
             identity = json.dumps(
                 [self.url, device, hashlib.sha256(token.encode()).hexdigest()]
             )
@@ -252,6 +261,12 @@ class DeviceClient:
             or len(batch["events"]) > 1000
         ):
             raise OSError("invalid notification batch")
+        if batch.get("resnapshot", False) is not False and (
+            batch["resnapshot"] is not True
+            or batch["events"]
+            or batch["cursor"] != cursor
+        ):
+            raise OSError("invalid re-snapshot signal")
         previous = cursor
         for event in batch["events"]:
             if (
@@ -417,7 +432,7 @@ class DeviceClient:
         self._validate_metadata(meta)
         with self.db:
             self.db.execute(
-                "INSERT INTO files VALUES(?,?,?,?,?,?,?) ON CONFLICT(file) DO UPDATE SET path=excluded.path,revision=excluded.revision,checksum=excluded.checksum,space=excluded.space,version=excluded.version,deleted=excluded.deleted WHERE excluded.version>=files.version",
+                "INSERT INTO files(file,path,revision,checksum,space,version,deleted) VALUES(?,?,?,?,?,?,?) ON CONFLICT(file) DO UPDATE SET path=excluded.path,revision=excluded.revision,checksum=excluded.checksum,space=excluded.space,version=excluded.version,deleted=excluded.deleted,size=NULL,mtime_ns=NULL WHERE excluded.version>=files.version",
                 (
                     meta["file"],
                     meta["path"],
@@ -472,6 +487,22 @@ class DeviceClient:
                     self.request("POST", "/cancel", {"upload": old["upload"]})
                 with self.db:
                     self.db.execute("DELETE FROM pending WHERE path=?", (relative,))
+            # Hashing proved the bytes match; remember the stat that was hashed
+            # so the scanning watcher can skip this file until it changes.
+            # Recently modified files stay unknown: a same-size rewrite within
+            # coarse filesystem timestamp granularity could keep the same mtime.
+            if time.time_ns() - before.st_mtime_ns >= STAT_SETTLE_NS:
+                with self.db:
+                    self.db.execute(
+                        "UPDATE files SET size=?,mtime_ns=? WHERE space=? AND path=? AND checksum=? AND deleted=0",
+                        (
+                            before.st_size,
+                            before.st_mtime_ns,
+                            space,
+                            relative,
+                            previous[1],
+                        ),
+                    )
             return {"unchanged": True}
         declaration = {
             "space": space,
@@ -649,14 +680,62 @@ class DeviceClient:
             + urlencode({"device": self.device, "cursor": cursor, "wait": wait}),
         )
         self._validate_batch(batch, cursor)
+        if batch.get("resnapshot"):
+            return self.resnapshot(cursor)
         for event in batch["events"]:
             self.apply(event)
+        self._advance(batch["cursor"])
+        return batch
+
+    def _advance(self, cursor):
         with self.db:
             self.db.execute(
-                "UPDATE state SET value=? WHERE key='cursor'", (str(batch["cursor"]),)
+                "UPDATE state SET value=? WHERE key='cursor'", (str(cursor),)
             )
-        self.request("POST", "/ack", {"device": self.device, "cursor": batch["cursor"]})
-        return batch
+        self.request("POST", "/ack", {"device": self.device, "cursor": cursor})
+
+    @serialized
+    def resnapshot(self, cursor):
+        """Recover after the server pruned events this device had not applied.
+
+        Fetch current heads with the cursor they reflect, reconcile each newer
+        head through apply() (same version checks and local-conflict copies as
+        ordinary events), then resume from that cursor. A failure leaves the
+        old cursor, so the next pull asks for a re-snapshot again.
+        """
+        value = {"device": self.device}
+        if self.space is not None:
+            value["space"] = self.space
+        snapshot = self.request("POST", "/snapshot", value)
+        if (
+            not isinstance(snapshot, dict)
+            or type(snapshot.get("cursor")) is not int
+            or snapshot["cursor"] < cursor
+            or not isinstance(snapshot.get("files"), list)
+        ):
+            raise OSError("invalid snapshot")
+        for entry in snapshot["files"]:
+            if (
+                not isinstance(entry, dict)
+                or not isinstance(entry.get("file"), str)
+                or not isinstance(entry.get("revision"), str)
+                or type(entry.get("version")) is not int
+            ):
+                raise OSError("invalid snapshot entry")
+            known = self.db.execute(
+                "SELECT version FROM files WHERE file=?", (entry["file"],)
+            ).fetchone()
+            if known is None or known[0] < entry["version"]:
+                event = {
+                    "kind": "upsert",
+                    "file": entry["file"],
+                    "revision": entry["revision"],
+                }
+                if "space" in entry:
+                    event["space"] = entry["space"]
+                self.apply(event)
+        self._advance(snapshot["cursor"])
+        return {"events": [], "cursor": snapshot["cursor"], "resnapshot": True}
 
     @serialized
     def delete(self, space, relative):

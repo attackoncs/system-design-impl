@@ -5,7 +5,7 @@ from pathlib import Path
 
 from .client import DeviceClient
 from .http import server
-from .service import Drive
+from .service import EVENT_MAX_AGE, EVENT_MAX_PER_SPACE, Drive
 from .watcher import SyncWatcher
 
 
@@ -15,6 +15,9 @@ def _parser():
     )
     parser.add_argument("--root", default=".runtime/server")
     parser.add_argument("--block-size", type=int, default=4 * 1024**2)
+    # Change-event retention (0 disables a bound); lagging devices re-snapshot.
+    parser.add_argument("--event-max-age", type=float, default=EVENT_MAX_AGE)
+    parser.add_argument("--event-max-per-space", type=int, default=EVENT_MAX_PER_SPACE)
     commands = parser.add_subparsers(dest="command", required=True)
     token = commands.add_parser("token")
     token.add_argument("user")
@@ -75,7 +78,13 @@ def main(argv=None):
         return
     root = Path(args.root).resolve()
     root.mkdir(parents=True, exist_ok=True)
-    drive = Drive(root / "metadata.sqlite3", root / "objects", args.block_size)
+    drive = Drive(
+        root / "metadata.sqlite3",
+        root / "objects",
+        args.block_size,
+        event_max_age=args.event_max_age or None,
+        event_max_per_space=args.event_max_per_space or None,
+    )
     try:
         if args.command == "token":
             print(drive.issue(args.user))

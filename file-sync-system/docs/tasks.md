@@ -63,7 +63,10 @@ revisions, sharing and notifications; document co-editing is out of scope.
   and a real cross-region durability exercise.
 - [ ] Native file watchers, mobile clients, HTTPS/KMS and key rotation.
 - [x] Bounded device block cache and server manifest cache, with live ACL checks.
-- [ ] Production event retention/re-snapshot policy and sustained stress testing.
+- [x] Event retention/re-snapshot policy: per-space max age (30 days) and max rows
+  (100,000), incremental indexed prefix pruning with floors, `resnapshot` signal and
+  transactional `POST /snapshot` reconciled by the client (2026-11-09).
+- [ ] Sustained stress testing of event retention and synchronization.
 
 Acceptance: benchmarks/results.md; examples/network_demo.py. Currently not
 committed or pushed.

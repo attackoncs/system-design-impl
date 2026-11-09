@@ -45,6 +45,7 @@ _POST_FIELDS = {
     "/restore": ("restore", {"file", "revision", "base", "request"}, set()),
     "/share": ("share", {"space", "recipient", "role"}, set()),
     "/ack": ("ack", {"device", "cursor"}, set()),
+    "/snapshot": ("snapshot", {"device"}, {"space"}),
 }
 
 
@@ -363,6 +364,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self.send(201, drive.begin(token, **value))
         if name == "commit":
             return self.send(200, drive.commit(token, value["upload"]))
+        if name == "snapshot":
+            return self.send(200, drive.snapshot(token, **value))
         if name == "cancel":
             drive.cancel(token, value["upload"])
         elif name == "delete":

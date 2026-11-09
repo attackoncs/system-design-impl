@@ -10,6 +10,15 @@ from urllib.error import HTTPError
 from urllib.parse import urlsplit
 
 
+def _http_error(url, status, reason, headers):
+    # urllib's HTTPError wraps a body file that warns (ResourceWarning) if never
+    # closed; it has no body here, so close it before raising. code/reason/
+    # headers stay usable after close().
+    error = HTTPError(url, status, reason, headers, None)
+    error.close()
+    return error
+
+
 def request(
     url,
     token,
@@ -86,12 +95,8 @@ def request(
         if response.length not in (None, 0):
             raise OSError("incomplete response body")
         if not 200 <= response.status < 300:
-            raise HTTPError(
-                url + route,
-                response.status,
-                response.reason,
-                response.headers,
-                None,
+            raise _http_error(
+                url + route, response.status, response.reason, response.headers
             )
         if time.monotonic() >= deadline:
             raise TimeoutError("request deadline exceeded")

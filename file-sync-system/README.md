@@ -72,8 +72,9 @@ reads credentials from the environment.
 | POST /restore | Historical content: file/revision/base/request |
 | POST /share | Workspace space/recipient/role (read/write/revoke) |
 | POST /device | Register a device identifier |
-| GET /changes?device=ID&cursor=N&wait=25 | Durable paginated long poll |
+| GET /changes?device=ID&cursor=N&wait=25 | Durable paginated long poll; `resnapshot: true` if the cursor fell behind retention |
 | POST /ack | Acknowledge device/cursor after applying events |
+| POST /snapshot | Current heads plus their cursor: device[, space] |
 
 POST bodies are JSON. Each manifest block has `digest` and `size`. Default chunks
 are 4 MiB; files are capped at 10 GiB. `request` identifies a stable upload attempt;
@@ -104,9 +105,17 @@ blocks return 423 until restored. There is no cloud Glacier integration.
 
 The device supports explicit push/pull and automatic bounded scanning; it has no
 native OS watcher. Multiple workspaces with overlapping paths use separately bound
-device folders. Events remain
-unbounded in this reference; production needs retention/resnapshot protocols and
-bounded cache policy. The service uses local files/SQLite, not metadata HA or
+device folders.
+
+The event log is bounded per workspace: by default events older than 30 days or
+beyond the newest 100,000 rows are pruned (`Drive(event_max_age=...,
+event_max_per_space=...)`, CLI `--event-max-age`/`--event-max-per-space`, 0 or None
+disables a bound). Each append prunes a bounded oldest prefix of its own workspace by
+indexed range delete; `cleanup` also sweeps idle workspaces. A device whose cursor is
+below a pruned prefix gets `{"events": [], "resnapshot": true}` instead of a gapped
+batch; the client then fetches `POST /snapshot` (heads and cursor read in one
+transaction), applies newer heads with the usual local-conflict rules and resumes
+from that cursor. The service uses local files/SQLite, not metadata HA or
 replicated S3 storage. It does not establish the book's traffic or durability scale.
 Remote deployment needs HTTPS; the demo binds to loopback by default.
 
@@ -121,6 +130,10 @@ python -m file_sync.cli sync --folder .runtime/laptop --device laptop --space WO
 
 `SyncWatcher` scans at most 10,000 directory entries per cycle by default, uploads
 new/dirty files, publishes conditional local deletes and pulls durable notifications.
+Dirty detection is stat-based (like rsync's quick check): a file whose size and
+nanosecond mtime equal the values last verified by hashing is not reread; files
+modified within the last 2 s are always hashed. An edit preserving both size and
+mtime is missed by the watcher; explicit `push` always rehashes.
 Stop/Ctrl-C drains the active operation, then exits. Transient failures use capped
 backoff. The loop is serial within a device; each folder has an OS ownership lock,
 and is durably bound to one workspace. Explicit `pull --space ID` also binds a folder.

@@ -38,7 +38,14 @@ python -m venv .venv
 
 当前为 SQLite/本地块存储参考实现，未接入跨地域复制或元数据高可用。
 自动同步不是原生文件监控器；设备目录有进程独占锁，并可持久绑定一个工作区。
-路径重叠的工作区使用不同且已绑定的设备目录。生产仍需事件保留、重新快照与监控。
+路径重叠的工作区使用不同且已绑定的设备目录。
+
+事件日志按工作区有界：默认裁剪30天前或超出最新10万行的事件（`Drive(event_max_age=...,
+event_max_per_space=...)`，CLI `--event-max-age`/`--event-max-per-space`，0或None
+关闭对应上限）。每次追加按索引范围删除本工作区最旧的有限前缀，`cleanup` 再清扫
+空闲工作区。游标落在已裁剪前缀之下的设备收到 `{"events": [], "resnapshot": true}`
+而不是有缺口的批次；客户端随即调用 `POST /snapshot`（同一事务读取 head 与游标），
+按既有本地冲突规则应用更新的 head，再从该游标继续。持续压测与监控仍待完成。
 
 [设计文档](docs/design.md)说明取舍；[验收报告](benchmarks/results.md)记录实际结果。
 
@@ -49,7 +56,9 @@ python -m file_sync.cli sync --folder .runtime/laptop --device laptop --space WO
 ```
 
 SyncWatcher 每轮默认最多扫描 10,000 个目录项，上传新建/修改、条件删除本地已删
-文件，再拉取通知；失败有上限退避，停止等待当前操作。每个设备串行处理，保留的
+文件，再拉取通知；修改检测基于 stat（类似 rsync quick check）：大小和纳秒 mtime
+与上次哈希核实时相同的文件不再读取，2 秒内修改过的文件仍总是哈希；同时保持大小
+和 mtime 的编辑会被 watcher 漏掉，显式 push 总是重新哈希。失败有上限退避，停止等待当前操作。每个设备串行处理，保留的
 本地冲突副本不会自动上传；可手动 push 或改名后处理。pull --space ID 也能绑定，
 未绑定的库接口保留旧的全工作区拉取语义。明文块磁盘缓存默认 64MiB，不是 RSS 上限。
 

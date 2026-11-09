@@ -37,17 +37,17 @@ flowchart TB
 
 ## 七站阅读路线
 
-1. [DeviceClient.push](../src/file_sync/client.py#L434)：输入space与相对路径，读取本地基线，形成待提交内容；先寻找本地pending恢复分支。
-2. [Drive.begin](../src/file_sync/service.py#L194)：服务器为目标路径、基线和内容申请上传会话，预留所需资源。
+1. [DeviceClient.push](../src/file_sync/client.py#L449)：输入space与相对路径，读取本地基线，形成待提交内容；先寻找本地pending恢复分支。
+2. [Drive.begin](../src/file_sync/service.py#L247)：服务器为目标路径、基线和内容申请上传会话，预留所需资源。
 3. [BlockStore.put](../src/file_sync/storage.py#L206)：理解块身份与命名空间，区分重复块和损坏对象。
-4. [Drive.commit](../src/file_sync/service.py#L374)：最关键一站；先校验内容，再在事务内复核会话、权限与基线，决定原文件还是冲突文件。
-5. [DeviceClient.pull](../src/file_sync/client.py#L642)：读取变更页；失败不能直接推进本地游标。
-6. [DeviceClient.apply](../src/file_sync/client.py#L558)：下载、校验并替换文件前，检查本地是否又被修改。最后看 [EventLog.ack](../src/file_sync/notifications.py#L108)。
-7. [request](../src/file_sync/client_transport.py#L13)：网络读取是提交本地状态之前的一道边界；有效JSON前缀仍可能来自不完整响应。
+4. [Drive.commit](../src/file_sync/service.py#L427)：最关键一站；先校验内容，再在事务内复核会话、权限与基线，决定原文件还是冲突文件。
+5. [DeviceClient.pull](../src/file_sync/client.py#L673)：读取变更页；失败不能直接推进本地游标。
+6. [DeviceClient.apply](../src/file_sync/client.py#L589)：下载、校验并替换文件前，检查本地是否又被修改。最后看 [EventLog.ack](../src/file_sync/notifications.py#L189)。
+7. [request](../src/file_sync/client_transport.py#L22)：网络读取是提交本地状态之前的一道边界；有效JSON前缀仍可能来自不完整响应。
 
 ## 微观一：为什么commit有两次会话读取
 
-[service.py:374](../src/file_sync/service.py#L374)
+[service.py:427](../src/file_sync/service.py#L427)
 
 ```python
 def commit(self, token, upload):
@@ -69,7 +69,7 @@ def commit(self, token, upload):
 
 第一段取得会话快照，处理已经DONE的幂等重试，再校验文件内容。读取所有块、计算校验和可能慢，因此不能只相信最初读到的状态。
 
-[service.py:390](../src/file_sync/service.py#L390)
+[service.py:443](../src/file_sync/service.py#L443)
 
 ```python
 with self.transaction():
@@ -127,7 +127,7 @@ flowchart TD
 
 ## 微观三：JSON能解析，响应也可能没收齐
 
-[client_transport.py:81](../src/file_sync/client_transport.py#L81)
+[client_transport.py:90](../src/file_sync/client_transport.py#L90)
 
 ```python
     data.extend(chunk)
@@ -138,7 +138,7 @@ if len(data) > limit:
 if response.length not in (None, 0):
     raise OSError("incomplete response body")
 if not 200 <= response.status < 300:
-    raise HTTPError(
+    raise _http_error(
 ```
 
 read1遇到EOF时可能不报告尚未收齐的Content-Length。客户端必须检查剩余长度，
