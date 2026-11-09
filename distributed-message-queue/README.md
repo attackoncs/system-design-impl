@@ -211,9 +211,12 @@ comes first. Cleanup removes complete old segments; an active segment may remain
 Expired offsets return 410 and need reset. Expired receipts do not allow reusing
 old producer sequences. Producer epochs and transaction receipts lack full GC.
 
-Local frame, batch, read and catch-up budgets make this a bounded reference, not
-an unlimited stream. A slow replica beyond the snapshot budget cannot be caught
-up automatically; apply retention or extend replication. `Client.archive` writes
+Local frame, batch, read and catch-up budgets make this a bounded reference.
+A lagging or restarted replica resumes from its last offset matching committed
+metadata and receives verified, individually fsynced 500-record chunks, at most
+10000 records/24MiB per replica per replication call, so large gaps converge
+over several rounds. Only a replica behind the retention floor still needs a
+whole snapshot within the snapshot budget. `Client.archive` writes
 a new local JSON file, bounded to 100000 records/64MiB; delay or racing retention
 may abort it. `replay` validates then sends batches with new target offsets and
 new delivery times. Neither is cloud tiering or exactly-once restoration.
@@ -221,6 +224,6 @@ new delivery times. Neither is cloud tiering or exactly-once restoration.
 Final evidence is in [validation](benchmarks/results.md), with
 [design](docs/design.md) explaining the boundaries. Historical 2026-10-20 results
 are retained under their original date. Missing production extensions include
-consensus/coordinator failover, dynamic broker placement, incremental catch-up,
+consensus/coordinator failover, dynamic broker placement, full dynamic ISR,
 zero-copy transport, quotas/ACLs, cloud tiering, cross-region recovery and sustained
 load/chaos validation.

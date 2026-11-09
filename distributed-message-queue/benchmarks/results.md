@@ -1,5 +1,17 @@
 # Queue verification report
 
+## Replication efficiency fix — 2026-11-09
+
+`PartitionLog.align` (called by every `/sync`) no longer rescans and re-hashes the
+whole retained log after persisting the epoch; it trims the truncated suffix from
+the in-memory index and `.idx` sidecar directly. `/status` keeps its deliberate
+full integrity scan. Throwaway WSL2/Python 3.14.4 measurement, 20,000 retained
+~200-byte records, 10-record batches: `/sync` **361.3 ms -> 0.7 ms** per batch;
+`/status` unchanged (~310-358 ms). With `-W error` (plus
+`-o asyncio_default_fixture_loop_scope=function`), the suite was 115 passed /
+6 failed both before and after (same pre-existing unclosed-`HTTPError`
+ResourceWarnings); without `-W error`, 121 passed after the change.
+
 ## Source re-review — 2026-11-04 (Asia/Shanghai)
 
 Re-read chapter 20, compared Kafka batching/retry and RocketMQ polling/filtering

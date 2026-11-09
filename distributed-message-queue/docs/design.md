@@ -41,21 +41,37 @@ tails or writing data. Adjacent frames targeting one segment are written togethe
 each touched data and index file is flushed/fsynced once per batch. An I/O failure
 poisons the live log object rather than acknowledging through uncertain in-memory
 state. Epoch/base checkpoints and generation pointers use atomic replacement.
+Fencing alignment in /sync trims the provisional suffix, its index rows and the
+in-memory index directly instead of rescanning the retained log for every batch.
+Opening, retention and /status eligibility probes still verify every retained
+frame, deliberately trading throughput for integrity before election/sync.
 The implementation attempts directory fsync where supported; universal Windows
 power-loss/controller guarantees are outside the verified process-crash boundary.
 
 Frame, batch and snapshot budgets reject oversized work; read budgets may return
-shorter pages. This is a bounded local reference: a slow replica may require retention before its retained prefix
-fits installation limits. Index metadata remains proportional to retained offsets.
+shorter pages. Chunked catch-up bounds each replica to 10000 records/24MiB per
+replication call, so a large gap converges over several rounds; only a replica
+without a verified resume point needs a whole snapshot that fits installation
+limits. Index metadata remains proportional to retained offsets.
 
 ## Publication and replication
 
 The coordinator journals one pending batch per partition before network writes.
 Leader/followers align to the committed prefix and append identical canonical
 records. Response hashes/offsets and consumer pages are verified against metadata.
-Behind replicas install the verified retained prefix in a new generation and
-atomically swap their pointer; catch-up is a bounded full snapshot, not incremental
-or chunk-streamed replication.
+Behind replicas catch up incrementally. /status also returns the replica's tail
+hash and persisted committed checkpoint; the coordinator resumes from the highest
+of those whose hash matches metadata (a divergent tail falls back to the
+checkpoint, and the first chunk's alignment truncates the suffix after it). It then
+reads 500-record chunks from the leader, verifies them against metadata hashes,
+and sends each as an ordinary /sync whose committed point is the previous chunk's
+last offset, so the replica re-checks offset continuity and the hash chain and
+fsyncs every chunk independently. A per-replica budget of 10000 records/24MiB
+per call bounds the added produce latency; an exhausted replica simply is not
+counted this round and resumes from its durable tail next time. Only a replica
+with no verified resume point (behind the retention floor, or a broker without the
+optional resume fields) still installs the whole retained prefix in a new
+generation. The /status full rescan is kept once per round (not per chunk).
 
 Election probes hashes at the committed high water; only eligible replicas lead.
 Epoch increments fence stale requests; malformed synchronization is validated
@@ -151,5 +167,5 @@ Local archive/replay is bounded to 100000 records/64MiB and creates new offsets,
 not cloud tiering or transactional restoration. Final executable evidence and
 measurements are in [validation](../benchmarks/results.md); chapter mapping is in
 [review](chapter20-review.md). Production work remains: consensus/failover,
-dynamic placement, incremental catch-up, zero-copy, TLS/ACL/quotas, metadata GC,
+dynamic placement, full dynamic ISR, zero-copy, TLS/ACL/quotas, metadata GC,
 cloud backup/tiering, regional recovery and sustained workload/chaos validation.

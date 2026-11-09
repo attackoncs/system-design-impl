@@ -17,7 +17,7 @@ under their original date. No production-complete or commit/push claim is made.
 - [x] T4. Pull groups, heartbeat/leave, rebalancing, durable cursors and fencing;
   revalidate membership after broker reads.
 - [x] T5. Real broker leader/follower replication, committed-prefix and response
-  verification, majority publication and bounded full-snapshot catch-up.
+  verification, majority publication and chunked catch-up (full snapshot only below the floor).
 - [x] T6. At-least-once / at-most-once; atomic queue output visibility plus input
   cursor with txid replay, excluding external side effects.
 - [x] T7. Retry/dead-letter, relative/absolute delivery, OR tags/scanned cursors,
@@ -54,7 +54,9 @@ under their original date. No production-complete or commit/push claim is made.
   backup/restore validation.
 - [ ] P2. Dynamic broker membership/placement, partition migration/shrinking and
   ordering-preserving key reassignment.
-- [ ] P3. Incremental/chunked catch-up, full dynamic ISR protocol, zero-copy and
+- [ ] P3 (partial). Done 2026-11-09: incremental/chunked catch-up from a verified
+  resume point with per-call budgets; replicas behind the retention floor still
+  use a full snapshot. Remaining: full dynamic ISR protocol, zero-copy and
   stronger resource/index bounds at large retained volumes.
 - [ ] P4. TLS deployment, topic ACLs/quotas, receipt/epoch GC, cloud tiering and
   sustained production load/chaos validation.

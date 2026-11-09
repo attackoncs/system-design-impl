@@ -56,12 +56,18 @@ class Broker:
         with log.lock:
             if path == "/status":
                 # Small reference favors integrity over throughput: verify before eligibility.
+                # The rescan stays per status round, not per catch-up chunk.
                 log.scan()
+                checkpoint = log.manifest["committed"]
                 return {
                     "base": log.base,
                     "next": log.next,
                     "epoch": log.manifest["epoch"],
                     "hash": log.hash_at(body["committed"]),
+                    # Optional resume fields for chunked catch-up.
+                    "tail_hash": log.hash_at(log.next - 1),
+                    "checkpoint": checkpoint,
+                    "checkpoint_hash": log.hash_at(checkpoint),
                 }
             if path == "/read":
                 return {"records": log.read(body["offset"], body.get("limit", 1000))}

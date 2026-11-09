@@ -236,6 +236,24 @@ class PartitionLog:
         os.fsync(source.fileno())
 
     @staticmethod
+    def _truncate_index(path, position):
+        """Drop index rows for frames at or after a truncated data position."""
+        index_path = path.with_suffix(".idx")
+        if not index_path.exists():
+            return
+        with index_path.open("r+b") as index:
+            rows = index.read()
+            keep = 0
+            while (
+                keep + INDEX.size <= len(rows)
+                and INDEX.unpack_from(rows, keep)[1] < position
+            ):
+                keep += INDEX.size
+            index.truncate(keep)
+            index.flush()
+            os.fsync(index.fileno())
+
+    @staticmethod
     def _entry(path, position, size, value):
         return {
             "path": path,
@@ -385,6 +403,8 @@ class PartitionLog:
         manifest = {**self._manifest, "epoch": epoch, "committed": committed}
         # Persist fencing before destructive truncation. A crash can leave a
         # removable suffix, but cannot make an older epoch writable again.
+        # The verified in-memory index is trimmed directly instead of rescanning
+        # the whole retained log on every replicated batch; open still scans.
         try:
             atomic_json(self.directory / "manifest.json", manifest)
             self._manifest = manifest
@@ -399,8 +419,11 @@ class PartitionLog:
                     output.truncate(entry["position"])
                     output.flush()
                     os.fsync(output.fileno())
+                self._truncate_index(entry["path"], entry["position"])
+                for number in range(cutoff, self._next_offset):
+                    del self.entries[number]
+                self._next_offset = cutoff
             _sync_directory(self.directory)
-            self._scan()
         except (OSError, Corruption):
             self._failed = True
             raise

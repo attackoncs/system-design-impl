@@ -1,11 +1,19 @@
-"""Leader eligibility, bounded catch-up, and replica response validation.
+"""Leader eligibility, chunked catch-up, and replica response validation.
 
 Called while the owning coordinator holds the partition operation lock. Network
 I/O occurs outside metadata transactions; publication belongs to the coordinator.
+
+A lagging replica resumes from its own last offset that matches committed
+metadata and receives verified chunks through ordinary `/sync` calls, so each
+chunk is durable on its own and a large gap converges over several rounds. Only
+a replica without such a resume point (behind the retention floor, or an older
+broker without resume fields) still needs a full `/install` snapshot.
 """
 
 from .common import Error, dumps, envelope
 from .log import HEADER, MAX_BATCH_BYTES, MAX_BATCH_RECORDS
+
+CATCHUP_CHUNK_RECORDS = 500
 
 
 class Replication:
@@ -115,6 +123,90 @@ class Replication:
             offset += len(batch)
         return values
 
+    def _committed_hash(self, part, offset):
+        """Metadata hash at a committed offset, or None outside [floor-1, hwm]."""
+        if offset == part["floor"] - 1:
+            return part["base_hash"]
+        if not part["floor"] <= offset <= part["hwm"]:
+            return None
+        with self.transaction(write=False) as db:
+            row = db.execute(
+                "SELECT hash FROM records WHERE topic=? AND partition=? AND offset=?",
+                (part["topic"], part["partition"], offset),
+            ).fetchone()
+        return row[0] if row else None
+
+    def _resume_point(self, state, part):
+        """Highest offset where the replica provably shares committed history.
+
+        Candidates are the replica tail (capped at the high water) and its own
+        persisted committed checkpoint. A divergent tail therefore falls back to
+        the checkpoint, and the first chunk's `/sync` truncates everything after
+        it, exactly like an ordinary sync truncates a provisional suffix.
+        """
+        if type(state.get("base")) is not int or state["base"] > part["floor"]:
+            return None
+        candidates = []
+        if type(state.get("next")) is int:
+            if state["next"] - 1 >= part["hwm"]:
+                candidates.append((part["hwm"], state.get("hash")))
+            else:
+                candidates.append((state["next"] - 1, state.get("tail_hash")))
+        candidates.append((state.get("checkpoint"), state.get("checkpoint_hash")))
+        for offset, digest in candidates:
+            if (
+                type(offset) is int
+                and isinstance(digest, str)
+                and self._committed_hash(part, offset) == digest
+            ):
+                return offset, digest
+        return None
+
+    def _catch_up(self, node, state, part, leader, common):
+        """Stream verified committed chunks into a lagging replica.
+
+        Returns True once the replica holds the committed prefix, False when
+        this call's per-replica budget is spent (every applied chunk is already
+        durable, so the next round resumes there), or None when no verified
+        resume point exists and a full snapshot is required.
+        """
+        resume = self._resume_point(state, part)
+        if resume is None:
+            return None
+        offset, digest = resume
+        records = size = 0
+        while offset < part["hwm"]:
+            if records >= MAX_BATCH_RECORDS or size >= MAX_BATCH_BYTES:
+                return False
+            chunk = self._read_replica(
+                part,
+                leader,
+                offset + 1,
+                min(CATCHUP_CHUNK_RECORDS, part["hwm"] - offset),
+            )
+            # The replica re-validates offsets and the hash chain from
+            # `committed_hash` before appending; it never sees the whole gap.
+            result = self.call(
+                node,
+                "/sync",
+                {
+                    **common,
+                    "committed": offset,
+                    "committed_hash": digest,
+                    "records": chunk,
+                },
+            )
+            last = chunk[-1]
+            if (
+                result["hash"] != last["hash"]
+                or result["next"] != last["record"]["offset"] + 1
+            ):
+                raise Error(503, "replica did not persist catch-up chunk")
+            offset, digest = last["record"]["offset"], last["hash"]
+            records += len(chunk)
+            size += sum(HEADER.size + len(dumps(value).encode()) for value in chunk)
+        return True
+
     def _replicate(self, pending, leader_only=False):
         part, leader, expected = self._leader(pending)
         with self.transaction(write=False) as db:
@@ -136,7 +228,12 @@ class Replication:
         for node in [leader, *[n for n in sorted(self.brokers) if n != leader]]:
             try:
                 state = self.call(node, "/status", common)
-                if self._eligible(state, part, expected):
+                caught_up = True
+                if not self._eligible(state, part, expected):
+                    caught_up = self._catch_up(node, state, part, leader, common)
+                if caught_up is False:
+                    continue  # budget spent; durable progress resumes next round
+                if caught_up:
                     result = self.call(node, "/sync", common)
                 else:
                     if snapshot is None:

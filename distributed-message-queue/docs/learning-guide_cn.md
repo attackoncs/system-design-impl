@@ -48,7 +48,7 @@ flowchart TB
 2. [Coordinator.produce](../src/message_queue/coordinator.py#L262)：规范化消息，确定分区；分区锁与producer锁保护哪两个维度。
 3. [Coordinator._produce](../src/message_queue/coordinator.py#L297)：检查epoch、回执、序号；输入相同身份和内容，输出原响应或新的批次。
 4. [Coordinator._flush](../src/message_queue/coordinator.py#L219)：恢复pending、复制并finalize；这是暂存到提交的桥。
-5. [PartitionLog.append](../src/message_queue/log.py#L307)：观察offset、哈希链与磁盘追加，区分完整损坏和可恢复尾部。
+5. [PartitionLog.append](../src/message_queue/log.py#L325)：观察offset、哈希链与磁盘追加，区分完整损坏和可恢复尾部。
 6. [Coordinator._fetch](../src/message_queue/coordinator.py#L386)：只读floor到hwm范围，延迟头消息如何影响后续消息。
 7. [ConsumerGroups.commit](../src/message_queue/coordinator_groups.py#L259)：检查会话及generation后再前移组进度。
 

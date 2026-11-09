@@ -1,5 +1,64 @@
 # 第20章核对：分布式消息队列
 
+## 2026-11-09 分块追赶（P3部分完成）
+
+原书要求follower从leader拉取并追上ISR。旧实现对任何不合格副本都读出`floor..hwm`
+全部记录、在协调器内存中拼成整份快照再`/install`新代；超过10000条/24MiB即放弃，
+因此落后2万条的副本**永远追不上**，且每轮仍白读1万条。
+
+现改为增量分块追赶（`coordinator_replication.py`的`_resume_point`/`_catch_up`/
+`_committed_hash`）：
+- `/status`新增可选字段`tail_hash`、`checkpoint`、`checkpoint_hash`（旧字段不变，
+  旧协调器忽略；不返回这些字段的旧broker自动退回快照）。
+- 续传点取副本尾部（不超过hwm）与其持久化已提交检查点中、哈希与元数据一致的最高者。
+  尾部分叉（未提交写入与新leader不同）时退到检查点，首块`/sync`的`align`截掉其后
+  后缀，与普通同步截暂存尾部同一路径。两者都不匹配或副本base高于floor才走`/install`。
+- 每块500条：从leader读取并对照元数据哈希校验，以`committed=上块末offset`、
+  `committed_hash=上块末hash`作为普通`/sync`发送；副本`_prepare`重验offset连续与
+  哈希链，逐块fsync并持久化检查点。协调器任一时刻只持有一块，不再物化整段落后量。
+- 每次复制调用每副本预算10000条/24MiB；耗尽时本轮不计入该副本（不影响多数派），
+  下轮从其持久尾部继续。无新增依赖，未新增broker路径。
+
+`/status`全量`scan()`保留：增量校验只能覆盖新写入字节，无法发现旧帧损坏，达不到
+原“选主前完整性”保证。分块走`/sync`而非`/status`，故全量扫描仍是每轮每副本固定
+两次，不随块数增加。代价如下实测所示仍是主要耗时，属已记录边界。
+
+临时测量（WSL2，Python 3.14，进程内3 broker，副本停机期间写入、重开broker模拟重启，
+每轮produce 100条约150字节记录，不入库）：
+| 落后量 | 旧（HEAD+今日log/transport） | 新 |
+| --- | --- | --- |
+| 5000 | 1轮，全量`/install`，峰值Python内存28.1MB | 1轮，13次`/sync`，峰值9.3MB |
+| 20000 | 6轮仍未追上（每轮约5.6s，超快照预算） | 3轮追上，共20.9s，其中`/status`扫描15.4s |
+
+20000条场景峰值内存（新36MB/旧33MB）主要来自同进程broker的全offset索引与扫描，
+非协调器传输缓冲。另以临时脚本验证：落后且尾部有5条伪造分叉记录的副本截回检查点后
+分块追平，尾哈希与leader一致、零次`/install`。
+
+验证：既有测试`-W error`下 **121 passed**（未改测试或基准代码）。剩余P3：完整动态ISR、
+zero-copy及大保留量索引边界；低于保留floor的副本仍需全量快照。
+
+## 2026-11-09 效率复核
+
+核实一处每批复制的重复全量扫描：协调器每次produce对每个broker先`/status`再`/sync`，
+`/sync`经`synchronize`→`PartitionLog.align`在持久化epoch后无条件调用`_scan()`，
+重读全部保留段并重做CRC、JSON解析和SHA-256链校验，即使没有需要截断的暂存尾部。
+批处理成本因此随保留日志长度线性增长。
+
+修复只改`log.py`的`align`：仅当`committed+1 < next`时截断，并直接删除内存索引中
+截断点之后的条目、截短该段`.idx`（新增`_truncate_index`），不再全量重扫。epoch
+仍先原子持久化再截尾，I/O失败仍使日志对象失效。`/status`的全量扫描是“完整性优先”的
+有意选择，无法以增量方式保留同等保证（增量只能覆盖新写入字节，不能发现旧帧损坏），
+故保持不变；打开、恢复及retention仍全量扫描。
+
+临时测量（WSL2 Linux，Python 3.14.4，不入库）：单分区保留2万条约200字节记录，
+每批10条，20批取均值。旧代码`/sync` **361.3ms/批**，新代码 **0.7ms/批**；
+`/status`保持约310–358ms/批。截尾后另行重开日志，验证`.idx`与内存索引和全量重建完全一致。
+
+验证：`-W error`加`-o asyncio_default_fixture_loop_scope=function`（否则pytest-asyncio
+弃用警告使收集即INTERNALERROR）。修改前后均为 **115 passed、6 failed**，失败集合相同，
+均为既有测试中`HTTPError`未关闭引发的ResourceWarning；不加`-W error`时修改后
+**121项全部通过**。详见[验证报告](../benchmarks/results.md)。
+
 ## 2026-11-04 源码复核
 
 重读本章并结合CodeGraph追踪存储、复制、组、生产者、HTTP及生命周期。
