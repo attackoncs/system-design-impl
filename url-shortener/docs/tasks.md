@@ -27,7 +27,7 @@ Status is based on source review on 2026-10-31 and final validation on 2026-11-0
 
 - [ ] Production WSGI, ingress rate limiting, load balancing and capacity planning.
 - [ ] Replication/sharding, cross-database IDs, distributed analytics and persistent events.
-- [ ] Retention for click details based on measured needs; current instance lists are unbounded.
+- [x] Bounded click-detail retention (2026-11-09): exact per-link counters; details capped per link by count (default 1000) and age (default 30 days), amortized O(1) pruning on write.
 
 Local correctness checks do not demonstrate the book's 100-million-new-links/day scale. The Bloom filter is optional and omitted.
 

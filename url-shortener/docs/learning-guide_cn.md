@@ -32,11 +32,11 @@ flowchart LR
 
 ## 六站阅读路线
 
-1. [URLShortener.shorten](../src/url_shortener/shortener.py#L57)：输入长URL，输出完整短URL。先看最终的 `get_or_create`，理解原子性不在HTTP Handler里。
+1. [URLShortener.shorten](../src/url_shortener/shortener.py#L89)：输入长URL，输出完整短URL。先看最终的 `get_or_create`，理解原子性不在HTTP Handler里。
 2. [redirect_uri](../src/url_shortener/urls.py#L9)：由 `_validate_url` 调用；拒绝无效主机、端口、空白等，确认中文网址可编码。保存仍保留原串；HTTP层才使用转换后的URI。
 3. [Base62Strategy.generate](../src/url_shortener/strategies.py#L178)：理解策略只负责码的构造；切回服务代码看它如何被factory调用。
 4. [SQLiteStorage.get_or_create](../src/url_shortener/sqlite_storage.py#L60)：已存在先只读返回；未命中才在事务中重查、生成和保存。factory经 [SQLiteStorage.next_id](../src/url_shortener/sqlite_storage.py#L73) 发号；同一个存储对象会复用事务。
-5. [URLShortener.resolve](../src/url_shortener/shortener.py#L90)：输入短码，先查LRU，再查SQLite；成功后记录点击，输出 `(long_url, redirect_type)`。
+5. [URLShortener.resolve](../src/url_shortener/shortener.py#L122)：输入短码，先查LRU，再查SQLite；成功后记录点击，输出 `(long_url, redirect_type)`。
 6. [create_app](../src/url_shortener/http.py#L8)：最后再看如何把业务结果转换成HTTP状态和Location，避免把业务方法返回值误认为已经发出了重定向响应。
 
 ## 微观一：为什么不是先查再单独保存
@@ -92,7 +92,7 @@ sequenceDiagram
 
 ## 微观二：锁只保护缓存结构，回源在锁外
 
-[shortener.py:107](../src/url_shortener/shortener.py#L107)
+[shortener.py:139](../src/url_shortener/shortener.py#L139)
 
 ```python
 with self._cache_lock:

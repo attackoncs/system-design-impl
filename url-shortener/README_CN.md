@@ -14,7 +14,7 @@
 
 - **可插拔哈希策略** — 可选择哈希+冲突解决或 Base-62 转换
 - **存储抽象层** — 默认内存或 SQLite 持久化；SQLite 同时提供事务内 ID 分配
-- **点击追踪** — 内置分析功能，支持按 URL 统计点击次数和时间戳记录
+- **点击追踪** — 内置分析功能，支持按 URL 统计点击次数和有界保留的时间戳记录
 - **零运行时依赖** — 纯 Python 标准库实现；开发工具（pytest、hypothesis）为可选依赖
 - **核心 API 类型注解** — 明确映射与重定向类型
 - **Base62 短码** — 哈希码7位；ID码至少7位且随数值增长，不截断。`62**7` 是七位编码空间，不是 CRC32 的容量
@@ -194,7 +194,7 @@ assert shortener.resolve(short_url.rsplit("/", 1)[1])[0] == "https://例子.中�
 
 同一实例中，存储和发号器必须传入**同一个 storage 对象**；不同进程分别创建对象，指向同一个 SQLite 文件。分配和保存复用事务，相同 URL 不重复发号，失败回滚。已有映射先只读返回，未命中才申请写锁并重查。不要与不协调的其他生成器混用；旧外部 ID 数据需先迁移序列。
 
-默认缓存容量1024，0禁用；映射不可变，SQLite 重启可恢复。点击记录只在实例内存，未持久化且没有保留数量上限。库返回原始 URL，HTTP Location 则转换为 IDNA/百分号编码 URI；非法主机、端口、空白和控制字符被拒绝。
+默认缓存容量1024，0禁用；映射不可变，SQLite 重启可恢复。点击总数是每条链接一个精确计数器；点击明细只在实例内存、未持久化，并按保留策略有界：默认每条链接保留最新1000条且不超过30天（`click_retention_max_records` / `click_retention_max_age`，传 `None` 关闭对应上限）。写入时均摊O(1)淘汰。库返回原始 URL，HTTP Location 则转换为 IDNA/百分号编码 URI；非法主机、端口、空白和控制字符被拒绝。
 
 重定向保留显式空 `?` / `#` 和IPvFuture方括号。标准库IDNA若有损折叠Unicode域名（例如 `faß.de`），会要求显式ASCII ACE域名（如 `xn--fa-hia.de`），避免静默改变目标站点；详见[核对说明](docs/open-source-review_cn.md)。
 
@@ -209,6 +209,8 @@ URLShortener(
     default_redirect_type: RedirectType = RedirectType.TEMPORARY,
     domain: str = "http://short.url",
     cache_capacity: int = 1024,
+    click_retention_max_records: int | None = 1000,       # 每条链接上限；0 不保留明细
+    click_retention_max_age: timedelta | None = timedelta(days=30),
 )
 ```
 
@@ -218,8 +220,8 @@ URLShortener(
 |------|------|
 | `shorten(long_url, redirect_type=None) -> str` | 缩短 URL，返回完整短链接 |
 | `resolve(short_code, client_id=None) -> tuple[str, RedirectType]` | 解析短码为原始 URL |
-| `get_click_count(short_code) -> int` | 获取短码的总点击次数 |
-| `get_click_records(short_code) -> list[ClickRecord]` | 获取短码的所有点击记录 |
+| `get_click_count(short_code) -> int` | 获取短码的精确总点击次数（不受保留策略影响） |
+| `get_click_records(short_code) -> list[ClickRecord]` | 获取保留窗口内的点击记录（由旧到新） |
 
 ### 策略
 

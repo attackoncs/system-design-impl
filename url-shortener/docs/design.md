@@ -46,7 +46,7 @@ The default hash strategy uses 32-bit CRC32 and suffix retries, at most 10 retri
 
 Look up and update LRU order under the cache lock. Read storage outside that lock, then briefly reacquire it to fill/evict. Default capacity is 1024;0 disables caching. Mappings cannot be changed or deleted, so no invalidation protocol is necessary.
 
-Unknown codes raise ShortCodeNotFoundError. Successful resolutions, including cache hits, append one ClickRecord under a separate lock; record queries return copies. Click details are unbounded, nonpersistent instance memory. High-volume analytics need an external persistent event/aggregation system.
+Unknown codes raise ShortCodeNotFoundError. Successful resolutions, including cache hits, update analytics under a separate lock: an exact per-link counter is incremented, and one ClickRecord is appended to a per-link `deque(maxlen=click_retention_max_records)` (default 1000; 0 keeps no details). Timestamps are taken under the lock, so each deque is time-ordered and records older than `click_retention_max_age` (default 30 days) are popped from the left on write and before reads, amortized O(1) per click with no scans. `get_click_records` returns a copy of the retained window; `get_click_count` stays exact. Memory is O(links + links x max records). Details are nonpersistent instance memory. High-volume analytics need an external persistent event/aggregation system.
 
 ## URL Identity and HTTP
 

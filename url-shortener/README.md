@@ -14,7 +14,7 @@ A Python URL shortener library implementing the design from *System Design Inter
 
 - **Pluggable hash strategies** — choose between hash+collision resolution or base-62 conversion
 - **Storage abstraction** — in-memory default or SQLite persistence with a transactional ID allocator
-- **Click tracking** — built-in analytics with per-URL click counts and timestamped records
+- **Click tracking** — built-in analytics with per-URL click counts and timestamped records retained within a bounded window
 - **Zero runtime dependencies** — pure Python stdlib; dev tools (pytest, hypothesis) are optional
 - **Type-annotated core API** — explicit mapping and redirect types
 - **Base62 codes** — hash codes have 7 characters; ID codes have at least 7 and grow without truncation. `62**7` is the seven-digit space, not CRC32 capacity
@@ -194,7 +194,7 @@ assert shortener.resolve(short_url.rsplit("/", 1)[1])[0] == "https://example.org
 
 Pass the **same storage object** as mapping store and ID generator within each instance. Separate processes may create their own objects pointing to one SQLite file. ID allocation and mapping creation share a transaction; duplicates consume no IDs. Existing mappings use a read-only fast path; misses recheck under the writer reservation. Do not mix uncoordinated generators; arbitrary external-ID databases require sequence migration first.
 
-The instance LRU defaults to 1024 entries; 0 disables it. Immutable mappings survive restart with SQLite; click records remain unbounded instance memory. Library resolution preserves the original URL; HTTP Location uses IDNA and percent encoding. Invalid hosts, ports, whitespace and controls are rejected.
+The instance LRU defaults to 1024 entries; 0 disables it. Immutable mappings survive restart with SQLite; click totals are exact per-link counters, while raw click details are bounded instance memory: by default the newest 1000 records per link, none older than 30 days (`click_retention_max_records` / `click_retention_max_age`, `None` disables a bound). Pruning happens on write in amortized O(1); details are not persisted. Library resolution preserves the original URL; HTTP Location uses IDNA and percent encoding. Invalid hosts, ports, whitespace and controls are rejected.
 
 Redirects preserve explicit empty `?` / `#` components and IPvFuture brackets. If stdlib IDNA would fold a Unicode hostname (for example `faß.de`), supply its explicit ASCII ACE name (such as `xn--fa-hia.de`); lossy conversion is rejected. See the [review](docs/open-source-review_cn.md).
 
@@ -209,6 +209,8 @@ URLShortener(
     default_redirect_type: RedirectType = RedirectType.TEMPORARY,
     domain: str = "http://short.url",
     cache_capacity: int = 1024,
+    click_retention_max_records: int | None = 1000,       # per link; 0 keeps no details
+    click_retention_max_age: timedelta | None = timedelta(days=30),
 )
 ```
 
@@ -218,8 +220,8 @@ URLShortener(
 |--------|-------------|
 | `shorten(long_url, redirect_type=None) -> str` | Shorten a URL, returns full short URL |
 | `resolve(short_code, client_id=None) -> tuple[str, RedirectType]` | Resolve code to original URL |
-| `get_click_count(short_code) -> int` | Total clicks for a short code |
-| `get_click_records(short_code) -> list[ClickRecord]` | All click records for a short code |
+| `get_click_count(short_code) -> int` | Exact total clicks for a short code (unaffected by retention) |
+| `get_click_records(short_code) -> list[ClickRecord]` | Retained click records (retention window, oldest first) |
 
 ### Strategies
 
