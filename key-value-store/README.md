@@ -120,6 +120,11 @@ lock waiters; its admission budget is256 replica-task units.
   final SSTable before truncating WAL; compaction retires old inputs afterwards.
   POSIX directory sync is used where supported; Python has no portable Windows
   directory fsync, and no physical power-loss experiment was performed.
+- SSTables keep only footer, sparse index (every 16th key) and Bloom filter in
+  memory. A lookup reads one 16-entry block through a shared LRU block cache
+  (`StorageConfig.block_cache_bytes`, default 8 MiB). Flush, compaction (k-way
+  `heapq.merge`, same newest-timestamp/tie rules) and Merkle rebuild
+  (`scan(visit=...)`) stream from/to disk. The file format is unchanged.
 - Internal storage timestamps progress per key despite wall-clock rollback.
   Reads/rebuild choose the greatest per-key timestamp across candidate layers;
   physical creation times do not determine the winner. This costs extra reads.
@@ -142,8 +147,9 @@ export/import; they cannot recover causal metadata never saved by old versions.
 Corrupt final SSTables now fail startup instead of being silently ignored.
 Keep damaged files for recovery. Tombstones have no automatic safe GC.
 
-SSTable objects currently cache their whole files, startup/rebuild scans data,
-and compaction is not streaming. The tree indexes all locally stored records;
+SSTables are no longer cached whole and compaction streams, but startup rebuild
+still reads every record once and the Merkle index keeps one digest per key; there
+are no disk quotas or proven large-data capacity. The tree indexes all local records;
 nodes with different replica responsibilities can keep comparing nonshared buckets.
 Virtual nodes do not split one hot key. There is no automatic provisioning/drain
 barrier, topology epoch protocol, TLS/authentication or real cross-region failover.

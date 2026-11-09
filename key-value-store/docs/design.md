@@ -46,6 +46,28 @@ tombstones are not automatically GC'd. Stop closes WAL even when flushing fails.
 Corrupt final SSTables fail startup instead of silently removing accepted data.
 Windows directory durability and physical power-loss behavior are not proven.
 
+SSTable memory is bounded per table, with the file format unchanged (old files
+open as-is). An open table keeps one read-only descriptor, the footer, the sparse
+index (every 16th key with its offset) and the Bloom filter; the data block stays
+on disk. The 16 entries between two index offsets are one block: a point lookup
+does Bloom check, key-range check, bisect on the index, then one positioned read
+of that block, comparing raw key bytes and decoding only the match. Blocks pass
+through one engine-wide LRU `BlockCache` bounded by `StorageConfig.block_cache_bytes`
+(default 8 MiB, 0 disables). `entries()` streams ~256 KiB groups of whole blocks
+and bypasses the cache. Flush and compaction stream rows through
+`files.publishing` (temporary file, fsync, `os.replace`, directory sync), so a
+failure publishes nothing. Compaction is a `heapq.merge` over input iterators
+keyed by (key, -timestamp, input rank): the newest timestamp wins and ties go to
+the earlier input, exactly as before; expired-tombstone filtering is unchanged.
+Memory is one pending entry per input plus one read chunk, plus the output's
+sparse index and Bloom filter (sized from the input entry counts). After the
+output is durable and listed, each input is `retire()`d (descriptor closed, cache
+blocks dropped) and then unlinked, which also works on Windows; a concurrent
+get() that hits a retired table gets SSTableRetiredError and retries on the new
+table list. `scan(visit=...)` merges MemTable and SSTables the same way and lets
+Merkle rebuild keep only per-key digests instead of every value. Each table still
+holds one descriptor, and Bloom/index memory is still proportional to key count.
+
 WAL replay now holds the same lock as append/truncate/close and drains its disk
 thread before cancellation escapes. It truncates only an incomplete suffix to
 the last complete frame boundary, then fsyncs it before allowing future appends.
@@ -61,6 +83,9 @@ The bucket digest still hashes sorted length-delimited key/value-hash components
 A complete binary heap caches parent hashes with the existing hash format.
 Updating one bucket recomputes only its leaf-to-root path: O(log B) parents,
 plus O(K) bucket hashing and ordered-key insertion for K keys in that bucket.
+Startup rebuild calls `bulk_load` instead: it fills buckets, sorts and hashes
+each touched bucket once and the heap once, O(N log K + B), with results identical
+to per-key updates (per-key replay was O(N·K)).
 Immutable hash snapshots retain their tuple of heap entries during comparisons.
 Bucket count must be a power of2 in1..65536. Key pages use bisect cursors and
 bounded slices; no full-bucket sort/all-record response is needed per page.
@@ -105,8 +130,9 @@ siblings and changing membership retain their original documented semantics.
 Replica RPCs are distinct from coordinator CRUD, avoiding recursive fanout.
 
 Automatic provisioning and safe node drain, topology consensus, TLS/authentication,
-real multi-datacenter operation, streaming compaction, a bounded disk cache and
-large-data recovery remain unfinished. Current SSTables cache full file contents.
+real multi-datacenter operation, disk quotas and proven large-data capacity remain
+unfinished. SSTables no longer cache whole files and compaction streams (see above);
+the Merkle index itself is still in memory with one digest per key.
 
 
 Repair pages additionally verify each encoded record against its indexed digest. A visible storage commit awaiting index publication aborts the page.

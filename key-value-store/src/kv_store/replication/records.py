@@ -172,7 +172,14 @@ class ReplicaRecords:
         return True
 
     async def rebuild(self):
-        for key, result in (await self.engine.scan()).items():
+        digests = []
+
+        def collect(result):
             if result.found:
                 decode(result.value)  # fail explicitly on incompatible legacy data
-                self.tree.update(key, hashlib.sha256(result.value).hexdigest())
+                digests.append((result.key, hashlib.sha256(result.value).hexdigest()))
+
+        # Streamed: only per-key digests are retained, never every stored value.
+        await self.engine.scan(visit=collect)
+        # One hash pass per bucket; per-key update() would rehash O(n²/buckets).
+        self.tree.bulk_load(digests)

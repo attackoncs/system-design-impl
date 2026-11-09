@@ -20,6 +20,7 @@ class StorageConfig:
     bloom_filter_fp_rate: float = 0.01  # 1% false positive rate
     compaction_threshold: int = 4  # merge after N SSTables
     max_value_size_bytes: int = 10 * 1024  # application value limit
+    block_cache_bytes: int = 8 * 1024 * 1024  # shared SSTable block LRU; 0 disables
 
 
 @dataclasses.dataclass

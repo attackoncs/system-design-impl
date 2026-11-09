@@ -1,5 +1,22 @@
 # 第7章再次复审 — 2026-10-27
 
+## 2026-11-09 有界SSTable读取与流式压缩
+
+问题：`SSTable.__init__`把整个文件读入`_raw_data`并常驻；压缩先把全部合并结果放进列表、再拼成整文件字节写盘；`engine.scan()`为Merkle重建构造含全部值的字典。内存随数据总量线性增长。
+设计：磁盘格式**完全不变**（旧文件直接打开，无需迁移）。打开表只读文件尾部（≤64KiB+52字节）定位footer，再读索引块与Bloom块；常驻内存仅footer、稀疏索引（每16键一条，键/偏移平行列表）和Bloom过滤器，每表保留一个只读描述符。相邻索引偏移之间的16条记录为一个block：`get`做Bloom、键范围、`bisect`后对该block做一次`os.pread`（无pread平台在表锁内seek+read），逐条比较原始键字节（UTF-8字节序即str序），只解码命中项。block经引擎共享、按字节限额的LRU `BlockCache`（`StorageConfig.block_cache_bytes`默认8MiB，0关闭，超预算的block不缓存）。`entries()`按约256KiB整block分组流式读取，不进缓存，遇坏记录即停止（与旧语义一致）。写入端新增`files.publishing`上下文与`sstable.write_sstable`流式写入器，flush与压缩共用；压缩为`merge_newest`：`heapq.merge`按(键, -时间戳, 输入顺序)归并，首个即胜者——时间戳最大者胜、相同时靠前输入胜，过期墓碑过滤与统计不变，与旧堆实现逐项一致。Bloom按输入条数之和估算（输出更少时略大）。`scan(visit=...)`以同样规则归并MemTable与各表（并列时MemTable、再按新到旧），`ReplicaRecords.rebuild`改为只收集每键摘要；不带visit时仍返回字典以兼容。
+崩溃安全：输出仍写同目录临时文件→flush→fsync→`os.replace`→目录同步，任何异常（含合并后为空）删除临时文件、不发布；整段合并在`complete(to_thread)`中执行，取消也等写线程结束才释放写锁。输出持久化并加入表列表之后，输入才`retire()`（关闭描述符、丢弃缓存块）再删除，因此Windows也能删除；并发`get`若读到已退役表抛`SSTableRetiredError`，表列表已变化则重试（替代表已可见），未变化则如实报错。`stop()`关闭描述符，之后读取会按路径和原大小惰性重开。
+测量（Linux WSL2/Python3.14，/tmp下一次性脚本，HEAD的`git archive`副本对比；4表×10万次随机写、256字节值，共97.5MiB，合并后253018键）：打开4表RSS增量**102.6MiB→3.4MiB**；压缩tracemalloc峰值**327.4MiB→4.9MiB**，进程峰值RSS **611MiB→49MiB**，耗时8.4→7.2–7.5秒，输出逐条摘要相同；`scan()`字典159.8→124.6MiB，`scan(visit)` **3.1MiB**、1.9秒。同步点查（不含to_thread，页缓存已热）每次探测约27→20–23µs（无缓存/8MiB/128MiB相近，主要是Bloom哈希与解析开销；冷盘时缓存才体现收益）。另用8个并发读协程对2000字节memtable、阈值2的引擎写6000次，反复flush/压缩/退役中读取无错误，重启后scan与真值一致。
+验证：仅修改实现与文档，未改测试与基准代码。`-W error`现有全套 **428通过**（13.9秒）。
+仍未完成：每表一个描述符；Bloom与稀疏索引仍随键数增长；Merkle索引本身每键一个摘要常驻；启动重建仍完整读取一遍数据；无磁盘配额与海量容量证明。
+
+## 2026-11-09 启动重建效率
+
+问题：节点启动时`ReplicaRecords.rebuild`对`engine.scan()`的每个键调用`MerkleTree.update`，而每次update都有序插入并重算整个桶摘要，N个键、B个桶时总代价约O(N²/B)。
+修复：新增`MerkleTree.bulk_load(items)`，先填桶，每个受影响桶只排序、摘要一次，最后一次性重建堆；rebuild改为收集摘要后调用它。逐写`update`路径和哈希格式不变；异常时finally仍排序并重算已改动桶，索引保持一致。
+测量（Linux/Python3.14，一次性脚本，非仓库基准）：20万键/1024桶，逐键update **18.05秒** → bulk_load **0.58秒**；5000键/16桶0.41秒→0.008秒。两种路径的堆、桶摘要、桶键序与root逐项相等，在已有内容上再次加载（覆盖值、新键）也相等。
+验证：`-W error`下pytest-asyncio因`asyncio_default_fixture_loop_scope`未设置在收集前报INTERNALERROR（修改前即如此）；加`-o asyncio_default_fixture_loop_scope=function`后修改前后均为 **427通过、1失败**，失败项`test_merkle_protocol.py::test_mutation_during_page_aborts_and_later_repair_converges`修改前已存在，未由本次引入。未新增测试。
+
+
 2026-10-31已追加[原书与开源实现对照、WAL故障修复及428项验证](open-source-review_cn.md)。下文保留2026-10-27的历史记录。
 
 原书《System Design Interview.md》1735–2213行。先对照章节，再用
@@ -63,8 +80,8 @@ async_work/storage.files/anti_entropy/repair_service四个新增未暂存模块�
 
 1. 没有负载驱动的节点资源供给/回收、安全缩容完成屏障、拓扑epoch/共识。
 2. 跨机房只有故障域选择，未提供TLS/认证、WAN分区/机房仲裁或真实容灾验证。
-3. SSTable仍缓存整文件，恢复/Merkle索引和压缩仍有全量内存开销；分页网络
-   不代表已支持海量数据。尚无流式压缩、磁盘配额或生产容量证明。
+3. SSTable整文件缓存与非流式压缩已于2026-11-09解决（见文首）；Merkle索引仍
+   每键常驻一个摘要，重建仍读全量一遍。尚无磁盘配额或生产容量证明。
 4. 树尚未按节点对共有职责分片；N小于成员数时非共有桶可能重复比较。
    连续写入可能使root固定视图反复中止，没有持久桶内续传游标/全轮硬截止。
 5. W+R>N不是线性一致；失败/取消可能已提交部分副本。没有业务幂等键、事务、

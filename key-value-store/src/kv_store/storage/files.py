@@ -5,6 +5,7 @@ from __future__ import annotations
 import errno
 import os
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -24,15 +25,28 @@ def sync_directory(path):
         os.close(descriptor)
 
 
-def publish(path, payload):
+@contextmanager
+def publishing(path, buffering=1024 * 1024):
+    """Yield a writable stream whose contents become ``path`` only when durable.
+
+    The stream is a new temporary file in the same directory. On a clean exit it
+    is flushed and fsynced, atomically renamed over ``path`` and the directory
+    is synced; on any error the temporary file is removed and nothing is
+    published. Writers can therefore stream arbitrarily large files.
+    """
     path = Path(path)
     temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
     try:
-        with temporary.open("xb") as stream:
-            stream.write(payload)
+        with temporary.open("xb", buffering=buffering) as stream:
+            yield stream
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
         sync_directory(path.parent)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def publish(path, payload):
+    with publishing(path) as stream:
+        stream.write(payload)

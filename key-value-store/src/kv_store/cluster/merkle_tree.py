@@ -129,6 +129,34 @@ class MerkleTree:
         self._recompute_bucket(bucket_id)
         self._update_path(bucket_id)
 
+    def bulk_load(self, items) -> None:
+        """Apply many ``(key, value_hash)`` updates, e.g. the startup rebuild.
+
+        Produces exactly the tree that calling :meth:`update` per item would,
+        but sorts and hashes each touched bucket once and the heap once,
+        instead of rehashing a whole bucket on every insert.
+        """
+        touched = set()
+        try:
+            for key, value_hash in items:
+                if not isinstance(key, str) or not isinstance(value_hash, str):
+                    raise ValueError("Merkle keys and value hashes must be strings")
+                bucket_id = self._key_to_bucket(key)
+                bucket = self._buckets[bucket_id]
+                if bucket.get(key) == value_hash:
+                    continue
+                if key not in bucket:
+                    self._bucket_keys[bucket_id].append(key)
+                bucket[key] = value_hash
+                touched.add(bucket_id)
+        finally:
+            # Keep the index consistent even if a bad item aborts the load.
+            for bucket_id in touched:
+                self._bucket_keys[bucket_id].sort()
+                self._recompute_bucket(bucket_id)
+            if touched:
+                self._recompute_root()
+
     def remove(self, key: str) -> None:
         """Remove a key from the tree.
 

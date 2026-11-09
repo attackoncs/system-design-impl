@@ -16,10 +16,10 @@ import logging
 import math
 import pathlib
 import uuid
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from kv_store import config as kv_store_config
-from kv_store.async_work import finish_on_cancel
+from kv_store.async_work import complete, finish_on_cancel
 from kv_store.storage import compaction as storage_compaction
 from kv_store.storage import memtable as storage_memtable
 from kv_store.storage import sstable as storage_sstable
@@ -66,10 +66,14 @@ class StorageEngine:
             size_threshold_bytes=config.memtable_size_bytes
         )
         self._sstables: List[storage_sstable.SSTable] = []  # Newest first
+        # One byte-bounded LRU of data blocks shared by every table; tables
+        # keep only their sparse index and Bloom filter resident.
+        self._block_cache = storage_sstable.BlockCache(config.block_cache_bytes)
         self._compaction_manager = storage_compaction.CompactionManager(
             sstable_dir=config.sstable_dir,
             compaction_threshold=config.compaction_threshold,
             tombstone_grace_seconds=float("inf"),
+            block_cache=self._block_cache,
         )
         self._started = False
 
@@ -125,6 +129,9 @@ class StorageEngine:
             finally:
                 await self._wal.close()
                 self._started = False
+                # Release descriptors; a later read lazily reopens the file.
+                for table in self._sstables:
+                    table.close()
             logger.info("Storage engine stopped")
 
     @finish_on_cancel
@@ -189,49 +196,71 @@ class StorageEngine:
             StorageResult if found (may be a tombstone), None if not found.
         """
         self._validate_key(key)
-        # Creation times can regress across flushes/restarts. Select the newest
-        # per-key storage timestamp across every candidate, including tombstones.
-        best = self._memtable.get(key)
-        for table in tuple(self._sstables):
-            if table.may_contain(key):
-                candidate = await table.get(key)
-                if candidate is not None and (
-                    best is None or candidate.timestamp > best.timestamp
-                ):
-                    best = candidate
+        while True:
+            tables = tuple(self._sstables)
+            try:
+                best = await self._newest(key, tables)
+                break
+            except storage_sstable.SSTableRetiredError:
+                # Compaction publishes its output before retiring inputs, so a
+                # retry over the current list sees the same data. Anything
+                # else (e.g. a file removed externally) is a real error.
+                if tuple(self._sstables) == tables:
+                    raise
         if best is None:
             return None
         return StorageResult(
             best.key, best.value, best.timestamp, best.is_tombstone, True
         )
 
-    async def scan(self) -> dict[str, StorageResult]:
-        """Capture newest records under the writer lock, including tombstones.
+    async def _newest(self, key: str, tables: tuple):
+        # Creation times can regress across flushes/restarts. Select the newest
+        # per-key storage timestamp across every candidate, including tombstones.
+        best = self._memtable.get(key)
+        for table in tables:
+            if table.may_contain(key):
+                candidate = await table.get(key)
+                if candidate is not None and (
+                    best is None or candidate.timestamp > best.timestamp
+                ):
+                    best = candidate
+        return best
 
-        Intended for startup/repair of this reference store, not range queries
-        over production-sized datasets.
+    async def scan(
+        self, visit: Optional[Callable[[StorageResult], None]] = None
+    ) -> Optional[dict[str, StorageResult]]:
+        """Stream newest records under the writer lock, including tombstones.
+
+        A k-way merge over the MemTable and every SSTable yields one record per
+        key in key order; the newest timestamp wins and, on ties, the newer
+        layer (MemTable, then SSTables newest first). Without ``visit`` the
+        records are collected into a dict (O(data) memory, kept for callers
+        and tests). With ``visit`` each record is passed to it and nothing is
+        retained, so startup/repair indexing needs O(tables) memory. ``visit``
+        runs in a worker thread and must not touch the event loop.
         """
         async with self._write_lock:
-            entries = {}
-            for table in reversed(self._sstables):
-                for entry in table.entries():
-                    previous = entries.get(entry.key)
-                    if previous is None or entry.timestamp >= previous.timestamp:
-                        entries[entry.key] = entry
-            for entry in self._memtable.entries_sorted():
-                previous = entries.get(entry.key)
-                if previous is None or entry.timestamp >= previous.timestamp:
-                    entries[entry.key] = entry
-            return {
-                key: StorageResult(
-                    key,
-                    entry.value,
-                    entry.timestamp,
-                    entry.is_tombstone,
-                    not entry.is_tombstone,
-                )
-                for key, entry in entries.items()
-            }
+
+            def run():
+                results = {} if visit is None else None
+                sources = [self._memtable.entries_sorted()]
+                sources += [table.entries() for table in self._sstables]
+                for entry in storage_sstable.merge_newest(sources):
+                    result = StorageResult(
+                        entry.key,
+                        entry.value,
+                        entry.timestamp,
+                        entry.is_tombstone,
+                        not entry.is_tombstone,
+                    )
+                    if visit is None:
+                        results[entry.key] = result
+                    else:
+                        visit(result)
+                return results
+
+            # Drain on cancellation: the lock must outlive the reader thread.
+            return await complete(asyncio.to_thread(run))
 
     @finish_on_cancel
     async def delete(self, key: str, timestamp: float) -> None:
@@ -298,7 +327,7 @@ class StorageEngine:
 
         # Create SSTable from MemTable
         new_sstable = await storage_sstable.SSTable.create_from_memtable(
-            self._memtable, sstable_path, level=0
+            self._memtable, sstable_path, level=0, block_cache=self._block_cache
         )
 
         # Prepend to SSTable list (newest first)
@@ -355,9 +384,11 @@ class StorageEngine:
 
         if not inserted:
             self._sstables.append(compacted_sstable)
-        # Readers retain immutable in-memory SSTable objects, not open files.
-        # The replacement file was fsynced before these old inputs are retired.
+        # The replacement file was fsynced and published above. Retiring closes
+        # each input's descriptor (so unlink also works on Windows); a get()
+        # racing with this sees SSTableRetiredError and retries on the new list.
         for table in retired:
+            table.retire()
             try:
                 pathlib.Path(table.metadata.file_path).unlink(missing_ok=True)
             except OSError:
@@ -382,7 +413,7 @@ class StorageEngine:
         for file_path in sstable_dir.iterdir():
             if file_path.suffix == ".sst":
                 try:
-                    sst = storage_sstable.SSTable(str(file_path))
+                    sst = storage_sstable.SSTable(str(file_path), self._block_cache)
                     sstables.append(sst)
                 except (ValueError, FileNotFoundError) as error:
                     raise ValueError(

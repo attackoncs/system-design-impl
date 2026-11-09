@@ -541,7 +541,8 @@ Task 1 (Project Scaffolding)
 - [x] 417项测试、真实gRPC修复示例、原组件演示及基线/本轮原始性能记录。
 - [x] 双语README/设计/需求、本章覆盖与兼容性、性能回归同步更新。
 - [ ] 负载驱动资源供给/安全缩容屏障、拓扑共识与真正跨机房运行保障。
-- [ ] 流式压缩/有界SSTable缓存/海量数据恢复、共有职责树分片与持久修复续传。
+- [x] 流式压缩/有界SSTable缓存（2026-11-09完成，见下）。
+- [ ] 海量数据恢复容量证明、共有职责树分片与持久修复续传。
 
 ## 2026-10-31 open-source review
 
@@ -551,3 +552,12 @@ Task 1 (Project Scaffolding)
 - [x] Pass 428 tests with warnings as errors; run both examples, real gRPC benchmark and three independent ungraceful processes.
 - [x] Correct example storage paths, quorum wording, clean-restart labeling and bilingual requirements/design/README; update the source-linked guide.
 - [ ] Automatic provisioning, safe drain, topology consensus and bounded-memory large-data storage remain unfinished; see [coverage](open-source-review_cn.md).
+
+## 2026-11-09 bounded SSTable reads and streaming compaction
+
+- [x] SSTables keep only footer, sparse index and Bloom filter resident; point lookups read one 16-entry block via positioned I/O.
+- [x] Shared byte-bounded LRU `BlockCache` (`StorageConfig.block_cache_bytes`, default 8 MiB); scans stream ~256 KiB chunks without caching.
+- [x] Streaming writer (`files.publishing`, `sstable.write_sstable`) for flush and compaction: temp file, fsync, atomic rename, directory sync.
+- [x] Compaction is a k-way `heapq.merge` (`sstable.merge_newest`) with identical newest-timestamp/tie/tombstone semantics; inputs `retire()` before unlink, readers retry.
+- [x] `StorageEngine.scan(visit=...)` streams newest records; Merkle rebuild keeps digests only. On-disk format unchanged.
+- [ ] Load-driven provisioning/safe drain, topology consensus and real multi-DC operation (unchanged boundaries); disk quotas and large-data capacity proof.

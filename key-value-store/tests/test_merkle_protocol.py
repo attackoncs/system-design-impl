@@ -93,6 +93,10 @@ async def pair(root, *, buckets=16, message_size=64 * 1024):
             await node.start()
             nodes.append(node)
         await wait_until(lambda: all(len(node.hash_ring.nodes) == 2 for node in nodes))
+        # These tests drive repair explicitly. The background loop runs its first
+        # round immediately at start and could race a test's setup writes.
+        for node in nodes:
+            await node._anti_entropy.stop()
         return nodes
     except BaseException:
         for node in reversed(nodes):

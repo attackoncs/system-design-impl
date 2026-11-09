@@ -40,7 +40,7 @@ flowchart TB
 2. [ReplicaCoordinator._write_admitted](../src/kv_store/replication/service.py#L137)：从key、bytes和客户端时钟建立新Version；找到本地保存先于副本扇出的顺序。
 3. [ReplicaRecords._merge](../src/kv_store/replication/records.py#L145)：同一键的旧版本与新版本合并，编码后交给存储；下一站看因果筛选。
 4. [reconcile](../src/kv_store/replication/records.py#L105)：删除被因果支配的版本，保留不可比较的siblings；不能简单按timestamp取最后一个。
-5. [StorageEngine.put](../src/kv_store/storage/engine.py#L131)：WAL后MemTable，再考虑flush；在这一层理解崩溃恢复。
+5. [StorageEngine.put](../src/kv_store/storage/engine.py#L138)：WAL后MemTable，再考虑flush；在这一层理解崩溃恢复。
 6. [ReplicaCoordinator._collect](../src/kv_store/replication/service.py#L77)：并发副本达到W后返回；剩余有界RPC继续由协调器持有，关闭时排空。
 7. [ReplicaCoordinator._get_admitted](../src/kv_store/replication/service.py#L204)：从R个响应合并版本；最后再追踪hint与反熵修复。
 
