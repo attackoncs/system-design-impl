@@ -1,5 +1,15 @@
 # Metrics verification report
 
+## Hot-path efficiency — 2026-11-09
+
+The background alerts loop now calls `evaluate_rules()`, which evaluates and
+returns `{"rules": n}` without building the bounded status view (three
+`count(*)` scans plus up to 1000 rows per table). `POST /evaluate` still returns
+the full status via `evaluate()`. Full suite with `-W error -p no:asyncio`
+(copied to /tmp): 106 passed / 6 failed before and after, same environment
+failures. Throwaway timing with 100000 alerts and deliveries, 0 rules:
+`evaluate()` 23.5 ms vs `evaluate_rules()` 1.26 ms.
+
 ## Source re-review — 2026-11-04 (Asia/Shanghai)
 
 Chapter 21 was re-read and compared against current code using CodeGraph, with

@@ -22,6 +22,8 @@ def initialize(store, max_series, per_metric):
         CREATE INDEX IF NOT EXISTS rollups_age ON rollups(grain,bucket);
         CREATE TABLE IF NOT EXISTS batches(id TEXT PRIMARY KEY,hash TEXT,result TEXT,received REAL);
         CREATE TABLE IF NOT EXISTS rejections(id TEXT PRIMARY KEY,hash TEXT,reason TEXT,received REAL);
+        CREATE INDEX IF NOT EXISTS batches_age ON batches(received);
+        CREATE INDEX IF NOT EXISTS rejections_age ON rejections(received);
         CREATE TABLE IF NOT EXISTS workers(id TEXT PRIMARY KEY,updated REAL,error TEXT);
         CREATE TABLE IF NOT EXISTS dirty_minutes(series TEXT,bucket INTEGER,PRIMARY KEY(series,bucket));
         CREATE INDEX IF NOT EXISTS dirty_minutes_age ON dirty_minutes(bucket);

@@ -33,6 +33,12 @@ dirty表只跟踪被修改的分钟/小时桶。一致读快照提取源数据�
 短事务以revision校验发布。最多3次尝试，每层20000桶、总200000源原子；超限/持续
 冲突返回503，保留未裁剪源数据。旧库一次迁移seed可用低层桶，不改变原批指纹。
 
+批回执与拒绝账本在压缩时按`received<cutoff`索引范围删除，每表每轮最多`gc_batch`
+（1000）行。`receipt_retention`默认14天（配置`receipt_retention_seconds`，JSON null
+表示永久保留），不得低于8天：早于原始保留7天+30秒未来容忍+分钟对齐的重放不可能写入
+任何样本，回执过期后的重试按超出保留范围拒绝（fail closed），且原始样本按(series,
+timestamp)不可变。collector推送回执和已发送outbox行沿用既有的接受推送时14天有界清理。
+
 原始截断点floor((now−7d)/60)*60；分钟/小时截断点分别
 floor((now−30d)/3600)*3600及floor((now−365d)/3600)*3600。重建完整低层桶再裁剪。
 查询合并不重叠层级、披露粗桶边界包含整桶，step须对齐保留粒度。
@@ -53,13 +59,25 @@ marker/revision和数据来自同一快照。查询最多200源序列/200000输�
 规则ID不可变；--rules-file/--rules在worker启动前原子加载JSON数组或{"rules":[...]}，
 上限1MiB/1000规则。静态labels可附severity，不改变指标selector。配置/评估/schema/
 投递/provider分离；评估先做读快照计算，再以每条规则的evaluation-version CAS发布
-状态和事件，不要求全局Store revision保持不变。
+状态和事件，不要求全局Store revision保持不变。后台告警循环只做评估；完整状态视图
+（各表计数及每表最多1000行）只在`POST /evaluate`和`GET /alerts`时生成。
 
 条件恢复重置pending或生成resolved；no_data重置pending并保留已firing，避免虚构恢复。
 分组使用rule、destination、channel及指定标签值，不是跨规则路由树；未分组的过时
 事件可取消，冻结批次保持原负载/幂等键重试。
 同组FIFO防止恢复越过旧重试，lease隔离竞争结果，claim即累计尝试次数；有限退避、最多
 5次，耗尽保留dead记录。静默期间继续评估，可能延迟整批并在解除后按序投递。
+
+告警元数据GC（`metadata_retention`，默认14天，配置`alert_metadata_retention_seconds`，
+null关闭）随每次评估（后台循环与`POST /evaluate`）运行，经`(status,created)`/
+`(status,due)`索引从最旧开始、每轮最多1000行，只删终态历史：按创建时间超期的
+`sent`/`dead`/`superseded`事件，以及最后计划尝试时间超期的`sent`/`dead`投递。
+pending事件和pending/持有租约的投递从不删除，FIFO、租约fencing与重试不变。
+在规则CAS事务内，仅当无数据的`inactive`告警其序列行已删除（所有层级过期，即至少
+小时层保留期无数据）且无未分组事件仍需转换校验时才删除；firing/pending/resolved
+保留。规则`gc_floor`记录被删告警的最大transition，重建告警从其之上继续，事件与
+通知ID永不复用。旧库启动时串行ALTER补`events.created`（由payload时间回填）与
+`evaluations.gc_floor`并建索引。
 
 真实验证自有HTTP webhook。邮件/电话/PagerDuty须配置Provider，否则显式失败。
 外部去重需要接收方配合，不宣称任意副作用恰好一次。告警使用本地持久outbox，
@@ -74,5 +92,5 @@ HTTPS使用证书校验。先绑定再启动worker，非daemon处理线程和后
 
 API/storage/alerts共享单机SQLite，不是复制SQL HA。CPU是进程累计秒数，内存是Python
 tracemalloc分配，不是整机利用率/RSS。生产TSDB压缩/分布、共识发现、流处理/优先级、
-元数据HA、TLS/ACL、真实商业provider、云保留、备份、回执/告警GC及持续规模/掉电验证
+元数据HA、TLS/ACL、真实商业provider、云保留、备份、配额及持续规模/掉电验证
 仍为扩展，不由本机样本测量证明。

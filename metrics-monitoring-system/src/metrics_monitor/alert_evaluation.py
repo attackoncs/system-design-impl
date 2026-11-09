@@ -50,7 +50,8 @@ class Evaluation:
         with self.store.transaction() as db:
             # The first read pins series, samples, prior states and version together.
             version = db.execute(
-                "SELECT version,updated FROM evaluations WHERE rule_id=?", (rule["id"],)
+                "SELECT version,updated,gc_floor FROM evaluations WHERE rule_id=?",
+                (rule["id"],),
             ).fetchone()
             now = self._now()
             previous_time = version["updated"] if version else -1
@@ -81,9 +82,10 @@ class Evaluation:
                 snapshots.append(
                     (sid, series, prior, [(row[0], row[1]) for row in points])
                 )
-        return now, version["version"] if version else 0, previous_time, snapshots
+        floor = version["gc_floor"] if version else 0
+        return now, version["version"] if version else 0, previous_time, snapshots, floor
 
-    def _evaluate_snapshot(self, rule, now, snapshots):
+    def _evaluate_snapshot(self, rule, now, snapshots, floor=0):
         updates = []
         error = ""
         for sid, series, previous, points in snapshots:
@@ -103,13 +105,17 @@ class Evaluation:
                 except ValueError:
                     error = "aggregation incompatible with metric type"
             state, since, transition, emit = next_state(previous, value, now, rule)
+            if previous is None:
+                # A row recreated after GC continues above every transition its
+                # deleted predecessor used, so event/notification IDs never repeat.
+                transition += floor
             updates.append((sid, labelset, value, state, since, transition, emit))
         return updates, error
 
     def _accept_evaluation(self, rule, now, version, updates, error):
         with self.store.transaction(True) as db:
             db.execute(
-                "INSERT OR IGNORE INTO evaluations VALUES(?,0,-1)", (rule["id"],)
+                "INSERT OR IGNORE INTO evaluations(rule_id,version,updated) VALUES(?,0,-1)", (rule["id"],)
             )
             changed = db.execute(
                 "UPDATE evaluations SET version=version+1,updated=? WHERE rule_id=? AND version=? AND updated<=?",
@@ -134,6 +140,13 @@ class Evaluation:
                         value,
                     ),
                 )
+                if (
+                    self.metadata_retention is not None
+                    and state == "inactive"
+                    and value is None
+                    and self._collect_alert(db, rule["id"], alert_id, sid, transition)
+                ):
+                    continue
                 if emit:
                     event_id = digest([alert_id, transition])
                     group = digest(
@@ -155,7 +168,7 @@ class Evaluation:
                         "transition": transition,
                     }
                     db.execute(
-                        "INSERT OR IGNORE INTO events VALUES(?,?,?,?,?,?,?,?,NULL,'pending')",
+                        "INSERT OR IGNORE INTO events(id,alert_id,transition,group_key,destination,channel,payload,due,batch,status,created) VALUES(?,?,?,?,?,?,?,?,NULL,'pending',?)",
                         (
                             event_id,
                             alert_id,
@@ -165,13 +178,42 @@ class Evaluation:
                             rule["channel"],
                             dumps(payload),
                             self._silenced_until(db, labelset, now),
+                            now,
                         ),
                     )
             db.execute("UPDATE rules SET error=? WHERE id=?", (error, rule["id"]))
             db.execute("DELETE FROM silences WHERE end<?", (now - 86400,))
         return True
 
+    def _collect_alert(self, db, rule_id, alert_id, sid, transition):
+        """Drop an inactive alert whose series the TSDB has fully expired.
+
+        A series row is deleted only after its raw, minute and hour data all aged
+        out, so the alert has had no data for at least the longest tier. Firing,
+        pending and just-resolved rows are never candidates; neither is a row
+        whose unbatched event still needs its transition check in _materialize.
+        """
+        if db.execute("SELECT 1 FROM series WHERE id=?", (sid,)).fetchone():
+            return False
+        if db.execute(
+            "SELECT 1 FROM events WHERE alert_id=? AND status='pending' AND batch IS NULL LIMIT 1",
+            (alert_id,),
+        ).fetchone():
+            return False
+        db.execute("DELETE FROM alerts WHERE id=?", (alert_id,))
+        db.execute(
+            "UPDATE evaluations SET gc_floor=max(gc_floor,?) WHERE rule_id=?",
+            (transition, rule_id),
+        )
+        return True
+
     def evaluate(self):
+        """HTTP/admin entry point: evaluate, then return the full status view."""
+        self.evaluate_rules()
+        return self.status()
+
+    def evaluate_rules(self):
+        """Background entry point: evaluate without the O(table) status scan."""
         with self.store.transaction() as db:
             configured = db.execute(
                 "SELECT * FROM rules ORDER BY id LIMIT 1001"
@@ -182,12 +224,14 @@ class Evaluation:
             rule = json.loads(configured_rule["body"])
             for _attempt in range(3):
                 try:
-                    now, version, previous_time, snapshots = self._evaluation_snapshot(
-                        rule
+                    now, version, previous_time, snapshots, floor = (
+                        self._evaluation_snapshot(rule)
                     )
                     if now < previous_time:
                         break  # A wall-clock rollback must not regress accepted state.
-                    updates, error = self._evaluate_snapshot(rule, now, snapshots)
+                    updates, error = self._evaluate_snapshot(
+                        rule, now, snapshots, floor
+                    )
                     if self._accept_evaluation(rule, now, version, updates, error):
                         break
                 except (Error, ValueError):
@@ -201,4 +245,5 @@ class Evaluation:
                 # Another evaluator has already accepted fresher state; do not
                 # overwrite it or claim a new transition after bounded retries.
                 continue
-        return self.status()
+        self.prune_metadata()
+        return {"rules": len(configured)}

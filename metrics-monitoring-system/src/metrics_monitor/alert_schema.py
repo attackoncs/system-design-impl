@@ -1,4 +1,4 @@
-"""Idempotent schema and scheduling indexes for alert state and delivery."""
+"""Idempotent schema, migrations and scheduling/GC indexes for alert state."""
 
 from contextlib import closing
 
@@ -19,4 +19,21 @@ def initialize(store):
         CREATE INDEX IF NOT EXISTS deliveries_ready ON deliveries(status,due,lease_until,seq);
         CREATE INDEX IF NOT EXISTS deliveries_fifo ON deliveries(group_key,status,seq);
         """)
+        # Columns added for metadata GC; the check/ALTER pair is serialized so
+        # concurrently starting processes cannot both add the same column.
+        db.execute("BEGIN IMMEDIATE")
+        if not _has_column(db, "events", "created"):
+            db.execute("ALTER TABLE events ADD COLUMN created REAL")
+            # Existing events carry their creation (evaluation) time in payload.
+            db.execute("UPDATE events SET created=json_extract(payload,'$.timestamp')")
+        if not _has_column(db, "evaluations", "gc_floor"):
+            db.execute(
+                "ALTER TABLE evaluations ADD COLUMN gc_floor INTEGER NOT NULL DEFAULT 0"
+            )
+        db.execute("CREATE INDEX IF NOT EXISTS events_gc ON events(status,created)")
+        db.execute("CREATE INDEX IF NOT EXISTS events_alert ON events(alert_id,status)")
         db.commit()
+
+
+def _has_column(db, table, column):
+    return any(row[1] == column for row in db.execute(f"PRAGMA table_info({table})"))

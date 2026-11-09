@@ -57,7 +57,7 @@ Final totals and raw measurements must come from current execution, not historic
 
 Distributed/compressed production TSDB, consensus discovery/HA, dynamic collector
 failover, priority streaming/Flink, separate alert event bus, full PromQL/Grafana,
-TLS/ACLs, real provider credentials, cloud retention, metadata GC, backup recovery,
+TLS/ACLs, real provider credentials, cloud retention, backup recovery,
 sustained 10-million-series capacity and power-loss verification remain extensions.
 SQLite and the queue's single coordinator are explicit deployment limits.
 

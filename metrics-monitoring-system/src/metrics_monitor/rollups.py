@@ -10,7 +10,6 @@ import math
 from .common import Error, dumps
 from .summaries import combine, singleton
 
-DAY = 86400
 MAX_ROLLUP_BUCKETS = 20000
 MAX_ROLLUP_ATOMS = 200000
 
@@ -164,12 +163,13 @@ class Compaction:
                         "DELETE FROM rollups WHERE grain=3600 AND bucket<?",
                         (hour_floor,),
                     )
-                    db.execute(
-                        "DELETE FROM batches WHERE received<?", (now - 14 * DAY,)
-                    )
-                    db.execute(
-                        "DELETE FROM rejections WHERE received<?", (now - 14 * DAY,)
-                    )
+                    if self.receipt_retention is not None:
+                        # Indexed, bounded per pass; a backlog drains over passes.
+                        for table in ("batches", "rejections"):
+                            db.execute(
+                                f"DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} WHERE received<? LIMIT ?)",
+                                (now - self.receipt_retention, self.gc_batch),
+                            )
                     empty = [
                         r[0]
                         for r in db.execute(

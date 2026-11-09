@@ -37,7 +37,7 @@ rollup每层20000键/总200000原子，revision最多3次尝试。归档最多10
 ## 生产扩展
 
 生产TSDB压缩/分布、共识发现/HA、动态collector接管、优先级/Flink、独立告警事件总线、
-完整PromQL/Grafana、TLS/ACL、商业provider凭据、云保留、元数据GC、备份、千万序列持续
+完整PromQL/Grafana、TLS/ACL、商业provider凭据、云保留、备份、千万序列持续
 规模及掉电验收均待完成。SQLite及队列单协调器是明确边界。
 
 用户要求后才提交；requirements/tasks保持本地不提交约定，design可在后续授权提交中包含。

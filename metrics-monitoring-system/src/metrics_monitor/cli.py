@@ -72,8 +72,15 @@ def main(argv=None):
                 root / "timeseries.sqlite",
                 max_series=config.get("max_series", 10000),
                 per_metric=config.get("per_metric", 1000),
+                # JSON null disables the corresponding metadata GC.
+                receipt_retention=config.get("receipt_retention_seconds", 14 * 86400),
             )
-            alerts = Alerts(store)
+            alerts = Alerts(
+                store,
+                metadata_retention=config.get(
+                    "alert_metadata_retention_seconds", 14 * 86400
+                ),
+            )
             if args.rules_file:
                 alerts.load_rules(args.rules_file)
         elif args.rules_file:
@@ -96,7 +103,7 @@ def main(argv=None):
             provider = WebhookProvider(config.get("destinations", {}))
 
             def evaluate_and_notify():
-                alerts.evaluate()
+                alerts.evaluate_rules()
                 for _ in range(100):
                     if stop.is_set() or not alerts.notify_once(provider):
                         break

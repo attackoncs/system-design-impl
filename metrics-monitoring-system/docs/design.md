@@ -48,6 +48,15 @@ still matches. Up to three attempts, 20,000 bucket keys per tier and 200,000 sou
 atoms bound a pass; failure preserves unpruned data and returns 503. Migration
 seeds available lower tiers once without changing existing batch fingerprints.
 
+Batch receipts and the rejection ledger are pruned during compaction by an indexed
+`received<cutoff` range delete, at most `gc_batch` (1000) rows per table per pass.
+`receipt_retention` defaults to 14d (`receipt_retention_seconds`; JSON null keeps
+them forever) and cannot be below 8d: a replay older than raw retention (7d) plus
+30s future tolerance and minute alignment cannot apply any sample, so a retry after
+the receipt expires fails closed as an out-of-retention rejection, and raw samples
+are immutable per (series, timestamp) in any case. Collector push receipts and sent
+outbox rows keep their existing 14d bounded cleanup on accepted pushes.
+
 Raw cutoff is floor((now−7d)/60)*60; minute/hour cutoffs are floor((now−30d)/3600)*3600
 and floor((now−365d)/3600)*3600. Lower-tier complete buckets are rebuilt before
 pruning. Queries use nonoverlapping tiers, disclose whole coarse partial buckets,
@@ -75,7 +84,9 @@ before workers via --rules-file/--rules (1MiB/1000 rules). Optional static label
 carry severity without changing metric selectors. Configuration, evaluation,
 schema, delivery and providers have separate modules. Evaluation computes from
 read snapshots and uses each rule's evaluation-version CAS before publishing
-state/events. It does not require an unchanged global Store revision.
+state/events. It does not require an unchanged global Store revision. The
+background alerts loop only evaluates; the full bounded status view (counts and
+up to 1000 rows per table) is built for `POST /evaluate` and `GET /alerts` only.
 
 False conditions reset pending or resolve firing; no-data resets pending and
 keeps firing active, avoiding invented recovery. Notification groups use rule,
@@ -84,6 +95,22 @@ tree. Unbatched superseded transitions may be cancelled; frozen
 batches retain their payload/key across retries. Per-group FIFO prevents recovery
 overtaking earlier retries. Leases fence delivery results; attempt count advances
 at claim, bounded backoff and five attempts leave exhausted work visibly dead.
+
+Alert metadata GC (`metadata_retention`, default 14d via
+`alert_metadata_retention_seconds`; null disables) runs on every evaluation tick
+(background loop and `POST /evaluate`). It deletes, oldest first and at most 1000
+rows per tick via `(status,created)`/`(status,due)` indexes, only terminal history:
+`sent`/`dead`/`superseded` events older than the retention by creation time, and
+`sent`/`dead` deliveries whose last scheduled attempt is older. Pending events and
+pending/leased deliveries are never touched, so FIFO, lease fencing and retries
+are unchanged. Inside the rule's CAS transaction, an `inactive` alert with no data
+is removed only when its series row is gone (all tiers expired, i.e. no data for
+the hour-tier retention) and no unbatched event still needs its transition check;
+firing, pending and resolved alerts stay. The rule's `gc_floor` records the highest
+deleted transition and a recreated alert continues above it, so event and
+notification IDs are never reused. Existing databases gain `events.created`
+(backfilled from payload timestamps) and `evaluations.gc_floor` via a serialized
+ALTER, plus indexes, on startup.
 
 Webhook is actual HTTP to an owned receiver; email/phone/PagerDuty need configured
 Provider adapters and otherwise fail. Receiver idempotency is needed to avoid
@@ -103,4 +130,4 @@ API/storage/alerts may share one local SQLite file; this is not replicated SQL H
 CPU is process CPU seconds, memory is Python tracemalloc allocations, not host
 utilization/RSS. Production needs TSDB distribution/compression, consensus discovery,
 stream processing/priority queues, metadata HA, TLS/topic ACLs, real providers,
-cloud retention, backups, receipt/alert GC and sustained scale/power-loss validation.
+cloud retention, backups, quotas and sustained scale/power-loss validation.

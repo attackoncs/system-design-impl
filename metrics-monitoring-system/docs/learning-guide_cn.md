@@ -35,9 +35,9 @@ flowchart TB
 1. [Collector.enqueue](../src/metrics_monitor/collector.py#L94)：看输入样本怎样变成有容量限制的持久outbox。输入是一批样本，输出是受理结果；此处先不追网络。
 2. [Collector.flush_once](../src/metrics_monitor/collector.py#L190)：看任务如何领取以及网络调用发生在事务外。输入是队列适配器，输出是本轮是否成功发送；继续追`queue.publish`。
 3. [consume_once](../src/metrics_monitor/pipeline.py#L16)：核对“先落库、后确认消费位置”的顺序。问自己：确认丢失后重放是否安全？
-4. [Store.ingest](../src/metrics_monitor/storage.py#L54)：找到批次去重、样本冲突和基数限制。先关注事务整体回滚，再看具体索引。
+4. [Store.ingest](../src/metrics_monitor/storage.py#L75)：找到批次去重、样本冲突和基数限制。先关注事务整体回滚，再看具体索引。
 5. [next_state](../src/metrics_monitor/alert_evaluation.py#L12)：暂时离开数据库，给纯状态函数输入前态、90、测试时钟和规则，手算下一个状态。
-6. [Evaluation.evaluate](../src/metrics_monitor/alert_evaluation.py#L174)与[Delivery.notify_once](../src/metrics_monitor/alert_delivery.py#L55)：前者负责接受求值结果，后者处理投递。沿这条分界理解重复评估和重复通知。
+6. [Evaluation.evaluate](../src/metrics_monitor/alert_evaluation.py#L210)与[Delivery.notify_once](../src/metrics_monitor/alert_delivery.py#L55)：前者负责接受求值结果，后者处理投递。沿这条分界理解重复评估和重复通知。
 
 ## 微观一：发送在事务外，确认要带领取身份
 

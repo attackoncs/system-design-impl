@@ -52,5 +52,8 @@ Requirements/tasks remain local until a user-authorized change to that conventio
 - [ ] P2. Production TSDB compression/shards, priority stream processing, full
   query language and separate scalable alert-event transport.
 - [ ] P3. TLS/ACL, commercial notification providers, cloud cold storage and backups.
-- [ ] P4. Comprehensive receipt/alert metadata GC, quotas and target-scale soaks.
+- [x] P4a. Receipt/alert metadata GC (2026-11-09): bounded indexed pruning of
+  TSDB batch receipts/rejections (default 14d, minimum 8d), terminal events and
+  sent/dead deliveries (default 14d) and inactive alerts whose series expired.
+- [ ] P4. Quotas and target-scale soaks.
 - [ ] P5. Target-filesystem power-loss and disaster-recovery validation.

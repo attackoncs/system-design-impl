@@ -1,5 +1,56 @@
 # 第21章核对：监控与告警系统
 
+## 2026-11-09 热路径效率复核
+
+问题：`AlertEvaluator.evaluate()`结尾返回`self.status()`，后者对alerts/deliveries/rules各做
+`count(*)`并各加载最多1000行；后台告警循环（`cli.py`的`evaluate_and_notify`）每个间隔都调用它
+却丢弃返回值，开销随告警/投递历史增长。
+
+修复：拆出`evaluate_rules()`执行评估并只返回`{"rules": n}`，后台循环改调它；`evaluate()`
+保持“评估后返回完整状态”，供`POST /evaluate`和既有测试使用，HTTP响应形状不变。
+评估逻辑、CAS和事件生成未改动。
+
+验证：`-W error -p no:asyncio`完整套件（复制到/tmp运行）修前106通过/6失败，修后106通过/6失败，
+失败项相同（`-W error`下的HTTP ResourceWarning及真实网络用例，环境相关）。
+临时测量（/tmp，非仓库）：alerts与deliveries各10万行、0条规则时，`evaluate()`约23.5ms，
+`evaluate_rules()`约1.26ms。
+
+### 回执/告警元数据GC（tasks P4a）
+
+无界增长的结构：`events`与`deliveries`从不删除；序列过期后其`alerts`行永久残留并计入
+每规则1000序列评估预算（序列流转最终导致413）；`batches`/`rejections`虽按14天删除，但
+无索引且单条DELETE不限量（每次压缩全表扫描）。collector `receipts`/已发送outbox已有
+索引、每次500行的14天清理，未改；`silences`已按结束后1天清理且上限1000，`rules`上限1000。
+
+保留规则：
+- `batches`/`rejections`：`Store(receipt_retention=14天, gc_batch=1000)`，配置键
+  `receipt_retention_seconds`，下限8天，null永久保留；`compact()`内按新索引
+  `batches_age`/`rejections_age`做`received<cutoff`有界删除。
+- `events`：新增`created`列（旧库由payload时间戳回填）与`events_gc(status,created)`索引；
+  只删超期的`sent`/`dead`/`superseded`。
+- `deliveries`：只删`due`（最后计划尝试时间）超期的`sent`/`dead`，走现有`deliveries_ready`索引。
+- `alerts`：仅当状态`inactive`、本轮无数据、序列行已被删除、且无未分组pending事件时，在
+  规则CAS写事务内删除；`evaluations.gc_floor`记录被删的最大transition。
+- 事件/投递GC由`Alerts.prune_metadata()`在`evaluate_rules()`末尾执行（后台循环与
+  `POST /evaluate`），每轮合计最多`gc_batch`=1000行；`Alerts(metadata_retention=14天)`，
+  配置键`alert_metadata_retention_seconds`，null关闭即恢复原行为。
+
+安全论证：批回执过期时，相同重放的样本必早于原始保留下限（7天+30秒未来容忍+60秒对齐
+<8天），整批以超出保留拒绝，不会重复写入；且raw按(series,timestamp)不可变，重放本身
+幂等。pending事件（含已分组）和pending/租约中的投递永不删除，FIFO判定只看pending行，
+租约结果按`lease`fencing，删除终态行不影响。事件ID为`digest([alert_id, transition])`，
+transition单调；告警行重建时从`gc_floor`继续，故事件与通知ID（事件ID的哈希）不复用，
+`INSERT OR IGNORE`不会吞掉新转换。序列行仅在原始/分钟/小时数据均过期后删除，所以被删
+告警至少一年无数据；firing（no_data）、pending、resolved均不删除。迁移在`BEGIN IMMEDIATE`
+内检查列再ALTER，`CREATE INDEX IF NOT EXISTS`幂等；`events`/`evaluations`插入改为显式列名。
+
+验证：/tmp临时脚本（非仓库）覆盖：15天后sent投递/事件被删、失败中的pending投递保留；
+关闭GC时全部保留；序列400天过期后inactive告警被删、firing保留、`gc_floor=2`，同序列重新
+触发得到transition 3且事件ID未出现过；默认14天回执于15天后清理，随后同ID重放以超出保留被拒绝；`gc_batch=10`时
+25条回执分轮清理；三条GC查询的执行计划均为覆盖索引范围扫描；旧schema库迁移并回填
+`created`，重复初始化幂等。既有完整套件：111通过/1失败（`test_network`真实进程lab
+超时，机器负载下的已知时序用例），单独重跑通过；未修改测试或基准代码。
+
 ## 2026-11-04 源码复核
 
 重读本章并结合CodeGraph复核采集、队列、存储/降采样、规则/投递及网络生命周期。

@@ -131,9 +131,11 @@ the same strict JSON parser as HTTP: duplicate fields and non-finite values are
 rejected. Excessive nesting is recorded as invalid input so it cannot stall a
 partition indefinitely. Rejection persistence must succeed before cursor commit;
 database/network errors and 5xx storage failures still retry without committing.
-The queue coordinator is still a SPOF. Collector receipts/rejection receipts retain 14 days; successfully
-dispatched collector payloads are cleared. Some durable delivery/alert metadata
-does not yet have GC.
+The queue coordinator is still a SPOF. Collector push receipts, TSDB batch receipts
+and rejection records retain 14 days; successfully dispatched collector payloads are
+cleared. TSDB receipt retention is `receipt_retention_seconds` (minimum 8 days so an
+expired-receipt replay is already outside raw retention and is rejected; null keeps
+forever), pruned during compaction in indexed batches of 1000.
 
 ## Query/retention semantics
 
@@ -202,6 +204,14 @@ in order. A resolution can be sent even when its firing event was suppressed.
 Groups are scoped to rule, destination, channel and configured label values,
 without a full cross-rule routing tree. Lost acknowledgements can cause duplicate
 external delivery; receiver idempotency is required. Exhausted attempts stay dead.
+
+Alert metadata GC runs on each evaluation tick (`alert_metadata_retention_seconds`,
+default 14 days, null disables; at most 1000 rows per tick): `sent`/`dead`/`superseded`
+events and `sent`/`dead` deliveries older than the retention are removed; pending
+events and pending/leased deliveries never are. An `inactive` no-data alert is
+dropped only after its series expired from every tier; firing/pending/resolved
+alerts stay, and a recreated alert continues its transition count so event and
+notification IDs are never reused.
 
 HTTP defaults to 32 accepted handlers, backlog 128 and a 10-second absolute socket
 budget; CLI exposes `--concurrency` and `--request-timeout`. Bodies are limited to

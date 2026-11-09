@@ -98,7 +98,9 @@ rate/last，识别重置，不把累计读数求和当请求数。rate使用每�
 本地冷归档使用gzip和SHA-256校验，可在实时数据过期后验证读取；archive CLI见英文README。
 范围必须为早于30天的完整小时；最多100000桶/10000序列，压缩和解压各64MiB。
 读取同时校验结构、序列身份、桶范围和统计字段；独占创建并fsync，失败只清理同身份的新文件。
-不是云存储迁移，归档文件不自动按在线保留策略删除。部分告警／通知元数据尚无GC。
+不是云存储迁移，归档文件不自动按在线保留策略删除。collector推送回执、TSDB批回执和拒绝记录保留14天；TSDB回执保留期由`receipt_retention_seconds`
+配置（最少8天，使回执过期后的重放已超出原始保留而被拒绝；null永久保留），在压缩时按索引
+每批1000行清理。
 
 ## 告警与通知
 
@@ -113,6 +115,10 @@ API/storage/alerts角色可用`--rules-file path.json`（别名`--rules`）在�
 静默期间不发送，状态继续评估；未分组的过时事件可取消。已经冻结的通知批次保持同一
 幂等ID／内容重试；分组FIFO防止恢复通知越过失败告警。30秒租约隔离worker，最多5次
 指数退避，耗尽保留dead记录。接收方配合幂等才能避免外部重复。
+告警元数据GC随每次评估运行（`alert_metadata_retention_seconds`默认14天，null关闭，每轮最多
+1000行）：删除超期的`sent`/`dead`/`superseded`事件和`sent`/`dead`投递，pending事件与
+pending/持有租约的投递从不删除。无数据的`inactive`告警只在其序列于所有层级过期后删除；
+firing/pending/resolved保留，重建告警延续transition计数，事件和通知ID不复用。
 静默可能推迟整批，已分组旧状态可能在解除后按序投递；也可能单独发送resolved。
 通知合并限于同规则、目标、通道及group_by标签值，不提供Alertmanager完整跨规则路由树。
 

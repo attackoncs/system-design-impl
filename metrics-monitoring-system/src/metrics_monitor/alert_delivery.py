@@ -134,3 +134,32 @@ class Delivery:
                         "UPDATE events SET status='dead' WHERE batch=?", (task["id"],)
                     )
         return True
+
+    def prune_metadata(self):
+        """Bounded GC of terminal notification history older than the retention.
+
+        Only terminal rows are eligible: pending events (batched or not) and
+        pending/leased deliveries are never touched. Terminal rows are no longer
+        read by grouping, FIFO ordering or lease fencing, and IDs cannot be
+        re-created (event IDs include a transition that never repeats; delivery
+        IDs hash their events). Returns the number of rows deleted.
+        """
+        if self.metadata_retention is None:
+            return 0
+        budget = self.gc_batch
+        with self.store.transaction(True) as db:
+            cutoff = self._now() - self.metadata_retention
+            for table, key, column, status in (
+                ("deliveries", "seq", "due", "sent"),
+                ("deliveries", "seq", "due", "dead"),
+                ("events", "rowid", "created", "sent"),
+                ("events", "rowid", "created", "dead"),
+                ("events", "rowid", "created", "superseded"),
+            ):
+                if budget <= 0:
+                    break
+                budget -= db.execute(
+                    f"DELETE FROM {table} WHERE {key} IN (SELECT {key} FROM {table} WHERE status=? AND {column}<? LIMIT ?)",
+                    (status, cutoff, budget),
+                ).rowcount
+        return self.gc_batch - budget

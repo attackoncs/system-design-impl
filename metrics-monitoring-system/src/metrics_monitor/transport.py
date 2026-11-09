@@ -17,6 +17,15 @@ from urllib.parse import urlsplit
 
 from .common import dumps
 
+
+def _rejected(url, status, reason, headers):
+    # HTTPError owns a file-like body; close the empty one now so a caller that
+    # only inspects code/headers never leaks it (ResourceWarning on Python 3.14).
+    error = HTTPError(url, status, reason, headers, None)
+    error.close()
+    return error
+
+
 MAX_BODY = 4 * 1024 * 1024
 
 
@@ -206,12 +215,11 @@ def request(
             with state_lock:
                 response = received
             if not 200 <= response.status < 300:
-                raise HTTPError(
+                raise _rejected(
                     url,
                     response.status,
                     "RPC peer rejected request",
                     response.headers,
-                    None,
                 )
             lengths = response.headers.get_all("Content-Length", [])
             transfers = response.headers.get_all("Transfer-Encoding", [])

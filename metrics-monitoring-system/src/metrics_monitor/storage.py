@@ -20,14 +20,35 @@ from .archives import Archives, read_archive as read_archive
 from .summaries import combine as combine, reading as reading, singleton as singleton
 
 DAY = 86400
+# A replay older than raw retention (7d) + future tolerance (30s) + minute
+# alignment can no longer apply any sample, so receipts may expire after 8d.
+MIN_RECEIPT_RETENTION = 8 * DAY
 
 
 class Store(Archives, Queries, Compaction, Database):
-    def __init__(self, path, clock=time.time, max_series=10000, per_metric=1000):
+    def __init__(
+        self,
+        path,
+        clock=time.time,
+        max_series=10000,
+        per_metric=1000,
+        *,
+        receipt_retention=14 * DAY,
+        gc_batch=1000,
+    ):
+        """`receipt_retention=None` keeps batch receipts/rejections forever."""
         if not callable(clock):
             raise ValueError("clock must be callable")
+        if receipt_retention is not None and not (
+            type(receipt_retention) in (int, float)
+            and MIN_RECEIPT_RETENTION <= receipt_retention <= 3650 * DAY
+        ):
+            raise ValueError("receipt retention must be None or 8 days..10 years")
+        if type(gc_batch) is not int or not 1 <= gc_batch <= 100000:
+            raise ValueError("receipt GC batch must be an integer in 1..100000")
         super().__init__(path)
         self.clock, self.cache = clock, Cache()
+        self.receipt_retention, self.gc_batch = receipt_retention, gc_batch
         self._compaction = threading.Lock()
         initialize(self, max_series, per_metric)
 

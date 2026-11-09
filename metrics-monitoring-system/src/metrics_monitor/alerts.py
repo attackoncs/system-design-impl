@@ -11,10 +11,22 @@ from .alert_rules import MAX_RULES, normalize_rule, read_rules
 from .alert_schema import initialize
 from .common import Error, dumps, identifier, labels, number
 
+METADATA_RETENTION = 14 * 86400
+GC_BATCH = 1000
+
 
 class Alerts(Evaluation, Delivery):
-    def __init__(self, store):
+    def __init__(self, store, metadata_retention=METADATA_RETENTION, gc_batch=GC_BATCH):
+        """`metadata_retention=None` disables alert/notification metadata GC."""
+        if metadata_retention is not None and not (
+            type(metadata_retention) in (int, float)
+            and 3600 <= metadata_retention <= 3650 * 86400
+        ):
+            raise ValueError("alert metadata retention must be None or 3600s..10y")
+        if type(gc_batch) is not int or not 1 <= gc_batch <= 100000:
+            raise ValueError("alert GC batch must be an integer in 1..100000")
         self.store = store
+        self.metadata_retention, self.gc_batch = metadata_retention, gc_batch
         initialize(store)
 
     def _now(self):
