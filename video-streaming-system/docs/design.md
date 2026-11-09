@@ -63,7 +63,9 @@ Scheduling time is captured after transaction acquisition; expiry is computed ju
 before claiming. The first claim fixes each job's durable attempt limit, preventing
 another worker's policy from prematurely failing it. Pre-upgrade leases without a
 recorded policy use the former default of three. Priority pages skip blocked tasks
-without loading the whole queue. Capability filtering and free local slots route
+without loading the whole queue: each page is a keyset seek on `(state, priority)`
+then insertion order within one priority level, not an OFFSET rescan, so skipping
+Q dependency-blocked jobs costs O(Q) per claim instead of O(Q²/128). Capability filtering and free local slots route
 work; each Worker bounds submitted executions to its configured capacity (1..32).
 This is pull scheduling, not globally optimal/GPU placement.
 

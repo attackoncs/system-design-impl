@@ -93,21 +93,40 @@ class JobQueue:
                 )
 
     def _ready(self, now, kinds):
-        """Walk priority pages with bounded input and per-video dependency caches."""
+        """Walk priority pages with bounded input and per-video dependency caches.
+
+        Order is priority DESC, then insertion (rowid). Pages are keyset seeks
+        within one priority level, then jump to the next lower level, so
+        skipping many dependency-blocked QUEUED jobs costs one index seek per
+        page instead of an OFFSET rescan of every earlier row on each page.
+        """
         suffix, params = "", [now]
         if kinds is not None:
             suffix = " AND kind IN (" + ",".join("?" for _ in kinds) + ")"
             params.extend(sorted(kinds))
-        sql = (
-            "SELECT * FROM jobs WHERE state='QUEUED' AND due<=?"
-            + suffix
-            + " ORDER BY priority DESC,rowid LIMIT 128 OFFSET ?"
-        )
-        states, offset = collections.OrderedDict(), 0
-        while True:
-            rows = self.db.execute(sql, (*params, offset)).fetchall()
+        page = "SELECT * FROM jobs WHERE state='QUEUED' AND due<=?" + suffix
+        page += " AND priority=?"
+        # The PostgreSQL adapter rewrites these rowid forms to its id order.
+        after = " AND rowid>(SELECT rowid FROM jobs WHERE id=?)"
+        order = " ORDER BY rowid LIMIT 128"
+        lower = "SELECT MAX(priority) FROM jobs WHERE state='QUEUED'"
+        states = collections.OrderedDict()
+        priority = self.db.execute(lower).fetchone()[0]
+        last = None
+        while priority is not None:
+            if last is None:
+                rows = self.db.execute(page + order, (*params, priority)).fetchall()
+            else:
+                rows = self.db.execute(
+                    page + after + order, (*params, priority, last)
+                ).fetchall()
             if not rows:
-                return
+                priority = self.db.execute(
+                    lower + " AND priority<?", (priority,)
+                ).fetchone()[0]
+                last = None
+                continue
+            last = rows[-1]["id"]
             for row in rows:
                 video = row["video"]
                 if video not in states:
@@ -131,7 +150,6 @@ class JobQueue:
                                 for dep in dependencies
                             },
                         )
-            offset += len(rows)
 
     def claim(self, worker, lease_seconds=120, max_attempts=3, *, kinds=None):
         duration(lease_seconds)

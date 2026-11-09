@@ -1,5 +1,25 @@
 # 第 15 章：视频系统核对
 
+## 2026-11-09 领取分页效率修复
+
+问题：`JobQueue._ready` 每次 Worker `claim` 都用 `LIMIT 128 OFFSET ?` 翻页；
+DAG 中等待依赖的任务保持 QUEUED，排在前面会被反复跳过，第 k 页需重扫前
+128k 行并重排序，一次领取约 O(Q²/128)。
+
+修复：改为键集分页。先取 QUEUED 最高优先级，在该优先级内以
+`rowid > 上页末行` 按插入顺序取 128 条，取空后跳到 `MAX(priority) < 当前值`。
+新增索引 `queued_jobs(state, priority)`（隐含 rowid 顺序）使每页一次索引定位；
+PostgreSQL 适配器把 rowid 形式改写为 `id`，与原 `priority DESC,id` 顺序一致。
+领取顺序、kinds/due 过滤与事务语义不变：30组随机队列（混合优先级、状态、
+依赖、kinds）新旧 `_ready` 输出顺序逐条相同。
+
+实测（/tmp 一次性脚本，SQLite 内存库，Q 个依赖阻塞任务+末尾1个可领取任务，
+单次 claim）：Q=5,000 由 311 ms 降至 29 ms；Q=20,000 由 6,798 ms 降至 107 ms。
+
+验证：完整严格套件（`-p no:asyncio`，因共享环境新装 pytest-asyncio 的弃用警告
+在 `-W error` 下中断收集）修改前后均为 **153 passed、2 failed、9 skipped**；
+2项失败为既有真实 FFmpeg 用例，与本次无关；PostgreSQL 相关用例跳过。
+
 ## 2026-11-02 开源源码复核
 
 重新阅读第15章，结合 CodeGraph 核对上传、转码、发布和播放，参考 PeerTube 与

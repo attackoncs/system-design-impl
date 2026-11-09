@@ -219,7 +219,8 @@ class Postgres:
         # bound.
         ignore = sql.startswith("INSERT OR IGNORE ")
         sql = sql.replace("INSERT OR IGNORE ", "INSERT ").replace("?", "%s")
-        sql = sql.replace("ORDER BY priority DESC,rowid", "ORDER BY priority DESC,id")
+        sql = sql.replace("rowid>(SELECT rowid FROM jobs WHERE id=%s)", "id>%s")
+        sql = sql.replace("ORDER BY rowid LIMIT", "ORDER BY id LIMIT")
         if ignore:
             sql += " ON CONFLICT DO NOTHING"
         try:

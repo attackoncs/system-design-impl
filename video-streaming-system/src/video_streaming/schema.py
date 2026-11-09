@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS job_limits (
     job TEXT PRIMARY KEY, attempts INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ready_jobs ON jobs(state, priority, due);
+CREATE INDEX IF NOT EXISTS queued_jobs ON jobs(state, priority);
 CREATE INDEX IF NOT EXISTS expired_jobs ON jobs(state, expires);
 CREATE INDEX IF NOT EXISTS video_jobs ON jobs(video, state);
 CREATE INDEX IF NOT EXISTS pending_completions ON completions(handled);

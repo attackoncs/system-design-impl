@@ -46,13 +46,13 @@ flowchart TB
 2. [VideoService.put_part](../src/video_streaming/service.py#L300)：看编号、大小和校验和怎样绑定；数据写入失败不能标记上传成功。
 3. [VideoService.finish](../src/video_streaming/service.py#L403)：检查分片齐全、源对象组装及DAG冻结，输出仍是原video_id。
 4. [Pipeline.tasks](../src/video_streaming/pipeline.py#L63)：把流水线配置变成依赖任务；先画出inspect之后哪些节点可并行。
-5. [JobQueue.claim](../src/video_streaming/scheduling.py#L136)：只领取依赖满足的任务，分配新的lease并增加attempts。
+5. [JobQueue.claim](../src/video_streaming/scheduling.py#L154)：只领取依赖满足的任务，分配新的lease并增加attempts。
 6. [Worker.run_once](../src/video_streaming/worker.py#L228)：从领取进入处理与完成推进；再看 [FFmpegMedia.run](../src/video_streaming/media.py#L99) 管理子进程。
-7. [JobQueue.complete](../src/video_streaming/scheduling.py#L207)：确认当前租约和产物，之后回到服务的发布完成路径。
+7. [JobQueue.complete](../src/video_streaming/scheduling.py#L225)：确认当前租约和产物，之后回到服务的发布完成路径。
 
 ## 微观一：任务ID不是执行资格
 
-[scheduling.py:149](../src/video_streaming/scheduling.py#L149)
+[scheduling.py:167](../src/video_streaming/scheduling.py#L167)
 
 ```python
 with self.lock, self.db:
@@ -97,7 +97,7 @@ sequenceDiagram
 
 ## 微观二：慢对象I/O之后还要复核
 
-[scheduling.py:229](../src/video_streaming/scheduling.py#L229)
+[scheduling.py:247](../src/video_streaming/scheduling.py#L247)
 
 ```python
     if current["kind"] == "publish":

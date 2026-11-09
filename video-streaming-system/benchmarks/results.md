@@ -1,5 +1,11 @@
 # 实际媒体与故障验证
 
+## 2026-11-09 领取分页前后对比
+
+一次性脚本（SQLite 内存库，Q 个依赖阻塞的 QUEUED 任务后跟 1 个可领取任务，
+单次 `claim`）：OFFSET 翻页改为键集分页后，Q=5,000 为 311 → 29 ms，
+Q=20,000 为 6,798 → 107 ms。详见 [第15章核对](../docs/chapter15-review.md)。
+
 ## 2026-11-02 源码复核后实测
 
 复现：`python tools/benchmark.py --http-requests 100 --output benchmarks/review-2026-11-02.json`。
