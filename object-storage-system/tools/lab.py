@@ -7,11 +7,16 @@ import subprocess
 import sys
 import time
 import uuid
+from urllib.error import HTTPError
 from urllib.parse import urlencode
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 from object_storage.common import request, sha
+
+
+class PortLost(RuntimeError):
+    """A spawned role exited before serving, usually a lost port race."""
 
 
 def port():
@@ -37,6 +42,20 @@ class Lab:
     def __init__(self):
         self.root = ROOT / ".runtime" / ("lab-" + uuid.uuid4().hex)
         self.root.mkdir(parents=True)
+        self.config = {
+            k: secrets.token_hex(24)
+            for k in ("internal_token", "admin_token", "continuation_secret")
+        }
+        self.config.update(
+            users={u: secrets.token_hex(24) for u in ("alice", "bob")},
+            write_quorum=2,
+        )
+        self.config_path = self.root / "secrets.json"
+        self.assign_ports()
+        self.processes, self.logs = {}, []
+
+    def assign_ports(self):
+        """Pick free ports; another process may still take one before bind."""
         self.ports = {}
         for name in ("api", "metadata-0", "metadata-1", "data-0", "data-1", "data-2"):
             value = port()
@@ -44,19 +63,11 @@ class Lab:
                 value = port()
             self.ports[name] = value
         self.urls = {name: f"http://127.0.0.1:{p}" for name, p in self.ports.items()}
-        self.config = {
-            k: secrets.token_hex(24)
-            for k in ("internal_token", "admin_token", "continuation_secret")
-        }
         self.config.update(
-            users={u: secrets.token_hex(24) for u in ("alice", "bob")},
             data_urls=[self.urls[f"data-{i}"] for i in range(3)],
             metadata_urls=[self.urls[f"metadata-{i}"] for i in range(2)],
-            write_quorum=2,
         )
-        self.config_path = self.root / "secrets.json"
         self.config_path.write_text(json.dumps(self.config))
-        self.processes, self.logs = {}, []
 
     def spawn(self, name):
         role = name.split("-")[0]
@@ -83,7 +94,33 @@ class Lab:
             stderr=handle,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
-        wait_for(lambda: self.call(name, "/health"))
+        process = self.processes[name]
+        deadline, last = time.monotonic() + 15, None
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                # Typically the port was taken between port() and bind.
+                raise PortLost(f"{name} exited with {process.returncode}")
+            try:
+                if self.owned(name):
+                    return
+            except Exception as exc:
+                last = exc
+            time.sleep(0.05)
+        raise AssertionError(f"condition not reached: {last}")
+
+    def owned(self, name):
+        """Probe with this lab's secrets: /health alone may reach a stranger."""
+        role = name.split("-")[0]
+        if role == "data":
+            return self.call(name, "/status", role="internal")
+        if role == "api":
+            return self.call(name, "/v1/buckets") is not None
+        try:
+            self.call(name, "/lab-probe", role="internal")
+        except HTTPError as exc:
+            exc.close()
+            return exc.code == 404  # authenticated, then unknown route
+        return False
 
     def stop(self, name):
         process = self.processes.pop(name, None)
@@ -123,15 +160,24 @@ class Lab:
 
     def __enter__(self):
         try:
-            for name in (
-                "data-0",
-                "data-1",
-                "data-2",
-                "metadata-0",
-                "metadata-1",
-                "api",
-            ):
-                self.spawn(name)
+            for attempt in range(3):
+                try:
+                    for name in (
+                        "data-0",
+                        "data-1",
+                        "data-2",
+                        "metadata-0",
+                        "metadata-1",
+                        "api",
+                    ):
+                        self.spawn(name)
+                    break
+                except PortLost:
+                    if attempt == 2:
+                        raise
+                    for name in list(self.processes):
+                        self.stop(name)
+                    self.assign_ports()
             self.api("/v1/buckets/bucket-test", b"", "PUT")
             return self
         except BaseException:

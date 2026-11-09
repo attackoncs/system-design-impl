@@ -21,6 +21,25 @@ from .common import dumps
 
 MAX_BODY = 70 * 1024 * 1024
 MAX_REQUEST = 64 * 1024 * 1024
+MAX_JSON_DEPTH = 64
+
+
+class PeerRejected(HTTPError):
+    """Peer status error whose bounded body stays readable after close.
+
+    HTTPError is a tempfile wrapper that warns when collected unclosed, and
+    callers routinely drop failed replica/peer errors. The placeholder file is
+    closed at construction; code, reason and headers remain usable and read()
+    serves the body from a plain BytesIO that needs no cleanup.
+    """
+
+    def __init__(self, url, code, headers, body):
+        super().__init__(url, code, "RPC peer rejected request", headers, None)
+        self.close()
+        self._body = BytesIO(bytes(body))
+
+    def read(self, size=-1):
+        return self._body.read(size)
 
 
 def interrupt_socket(active_socket):
@@ -106,10 +125,32 @@ def _float(value):
     return result
 
 
+def _bounded_depth(value):
+    """Reject deep nesting explicitly instead of relying on RecursionError.
+
+    Python 3.14 bounds C recursion by stack size, so json.loads accepts nesting
+    that older versions rejected; the protocol never needs more than a few
+    levels, so the limit is a property of the format rather than the runtime.
+    """
+    stack = [(value, 1)]
+    while stack:
+        item, depth = stack.pop()
+        if depth > MAX_JSON_DEPTH:
+            raise ValueError("JSON nesting too deep")
+        children = item.values() if isinstance(item, dict) else item
+        stack.extend(
+            (child, depth + 1)
+            for child in children
+            if isinstance(child, (dict, list))
+        )
+    return value
+
+
 def loads(value):
-    return json.loads(
+    result = json.loads(
         value, object_pairs_hook=_pairs, parse_constant=_constant, parse_float=_float
     )
+    return _bounded_depth(result) if isinstance(result, (dict, list)) else result
 
 
 class Deadline:
@@ -263,12 +304,8 @@ def request(
             if response.length not in (None, 0):
                 raise OSError("truncated RPC response")
             if not 200 <= response.status < 300:
-                raise HTTPError(
-                    url,
-                    response.status,
-                    "RPC peer rejected request",
-                    response.headers,
-                    BytesIO(bytes(result[: 1024 * 1024])),
+                raise PeerRejected(
+                    url, response.status, response.headers, result[: 1024 * 1024]
                 )
             if raw:
                 return bytes(result)

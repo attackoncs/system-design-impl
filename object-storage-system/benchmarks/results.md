@@ -1,3 +1,15 @@
+# Data-node restart cost — 2026-11-09
+
+Throwaway script (not committed), Linux WSL2, Python 3.14.4. 4 KiB small
+chunks, half collected (tombstones retained), 20 large ~100 KB files; median of
+5 restarts. Old startup rebuilt and rehashed the whole pack and every large
+file; new startup verifies the durable `pack_state` watermark and scans only the
+un-indexed tail. 4000 writes (16.7 MB pack): 54.6 ms → 1.3 ms. 20000 writes
+(83.5 MB pack): 237.0 ms → 2.3 ms. Missing/mismatching watermark falls back to
+the unchanged full rebuild. See [chapter review](../docs/chapter25-review.md).
+
+---
+
 # Source and error-boundary review — 2026-11-05
 
 Python3.13.9, Windows11 build26100, real localhost HTTP only. No AWS/cloud

@@ -8,7 +8,7 @@ import signal
 from .common import identifier, integer
 from .http import server
 from .metadata import Metadata
-from .node import DataNode
+from .node import PACK_LIMIT, DataNode
 from .service import Catalog, Service
 from .transport import endpoint, loads, secret
 
@@ -64,6 +64,7 @@ def load_config(path):
     if len(set(all_urls)) != len(all_urls):
         raise ValueError("distinct data and metadata endpoints required")
     integer(config.get("write_quorum", 2), "write_quorum", 2, 3)
+    integer(config.get("data_pack_bytes", PACK_LIMIT), "data_pack_bytes", 1 << 20, 1 << 40)
     return config
 
 
@@ -80,7 +81,10 @@ def serve_role(args, config):
         )
     else:
         integer(args.index, "data index", 0, 2)
-        store = DataNode(root / f"data-{args.index}")
+        store = DataNode(
+            root / f"data-{args.index}",
+            pack_limit=config.get("data_pack_bytes", PACK_LIMIT),
+        )
     instance = None
     try:
         instance = server(args.role, config, store, args.host, args.port)

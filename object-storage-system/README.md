@@ -106,7 +106,7 @@ print(report)  # recovery, repaired_copies, copy_failures, unrecoverable and GC
 
 Maintenance resumes completing uploads, expires active ones, gathers all version/upload references, repairs replicas, and collects old unreferenced chunks. Missing metadata halts GC. Recently removed versions are protected through grace; 50,000 live unique chunks is the maintenance budget. Tests explicitly use zero grace; normal default is 60 seconds.
 
-Data-node `/status`, `/chunks/{hash}`, POST `/collect` and POST `/compact` require internal credentials. Small chunks (at most 64 KiB) share a checksummed append file with delete tombstones and recoverable offset index; large chunks use separate files. Compaction switches CURRENT atomically after writing a new live generation. Run it after repair/GC. Never invoke node collection with an incomplete reference set outside the coordinator.
+Data-node `/status`, `/chunks/{hash}`, POST `/collect` and POST `/compact` require internal credentials. Small chunks (at most 64 KiB) share checksummed append-only pack files with delete tombstones and a recoverable offset index that records each chunk's pack. Before the active pack would exceed `data_pack_bytes` (optional config, default 256 MiB) it is sealed read-only and a new active pack starts; `CURRENT` lists sealed packs then the active one. Restart verifies a durable indexed-end watermark plus the sealed-pack list and scans only the active pack's un-indexed tail; any mismatch falls back to a full rebuild of every listed pack. Compaction seals the active pack and merges live chunks of all sealed packs; large chunks use separate files. Compaction switches CURRENT atomically after writing a new live generation. Run it after repair/GC. Never invoke node collection with an incomplete reference set outside the coordinator.
 
 Catalog and metadata shards have no replicas or election. One coordinator permits shared ordinary operations and exclusively gates GC, bucket deletion and listing capture. Downloads buffer bounded content, not GB streams. No AWS signatures, IAM, TLS, encryption, erasure coding, automatic multi-host repair or online resharding exists. Receipts/removed metadata lack automatic archival. Process/file fault tests do not establish 100 PB, six-nine durability or four-nine availability. Details: [design](docs/design.md).
 
@@ -186,7 +186,7 @@ speedup comparison or a production SLA. See [chapter review](docs/chapter25-revi
 and [measurements](benchmarks/results.md).
 
 Remaining chapter-scale work: placement heartbeats/consensus, independent AZs,
-metadata/catalog HA, multi-pack rotation/per-core append streams, streaming GB
+metadata/catalog HA, per-core append streams (pack rotation is implemented), streaming GB
 objects, erasure coding, automatic repair scheduling, online resharding, cloud
 IAM/TLS/encryption and lifecycle/backup/100PB durability validation. No real AWS
 service was used, and no commit or push was made.

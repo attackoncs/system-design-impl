@@ -47,7 +47,11 @@ The test and latency figures below are historical **2026-10-20** evidence. Curre
 - [x] Fence failed pack/index/CURRENT recovery; durable unknown publication intents.
 - [x] Generation-checked node sweep prevents delayed stale collection deleting new PUTs.
 - [x] 137 tests passed40.784s(-Werror); real six-process demos and four-client measurements.
-- [ ] Production placement/consensus, metadata HA, pack rotation/per-core streams,
+- [x] Pack rotation (2026-11-09): the active pack is sealed read-only before it would
+      exceed `data_pack_bytes` (default 256 MiB); chunk rows record their pack (legacy
+      rows migrate to the single pack); restart scans only the active tail; compaction
+      merges sealed packs; crash ordering is documented in the chapter review.
+- [ ] Production placement/consensus, metadata HA, per-core streams,
       streaming GB objects, erasure coding, cloud security and 100PB/SLA validation.
 
 ## 2026-11-05 source and error-boundary review
