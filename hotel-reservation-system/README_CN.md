@@ -77,6 +77,8 @@ python -m hotel_reservation.cli worker --config .runtime/secrets.json --shard 1
 
 `request_key` 按酒店+用户分组。同键同内容返回原订单当前状态；不同内容拒绝；已取消或过期订单不会因旧键重试重新占房。`payment_method` 仅接受 `test-ok` 或 `test-decline`，请勿提交银行卡资料。
 
+可选保留策略默认关闭，关闭时行为与此前一致。`receipt_retention_seconds`（3600秒至3650天）即文档约定的客户端重试窗口：超过后，*已结清*订单（终态status、终态payment、无未完成charge/refund任务）清除`request_key`/负载指纹及已完成任务行。之后同键重试会推导出同一确定订单ID，返回409 `idempotency receipt expired; use a new request_key`，绝不重复订房。`privacy_retention_days`（1..3650）对离店日早于该UTC天数的已结清订单脱敏：`user`改为`"[redacted]"`并删除回执；ID、日期、房型、数量、每晚价格、金额、status、payment、held、events及账本全部保留。脱敏订单不再出现在该用户历史中，对该用户返回404；管理员仍可查看/取消（退款照常）。分片每`retention_interval`秒（默认60）沿部分索引处理一批`retention_batch`（默认100），批满则立即继续。支付结果未知或补偿待完成的订单永不清理。
+
 滚动日历是显式启用功能：PUT策略必填`capacity/overbook/price`，选填`horizon_days`
 （1..730，默认730）。分片CLI的自有维护线程默认每5秒执行一轮（配置`calendar_interval`），
 每轮最多32策略/4096日期行，只补空日，不改任何既有日价、占用或历史库存。策略更新不是
@@ -117,6 +119,6 @@ socket期限不能强杀DNS/SQL/CPU，名额保留到实际退出。HTTP绑定�
 模拟支付服务提供受支付令牌保护的 `/operations`，以及管理员 `/admin/status`、`/admin/control`。控制正文 `{"fail_after_commit":true,"fail_refunds":false}` 可模拟支付已持久化但响应丢失；退款故障开关可验证补偿重试。这些都是本地模拟接口，不是银行或真实支付接口。
 
 数据库分片和模拟账本暂无复制/自动故障转移；验证仅覆盖保留本地磁盘的进程重启。
-在线扩分片、跨分片用户索引、租户员工权限、TLS、分布式限流、自动隐私清理、真实支付、
+在线扩分片、跨分片用户索引、租户员工权限、TLS、分布式限流、支付账本回执GC、备份/灾难恢复、真实支付、
 酒店当地时区/税费及原书5000酒店/100万房间规模尚未实现或验收。更多见
 [设计文档](docs/design_cn.md)。

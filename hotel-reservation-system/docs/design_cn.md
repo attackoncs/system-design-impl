@@ -45,6 +45,18 @@ UNIQUE(hotel,user,request_key)+指纹绑定负载。同键重放返回现有订�
 过期或日期/价格变动也不重新占房；改内容409。缺失和他人订单都404。历史按酒店分页100项，
 不是跨分片全局用户索引，也不是并发插入下的固定快照。本地admin可管理全部酒店，未做租户员工ACL。
 
+## 回执GC和隐私保留
+
+`retention.py`默认关闭。幂等回执就是订单行的(request_key,hash)；只有已结清订单（status为
+CONFIRMED/CANCELLED/EXPIRED/REJECTED、payment为NONE/PAID/DECLINED/REFUNDED、且
+`charge:`/`refund:`任务全部done）才可处理。`receipt_retention_seconds`按created计算客户端
+重试窗口，过后清空request_key/hash并删除已完成任务行。reserve在回执查不到时用主键查确定订单ID，
+存在即409“回执已过期，请换新key”，所以过期重试不会二次占房或扣款。`privacy_retention_days`
+对离店日早于UTC今天减N天的已结清订单把user改成不合法标识`[redacted]`并删回执；金额、日期、
+每晚价格、库存held、events和账本（本来就不含用户）不变。订单ID是[user,key]的摘要，作为会计
+主键保留。两种扫描都走部分索引`receipt_gc(created,id)`/`privacy_gc(end,id)`，单事务每批最多
+`retention_batch`行；长期卡住的未结清行会被每轮跳过，应通过status告警处理。旧库启动时只补建索引。
+
 ## 支付Saga和资源拥有权
 
 PENDING只表示占用。截止前全额模拟付款才CONFIRMED/PAID；明确拒付释放并拒绝，超时/HTTP
@@ -58,7 +70,7 @@ drain；不支持取消的旧自定义adapter仍需等真实执行结束。模�
 
 模拟账本独立持久化指纹/回执；退款必须匹配原已付款。控制开关可模拟“已提交后503”和暂时退款
 不可用，但不撤销已完成操作的幂等回执。这不是银行、真实卡SDK或真实资金exactly-once保证。
-events是持久轮询日志，不是外部必达通知；回执/账务历史仍需生产GC策略。
+events是持久轮询日志，不是外部必达通知；分片幂等回执已有可选GC；模拟账本操作回执和events未做GC。
 
 ## HTTP和生命周期
 
@@ -74,5 +86,5 @@ SQLite/CPU，名额保留至实际退出。
 ## 尚未完成
 
 复制/共识/自动HA、在线迁移、真实Redis/CDC、分布式限流、真实支付、TLS/租户ACL部署、酒店当地
-时区/税费/多币种、隐私/备份恢复及5000酒店/100万房间持续验收均未实现。保留磁盘的进程测试不证明
+时区/税费/多币种、备份恢复及5000酒店/100万房间持续验收均未实现。保留磁盘的进程测试不证明
 机器丢失恢复或所有Windows文件系统掉电持久性。

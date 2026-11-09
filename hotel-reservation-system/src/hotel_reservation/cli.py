@@ -8,6 +8,7 @@ from .common import identifier, integer
 from .http import server
 from .lifecycle import Worker
 from .payment import SimulatedLedger
+from .retention import Retention, validate as retention_settings
 from .store import Store
 from .transport import endpoint, loads, seconds, secret
 from .worker import run
@@ -51,6 +52,7 @@ def load_config(path):
     integer(config.get("lease_seconds", 2), "lease_seconds", 1, 60)
     integer(config.get("hold_seconds", 120), "hold_seconds", 1, 900)
     seconds(config.get("calendar_interval", 5))
+    retention_settings(config)
     return config
 
 
@@ -92,6 +94,17 @@ def main(argv=None):
             worker = Worker(calendar.roll_once, config.get("calendar_interval", 5))
             workers["calendar"] = worker
             stack.callback(worker.close)
+            receipt, privacy, interval, batch = retention_settings(config)
+            if receipt is not None or privacy is not None:
+                retention = Retention(store, receipt, privacy, batch)
+                worker = Worker(
+                    lambda: retention.run_once()["pending"],
+                    interval,
+                    name="hotel-retention",
+                    continuous=True,
+                )
+                workers["retention"] = worker
+                stack.callback(worker.close)
         elif args.role == "payment":
             store = SimulatedLedger(root / "simulated-payments.sqlite")
         instance = server(

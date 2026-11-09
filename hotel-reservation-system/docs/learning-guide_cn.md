@@ -38,7 +38,7 @@ flowchart TB
 3. [Saga.claim](../src/hotel_reservation/saga.py#L40)：找到hold过期清理及任务租约，理解后台为什么能够重启。
 4. [Worker._work](../src/hotel_reservation/worker.py#L85)：标出支付调用与数据库回调的分界，以及未知异常如何变成重试。
 5. [Saga.finish](../src/hotel_reservation/saga.py#L127)：检查paid结果到来时预订是否仍能确认。付款成功不保证预订还未取消。
-6. [Bookings.release](../src/hotel_reservation/bookings.py#L123)与[Bookings.cancel](../src/hotel_reservation/bookings.py#L148)：跟踪库存释放和必要的退款任务，不要只读状态字符串。
+6. [Bookings.release](../src/hotel_reservation/bookings.py#L129)与[Bookings.cancel](../src/hotel_reservation/bookings.py#L154)：跟踪库存释放和必要的退款任务，不要只读状态字符串。
 
 ## 微观一：幂等检查必须在占库之前
 
@@ -63,14 +63,14 @@ with self.transaction(True) as db:
 [bookings.py:85](../src/hotel_reservation/bookings.py#L85)
 
 ```python
+).fetchall()
+if len(rows) != len(days):
+    raise Error(409, "calendar incomplete")
+total = quantity * sum(r["price"] for r in rows)
+if total != expected:
+    raise Error(409, "price changed; obtain and accept a fresh quote")
 for day in days:
     cursor = db.execute(
-        """UPDATE inventory SET reserved=reserved+?,version=version+1
-        WHERE hotel=? AND room=? AND day=? AND reserved+?<=capacity+(capacity*overbook)/100""",
-        (quantity, hotel, room, day, quantity),
-    )
-    if not cursor.rowcount:
-        raise Error(409, "insufficient inventory for at least one night")
 ```
 
 决定是否成功的是UPDATE中的容量条件与`rowcount`。两晚中任意一晚更新失败就抛错，由外层事务回滚已经更新的其他日期。配置允许超订时上限也不是简单capacity；阅读表达式时应把整数房间数与百分比一起算。
@@ -106,7 +106,7 @@ sequenceDiagram
 
 分片可能已经提交预订，但返回的JSON、长度或framing损坏。网关此时不知道最终结果，
 不能用400暗示用户只是填错请求，也不能自动重发写入。沿
-[request](../src/hotel_reservation/transport.py#L121)的响应校验异常，到
+[request](../src/hotel_reservation/transport.py#L153)的响应校验异常，到
 [_Handler.handle_request](../src/hotel_reservation/http.py#L389)的503映射读一次。
 
 ```mermaid

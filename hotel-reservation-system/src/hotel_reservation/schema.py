@@ -31,3 +31,10 @@ def initialize(store):
         db.execute(
             "CREATE INDEX IF NOT EXISTS history_cursor ON bookings(hotel,user,id)"
         )
+        # Retention scans (see retention.py); partial indexes shrink as rows age out.
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS receipt_gc ON bookings(created,id) WHERE hash IS NOT NULL"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS privacy_gc ON bookings(end,id) WHERE user!='[redacted]'"
+        )

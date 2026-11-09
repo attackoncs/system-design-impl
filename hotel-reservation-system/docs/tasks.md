@@ -39,7 +39,9 @@ records production gaps. The 2026-10-20 result remains historical.
 - [ ] Replicated shards/ledger, consensus metadata, online resharding and failover.
 - [ ] Real distributed cache/CDC, global guest index and workload throttling.
 - [ ] Real payment provider, hotel-local timezones/cancellation policy, taxes/currencies.
-- [ ] TLS/tenant ACL deployment, privacy/receipt GC, backups and disaster recovery.
+- [x] Opt-in shard receipt GC and guest privacy redaction: settled-only, bounded
+  partial-index batches, expired same-key retry rejected by deterministic ID (409).
+- [ ] TLS/tenant ACL deployment, payment-ledger receipt GC, backups and disaster recovery.
 - [ ] Sustained million-room/peak workload and filesystem power-loss verification.
 
 Submit or push only when requested. Existing convention keeps requirements/tasks

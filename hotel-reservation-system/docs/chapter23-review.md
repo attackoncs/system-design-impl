@@ -1,5 +1,31 @@
 # 第23章核对：酒店预订系统
 
+## 2026-11-09 回执GC与隐私保留
+
+新增`retention.py`，在分片进程以有界后台Worker运行；`receipt_retention_seconds`、
+`privacy_retention_days`均缺省即关闭，行为与此前一致；`retention_interval`默认60秒、
+`retention_batch`默认100行。
+
+规则：只处理已结清订单——status为CONFIRMED/CANCELLED/EXPIRED/REJECTED，payment为
+NONE/PAID/DECLINED/REFUNDED，且无未完成charge/refund任务。CHARGING（支付结果未知）、
+REFUND_PENDING（补偿待完成）及仍有pending/inflight任务的订单无论多旧都不动。回执GC在
+created超过重试窗口后清空request_key/hash并删除已完成任务行；隐私保留在离店日超过N天后
+把user改为`[redacted]`并删回执，ID、日期、房型、数量、每晚价格、金额、状态、held保留。
+
+安全论证：订单ID由hotel+[user,key]摘要确定，reserve回执未命中时再按主键查，命中即409
+“idempotency receipt expired; use a new request_key”，过期重试无法二次占房或产生第二个
+charge任务。脱敏不改inventory、nights、amount、payment、events、jobs意图或账本，后续管理员
+取消照常生成退款（method保留，因为退款intent需要它）。删除的只是已done任务，迟到finish/retry
+因找不到inflight租约而无效。扫描走部分索引并使用`INDEXED BY`，无索引即报错而非全表扫描；
+旧库启动时`CREATE INDEX IF NOT EXISTS`补建，无表结构变更。
+
+验证：/tmp脚本先删索引模拟旧库再重开，EXPLAIN显示`USING INDEX receipt_gc/privacy_gc`；
+退款待完成订单的回执保留且可重放，完成后才回收；过期同键返回409；脱敏后库存reserved等于
+held订单数量、账本charge与分片PAID金额一致，管理员取消已脱敏CONFIRMED订单退款成功；
+真实shard进程启用后`/internal/status`显示`retention`维护无错误。既有完整套件
+**100项通过、33.19秒，`-W error`**。未修改测试或基准。支付账本操作回执、events、TLS/ACL及
+备份恢复仍未完成。
+
 ## 2026-11-04 源码复核
 
 重读本章，通过CodeGraph复核库存/预订/日历、Saga/模拟账本/worker和网关/RPC。

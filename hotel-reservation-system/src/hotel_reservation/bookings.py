@@ -65,6 +65,12 @@ class Bookings:
                 if old["hash"] != fingerprint:
                     raise Error(409, "idempotency key payload conflict")
                 return self.booking(old["id"], user, db)
+            if db.execute("SELECT 1 FROM bookings WHERE id=?", (booking,)).fetchone():
+                # The receipt was collected after the retry window (retention.py).
+                # The deterministic ID proves the key was used; never re-book it.
+                raise Error(
+                    409, "idempotency receipt expired; use a new request_key"
+                )
             now = self._now()
             days = stay(body["start"], body["end"], now)
             active = db.execute(

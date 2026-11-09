@@ -71,6 +71,25 @@ orders both return 404. History is hotel-scoped, ID-cursor paginated to 100 item
 it is not a cross-shard guest index or a snapshot across concurrent insertions.
 Admins manage this lab globally; per-hotel staff ACLs are not implemented.
 
+## Receipt GC and privacy retention
+
+`retention.py` is off by default. The idempotency receipt is the order row's
+(request_key,hash). Only settled orders qualify: status CONFIRMED/CANCELLED/
+EXPIRED/REJECTED, payment NONE/PAID/DECLINED/REFUNDED, and no unfinished
+`charge:`/`refund:` job. `receipt_retention_seconds`, measured from creation, is
+the client retry window; afterwards request_key/hash are cleared and finished job
+rows deleted. When the receipt lookup misses, reserve checks the deterministic
+reservation ID by primary key and returns 409 "idempotency receipt expired; use a
+new request_key", so a late retry never re-holds rooms or re-charges.
+`privacy_retention_days` sets `user` to the invalid identifier `[redacted]` and
+drops the receipt for settled orders whose stay ended before UTC today minus N
+days; amounts, dates, nightly prices, held inventory, events and the ledger (which
+never store the guest) are unchanged. The reservation ID, a digest of [user,key],
+stays as the accounting key. Both scans use partial indexes `receipt_gc(created,id)`
+and `privacy_gc(end,id)`, at most `retention_batch` rows per write transaction;
+long-stuck unsettled rows are skipped each pass and should be alerted on via
+status. Existing databases only gain the indexes at startup.
+
 ## Saga and durable operations
 
 PENDING is an inventory hold. Only full charge success before its deadline yields
@@ -95,7 +114,7 @@ return 503 after a durable operation or temporarily reject refunds. Retrying a
 completed operation still returns its original result; an outage flag must not
 undo the idempotency contract. This is not a bank, real-card SDK or exactly-once
 external-money guarantee. Events are a durable polling journal, not a guaranteed
-external notification bus; financial/receipt history still needs production GC.
+external notification bus; shard idempotency receipts have optional GC; simulator operation receipts and events are not collected.
 
 ## Transport and process ownership
 
@@ -118,7 +137,7 @@ SQLite or CPU work; capacity remains occupied until that work really exits.
 
 No replicated shard/ledger, consensus metadata, automatic failover, live topology
 migration, actual Redis/CDC, distributed throttling, real payment integration,
-TLS/tenant ACL deployment, hotel-local timezone/tax/currency policies, privacy
-retention, backup/disaster recovery or sustained 5000-hotel/million-room validation
+TLS/tenant ACL deployment, hotel-local timezone/tax/currency policies, ledger receipt
+GC, backup/disaster recovery or sustained 5000-hotel/million-room validation
 is claimed. Retained-disk process tests do not prove machine loss or universal
 Windows filesystem power-loss durability.
