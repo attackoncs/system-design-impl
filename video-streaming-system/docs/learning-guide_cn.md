@@ -42,9 +42,9 @@ flowchart TB
 
 ## 七站阅读路线
 
-1. [VideoService.create](../src/video_streaming/service.py#L198)：输入总大小和part_size，输出video_id与分片授权；核对7字节为何分成4＋3。
-2. [VideoService.put_part](../src/video_streaming/service.py#L300)：看编号、大小和校验和怎样绑定；数据写入失败不能标记上传成功。
-3. [VideoService.finish](../src/video_streaming/service.py#L403)：检查分片齐全、源对象组装及DAG冻结，输出仍是原video_id。
+1. [VideoService.create](../src/video_streaming/service.py#L197)：输入总大小和part_size，输出video_id与分片授权；核对7字节为何分成4＋3。
+2. [VideoService.put_part](../src/video_streaming/service.py#L299)：看编号、大小和校验和怎样绑定；数据写入失败不能标记上传成功。
+3. [VideoService.finish](../src/video_streaming/service.py#L402)：检查分片齐全、源对象组装及DAG冻结，输出仍是原video_id。
 4. [Pipeline.tasks](../src/video_streaming/pipeline.py#L63)：把流水线配置变成依赖任务；先画出inspect之后哪些节点可并行。
 5. [JobQueue.claim](../src/video_streaming/scheduling.py#L154)：只领取依赖满足的任务，分配新的lease并增加attempts。
 6. [Worker.run_once](../src/video_streaming/worker.py#L228)：从领取进入处理与完成推进；再看 [FFmpegMedia.run](../src/video_streaming/media.py#L99) 管理子进程。
@@ -128,7 +128,7 @@ if current["kind"] == "publish":
 
 ## 微观三：收到分片不等于源文件仍然完整
 
-[storage.py:111](../src/video_streaming/storage.py#L111)
+[storage.py:115](../src/video_streaming/storage.py#L115)
 
 ```python
 def chunks():
@@ -162,12 +162,49 @@ flowchart TD
   F --> A
 ```
 
-## 用测试验证三条主线
+## 微观四：完成事件还不是可播放承诺
+
+[service.py:518](../src/video_streaming/service.py#L518)
+
+```python
+if available:
+    with self.lock:
+        state = self._video(row["video"])["state"]
+    if state == "PROCESSING":
+        try:
+            available = all(
+                self.objects.checksum(path) == key
+                for key, path in paths.items()
+            )
+        except (
+            FileNotFoundError,
+            video_streaming.storage.ObjectIntegrityError,
+        ):
+            available = False
+```
+
+编码产物写入和处理 outbox 之间可能发生损坏。处理器先按对象键去重，再在锁外
+流式核对 SHA-256；只有匹配的资源集合才能推进 READY。缺失或明确的内容损坏
+保留待处理，原字节修复后可重试，同批健康视频继续发布。网络或存储服务故障仍
+抛出，避免把服务离线当成普通内容损坏。最终事务再次核对状态，下架仍优先。
+
+[RemoteObject.stat](../src/video_streaming/remote_storage.py#L26) 与 open 复用校验后的
+本地字节，所以 HTTP 长度和范围不会采用另一份远端正文的长度。代价是冷 HEAD
+也要下载校验；热缓存正确不证明远端正文仍正确，源站内容寻址键需保持不可变。
+
+[is_postgres_dsn](../src/video_streaming/database.py#L17) 识别 URI 和开头的关键词
+连接串。`dbname=...` 不能悄悄创建同名 SQLite 文件；`/data/host=archive/db.sqlite3`
+仍是文件路径。若文件名本身以 `keyword=` 开头，用 PathLike 明确选择 SQLite。
+
+## 用测试验证关键路径
 
 - [test_resumable_idempotent_parts_and_finalization](../tests/test_video.py#L83)：按1→0上传，分别观察缺失分片拒绝、相同内容幂等、不同内容冲突，以及重复finish只生成一套任务。
 - [test_dependencies_concurrent_claims_and_lease_fencing](../tests/test_video.py#L145)：八个领取者最初只有一个能拿到inspect；旧租约完成和失败均被拒绝，新租约完成后才释放下游。
 - [test_long_running_task_renews_before_competing_worker_reclaims](../tests/test_pipeline_reliability.py#L82)：再阅读持续处理时续租如何维持资格。
 - [test_finish_without_checksum_rejects_corrupt_part_and_can_retry](../tests/test_storage_review.py#L32)：上传后把分片改成等长坏数据，观察 finish 拒绝、无任务；原授权重传后再次完成成功。
+- [test_corrupt_remote_asset_does_not_block_healthy_completion](../tests/test_publication_integrity_review.py#L53)：冷缓存远端清单/分片损坏时坏视频保留 PROCESSING，同批好视频 READY；修复后重试成功。
+- [test_warm_remote_media_size_matches_verified_bytes](../tests/test_adapter_identity_review.py#L41)：远端坏正文与本地好缓存长度不同时，GET/HEAD/Range 仍描述实际读取的字节。
+- [test_conninfo_without_host_uses_owned_postgres](../tests/test_adapter_identity_review.py#L87)：用真实独占 PostgreSQL 检查缺省主机的连接串不会变成 SQLite 文件。
 
 本轮 [open-source-review_cn.md](../docs/open-source-review_cn.md) 对照 PeerTube、MediaCMS 的
 上传幂等、任务完成与视频发布、有限重试及取消传播；阅读时留意两者的并行粒度差异。

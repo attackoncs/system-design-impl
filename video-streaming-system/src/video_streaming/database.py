@@ -2,8 +2,9 @@
 transactions.
 """
 
-import sqlite3
 import collections
+import re
+import sqlite3
 import threading
 import time
 
@@ -11,6 +12,18 @@ try:
     import psycopg
 except ImportError:
     psycopg = None  # Optional PostgreSQL backend.
+
+
+def is_postgres_dsn(value):
+    """Recognize PostgreSQL URIs or leading libpq keyword=value syntax.
+
+    Path-like objects always select SQLite, including filenames that resemble
+    conninfo. The PostgreSQL driver validates the complete connection string.
+    """
+    return isinstance(value, str) and (
+        value.startswith(("postgres://", "postgresql://"))
+        or re.match(r"\s*[A-Za-z_][A-Za-z_0-9]*\s*=", value) is not None
+    )
 
 
 class MetadataUnavailable(sqlite3.OperationalError):

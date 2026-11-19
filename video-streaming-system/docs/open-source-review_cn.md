@@ -1,5 +1,27 @@
 # 第 15 章：开源源码对照与实现核对
 
+## 2026-11-18 补充源码复核
+
+本次通过 GitHub 实际重读以下两个固定版本文件；下方2026-11-02段中的其他来源
+保留历史记录，不声称本次全部重读，也未引入这些平台的依赖。
+
+- [PeerTube HLS处理器](https://github.com/Chocobozzz/PeerTube/blob/fa7d2b5d8a44bbec99159b11e91763f7d2308faa/server/core/lib/runners/job-handlers/vod-hls-transcoding-job-handler.ts)：
+  持久优先级/父依赖，必需流齐备才推进视频；文件 blob `75a50d208e943ff9d386b808229494173e143bfe`。
+- [MediaCMS tasks.py 400–530行](https://github.com/mediacms-io/mediacms/blob/9bf46be5f4dc00005dd66e868f1d1d23371acadb/files/tasks.py#L400-L530)：
+  临时目录、持久编码状态、删除后中止、有限重试及非空媒体成功条件；文件 blob
+  `d141e92b08b016d9307340ebd47129420b458b7d`。
+
+据此重点检查“编码完成到可播放”的边界，发现 outbox 只检查对象存在；现增加锁外
+流式内容键校验，损坏待修复，不使同批健康记录失败。远端校验错误用专门类型，
+不吞存储故障。另修复 stat/open 字节身份及 PostgreSQL/SQLite 后端选择，细节见
+[本次章节核对](chapter15-review.md)。复用原对象、状态机和重试结构，没有另建队列。
+
+180项完整严格测试无跳过，原生 FFmpeg、独占 PostgreSQL 与 Moto 实际执行；
+原测试及 benchmark 源码保留。[原始测试](../benchmarks/review-2026-11-18.json)、
+[汇总证据](../benchmarks/verification-2026-11-18.json)、[媒体实测](../benchmarks/media-review-2026-11-18.json)。
+
+## 2026-11-02 历史对照
+
 日期：2026-11-02。对照《System Design Interview.md》第 15 章“Design YouTube”。
 
 ## 开源参考

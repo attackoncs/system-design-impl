@@ -3,7 +3,6 @@
 import collections
 import re
 import threading
-import types
 import uuid
 
 import video_streaming.storage
@@ -25,9 +24,8 @@ class RemoteObject:
         self.store, self.name = store, key
 
     def stat(self):
-        return types.SimpleNamespace(
-            st_size=self.store.head(self.name)["ContentLength"]
-        )
+        """Describe verified bytes; a cold stat must materialize the object."""
+        return self.store.materialize(self.name).stat()
 
     def is_file(self):
         """Return whether the object exists remotely; propagate service
@@ -181,7 +179,9 @@ class S3Objects(video_streaming.storage.LocalObjects):
             except Exception:
                 raise OSError("object download unavailable") from None
             if self.checksum(temporary) != key:
-                raise OSError("object checksum mismatch")
+                raise video_streaming.storage.ObjectIntegrityError(
+                    "object checksum mismatch"
+                )
             self._publish(temporary, key)
             self._remember(key, self._signature(target))
             return target

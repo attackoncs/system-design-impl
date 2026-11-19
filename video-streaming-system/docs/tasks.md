@@ -2,9 +2,13 @@
 
 Source: root `System Design Interview.md`, Chapter 15, section starting line 4765.
 
-Status (2026-11-02): all 164 distinct tests exercised. Normal full suite: 158 passed,
-six PostgreSQL cases skipped; separate owned PostgreSQL 18 run: nine distributed
-tests passed, including those six. See [source comparison and evidence](open-source-review_cn.md).
+Status (2026-11-18): **180 passed, no skips**, native FFmpeg 8.1.2, owned
+PostgreSQL 18.6 and Moto S3; statement/branch coverage 86.61%/76.71%.
+Original test and benchmark source preserved. [Evidence](../benchmarks/verification-2026-11-18.json).
+
+- [x] Verify publication hashes outside the metadata lock; retain corrupt records for repair and continue the batch; propagate storage outages.
+- [x] Make remote HTTP sizes describe verified reads; select PostgreSQL from URI/leading conninfo and allow PathLike SQLite override.
+- [x] Add 16 focused regressions, run original media demo/benchmark, review the fix independently, and update bilingual docs/learning guide.
 
 ## Scope
 

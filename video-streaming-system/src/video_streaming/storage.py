@@ -1,11 +1,15 @@
 """Atomic, content-addressed local object adapter."""
 
-import hashlib
 import errno
+import hashlib
 import os
 import pathlib
 import re
 import uuid
+
+
+class ObjectIntegrityError(OSError):
+    """Stored bytes do not match their content-addressed object key."""
 
 
 class LocalObjects:

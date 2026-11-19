@@ -9,10 +9,10 @@
 第 15 章参考实现：签名分片上传、断点续传、持久化转码 DAG、独立工作进程、
 真实 FFmpeg 转码、多清晰度加密 HLS、授权 HTTP 播放和故障恢复。
 
-2026-11-02 [开源源码对照与章节核对](docs/open-source-review_cn.md)：参考 PeerTube、
-MediaCMS，补上组装源文件时的逐片 SHA-256 校验及损坏修复重试。本轮覆盖全部
-**164 个不同测试**：常规完整套件 158 通过、6 个 PostgreSQL 用例跳过；随后新建
-独占 PostgreSQL 18，9 个分布式测试全部通过，补齐其中6项。
+2026-11-18 [章节复核](docs/chapter15-review.md)：结合 PeerTube、MediaCMS 源码和
+CodeGraph，补齐发布资源完整性校验、远端 HTTP 长度一致性和 PostgreSQL 连接串
+识别。原生 FFmpeg 8.1.2、独占 PostgreSQL 18.6 与测试 Moto S3 下 **180 项通过，
+无跳过**；原测试及 benchmark 源码未改。[证据与边界](benchmarks/verification-2026-11-18.json)。
 
 在本目录的 PowerShell 中运行：
 

@@ -10,11 +10,11 @@ Chapter 15's executable reference: resumable signed uploads, durable transcoding
 DAGs, independent workers, real FFmpeg, encrypted multi-rendition HLS and authorized
 HTTP playback. [中文说明](README_CN.md).
 
-Latest [source comparison and chapter review](docs/open-source-review_cn.md)
-(2026-11-02): PeerTube/MediaCMS references, checksum-verified source assembly,
-and repair/retry coverage. All **164 distinct tests** were exercised: 158 passed
-in the normal suite (six PostgreSQL cases skipped), then nine distributed tests
-passed against a fresh owned PostgreSQL 18 instance, covering those six cases.
+Latest [chapter review](docs/chapter15-review.md) (2026-11-18): publication verifies
+asset content, remote HTTP sizes match verified reads, and PostgreSQL conninfo
+selects the correct backend. **180 passed, no skips** with native FFmpeg 8.1.2,
+owned PostgreSQL 18.6 and test-owned Moto S3. Existing tests/benchmark source is
+unchanged. [Evidence and limits](benchmarks/verification-2026-11-18.json).
 
 ## Run
 

@@ -1,5 +1,41 @@
 # 第 15 章：视频系统核对
 
+## 2026-11-18 完整性与适配器复核
+
+重新阅读原书第15章（4765–5368行），通过 GitHub 读取固定版本 PeerTube 的 HLS
+任务处理器与 MediaCMS 的转码完成/重试路径，再结合 CodeGraph 追踪 Service、
+Worker、对象存储、HTTP 与数据库入口。上传、持久 DAG、GOP 复用、优先/能力调度、
+租约恢复、实际 HLS/AES 播放已有实现；本次补齐以下确认的缺口。
+
+| 缺口 | 最小修复及验证 |
+| --- | --- |
+| 产物写入后损坏，outbox 仅检查存在便发布 | 对不同对象流式计算 SHA-256，与内容键比较后才 READY；锁外读取，事务内复核下架和完成状态。坏清单/分片待修复，修复后重试。 |
+| 冷缓存远端坏正文抛通用错误，反复阻断 Worker 领取 | 专用 `ObjectIntegrityError` 仅标识内容不符；同批好视频继续发布，普通存储故障仍传播。 |
+| 远端 HEAD 大小与本地校验缓存不同，HTTP 截断或错误 Range | stat 与 open 复用校验后物化字节；冷 GET/HEAD 损坏在成功头前返回503。 |
+| 不含 host 的合法 conninfo 被创建为 SQLite 文件，路径含 host= 被误认连接串 | 识别 URI 或字符串开头关键词，由 PostgreSQL 驱动验证；PathLike 明确选择 SQLite。 |
+
+原始完整基线 **164 passed、0 skipped，185.476秒**；新增16项回归（14项先红后绿、
+2项行为保护），最终完整套件 **180 passed、0 skipped，186.503秒**，警告即错误。
+运行使用 Python3.14.8、原生 FFmpeg8.1.2、随机密码/端口的独占 PostgreSQL18.6
+与测试创建的 Moto S3；跨连接、独立 Worker、黑洞/未知提交、迁移、加密 HTTP 解码
+均实际执行。自有 PostgreSQL 已停止，临时口令文件删除，测试创建的服务已回收。
+此前一次中断的最终验证未计入通过数；重新完整运行的结果见
+[原始测试报告](../benchmarks/review-2026-11-18.json)与
+[汇总证据](../benchmarks/verification-2026-11-18.json)。
+
+全部14个生产模块语句覆盖 **86.61%**、分支覆盖 **76.71%**，
+无排除行；子进程 CLI 未注入 coverage，属于统计范围限制。
+原媒体示例调用原 benchmark，3秒素材、两档144p/240p加密 HLS 经 HTTP 解码，
+[原始数据](../benchmarks/media-review-2026-11-18.json)与[测量说明](../benchmarks/results.md)。
+原有测试/benchmark 源码未改。独立复审确认阻断关闭；Ruff、Python3.9语法、
+学习指南生成/本地链接和限定 diff 检查见汇总证据。
+
+代价与边界：每次发布尝试读取每个不同资源一遍，固定1MiB缓冲；冷 HEAD 要下载
+校验。热缓存验证不等于重新审计远端正文，内容寻址源站键须保持不可变，坏对象
+需要显式修复。本次未重新演练 Patroni 提升、全球 CDN、对象存储复制、GPU/KMS/
+商业 DRM 或生产容量。CodeGraph 用 `.codegraph-wsl` 增量同步；静态边辅助定位，
+动态调用仍需源码与执行验证。下列日期段保留历史结果，不作为本次结果。
+
 ## 2026-11-09 领取分页效率修复
 
 问题：`JobQueue._ready` 每次 Worker `claim` 都用 `LIMIT 128 OFFSET ?` 翻页；

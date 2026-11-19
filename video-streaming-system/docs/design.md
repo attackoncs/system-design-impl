@@ -44,6 +44,28 @@ uploading, processing or ready. Removed/expired/failed videos cannot be restored
 
 ## Scheduling and publication
 
+Before changing PROCESSING to READY, the outbox handler hashes each distinct asset
+against its SHA-256 key, including the master playlist. Streaming checks run outside
+the metadata lock; the final transaction still rechecks the video/outbox state, so
+takedown wins. Missing or corrupt objects leave that record pending for repair and
+retry, while other records in the batch can proceed. Remote checksum failures use
+`ObjectIntegrityError`; ordinary storage/network failures propagate. This adds one
+full read per distinct asset per publication attempt, using a fixed 1 MiB buffer.
+It does not automatically retranscode or hash every playback request.
+
+S3 `RemoteObject.stat()` materializes verified bytes and reports their local size,
+matching `open()` and HTTP GET/HEAD/Range. A cold HEAD therefore downloads/verifies
+the object; an existing valid cache can serve its original bytes even if the remote
+body has changed. Remote existence is still checked, but warm-cache validation is
+not a fresh audit of origin contents. Content-addressed origin keys must remain
+immutable; repairing bad bytes is an explicit storage operation.
+
+Backend selection accepts PostgreSQL URI strings or leading libpq `keyword=value`
+syntax, including conninfo without `host` (driver defaults/environment apply).
+The driver validates the whole conninfo. A filesystem path containing `host=`
+elsewhere remains SQLite. To force SQLite for an ambiguous filename starting with
+`keyword=`, pass a `pathlib.Path`/`os.PathLike` value rather than a string.
+
 Each claim obtains a UUID lease token, bounded expiry and attempt count in a SQLite
 write transaction. Dependency completion gates claims; separate workers can encode
 renditions concurrently. Retries use persisted due times. Stale workers produce only

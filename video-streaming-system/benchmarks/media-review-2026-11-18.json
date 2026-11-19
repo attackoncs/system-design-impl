@@ -1,0 +1,32 @@
+{
+  "duration_seconds": 3,
+  "source_bytes": 120973,
+  "renditions": [
+    144,
+    240
+  ],
+  "upload_parts": 2,
+  "upload_and_finalize_ms": 56.387,
+  "pipeline_ms": 873.74,
+  "task_ms": {
+    "inspect": 129.204,
+    "thumbnail": 139.638,
+    "encode-144": 219.138,
+    "encode-240": 225.385,
+    "publish": 66.485
+  },
+  "output_bytes": 376316,
+  "encrypted_http_decode_verified": true,
+  "http_requests": 10,
+  "http_latency": {
+    "p50_ms": 7.35,
+    "p95_ms": 7.873,
+    "p99_ms": 7.873
+  },
+  "environment": {
+    "platform": "Linux-6.18.58.1-microsoft-standard-WSL2-x86_64-with-glibc2.44",
+    "python": "3.14.8",
+    "logical_cpus": 16
+  },
+  "scope": "one local worker; sequential loopback HTTP; no cloud CDN or production scale claim"
+}

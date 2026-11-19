@@ -13,14 +13,15 @@ import time
 import uuid
 from types import MappingProxyType
 
-from . import grants
-
 import video_streaming.database
 import video_streaming.storage
 from video_streaming.lifecycle import Operations, owned
-from video_streaming.pipeline import Pipeline, PROFILES as PROFILES
+from video_streaming.pipeline import PROFILES as PROFILES
+from video_streaming.pipeline import Pipeline
 from video_streaming.scheduling import JobQueue
 from video_streaming.schema import SCHEMA
+
+from . import grants
 
 
 class VideoService:
@@ -71,9 +72,7 @@ class VideoService:
             cache_bytes,
             0,
         )
-        if isinstance(db, str) and (
-            db.startswith(("postgres://", "postgresql://")) or "host=" in db
-        ):
+        if video_streaming.database.is_postgres_dsn(db):
             self.db = video_streaming.database.Postgres(db)
         else:
             self.db = sqlite3.connect(db, check_same_thread=False, timeout=10)
@@ -510,11 +509,26 @@ class VideoService:
         handled = 0
         for row in rows:
             assets = json.loads(row["assets"])
+            paths = {key: self.objects.file(key) for key in set(assets.values())}
             available = (
                 bool(assets)
                 and "master.m3u8" in assets
-                and all(self.objects.file(key).is_file() for key in assets.values())
+                and all(path.is_file() for path in paths.values())
             )
+            if available:
+                with self.lock:
+                    state = self._video(row["video"])["state"]
+                if state == "PROCESSING":
+                    try:
+                        available = all(
+                            self.objects.checksum(path) == key
+                            for key, path in paths.items()
+                        )
+                    except (
+                        FileNotFoundError,
+                        video_streaming.storage.ObjectIntegrityError,
+                    ):
+                        available = False
             with self.lock, self.db:
                 self.db.execute("BEGIN IMMEDIATE")
                 current = self.db.execute(

@@ -1,0 +1,154 @@
+{
+  "date": "2026-11-18",
+  "chapter": 15,
+  "book_lines": [
+    4765,
+    5368
+  ],
+  "python": "3.14.8",
+  "platform": "Linux/WSL",
+  "baseline": {
+    "phase": "baseline",
+    "owned_postgres_stopped": true,
+    "postgres_version": "18.6",
+    "ffmpeg_binary": "/tmp/ch15-ffmpeg-native-rarlsx4y/usr/bin/ffmpeg",
+    "runtime": "native packaged FFmpeg, authenticated owned PostgreSQL, test-owned Moto S3",
+    "working_directory": "/tmp/ch15-baseline-20261118-o3xrndb_",
+    "tests": 164,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "junit_seconds": 185.476,
+    "pytest_exit_code": 0
+  },
+  "final": {
+    "phase": "final",
+    "owned_postgres_stopped": true,
+    "postgres_version": "18.6",
+    "ffmpeg_binary": "/tmp/ch15-ffmpeg-native-rarlsx4y/usr/bin/ffmpeg",
+    "runtime": "native packaged FFmpeg, authenticated owned PostgreSQL, test-owned Moto S3",
+    "working_directory": "/tmp/ch15-final-20261118-ucr_pyxz",
+    "tests": 180,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "junit_seconds": 186.503,
+    "pytest_exit_code": 0
+  },
+  "regressions": {
+    "new_cases": 16,
+    "confirmed_failing_before_fix": 14,
+    "behavior_guards": 2,
+    "files": [
+      "../tests/test_adapter_identity_review.py",
+      "../tests/test_publication_integrity_review.py"
+    ]
+  },
+  "coverage": {
+    "covered_lines": 1494,
+    "num_statements": 1725,
+    "percent_covered": 84.1056734517107,
+    "percent_covered_display": "84",
+    "missing_lines": 231,
+    "excluded_lines": 0,
+    "percent_statements_covered": 86.6086956521739,
+    "percent_statements_covered_display": "87",
+    "num_branches": 584,
+    "num_partial_branches": 106,
+    "covered_branches": 448,
+    "missing_branches": 136,
+    "percent_branches_covered": 76.71232876712328,
+    "percent_branches_covered_display": "77"
+  },
+  "coverage_scope": "All 14 production Python modules, branch coverage enabled; no excluded lines; child CLI processes are not coverage-instrumented",
+  "commands": {
+    "suite": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=<absolute src> VIDEO_TEST_DATABASE_DSN=<owned PostgreSQL> PATH=<native FFmpeg> COVERAGE_FILE=<outside repo> python -W error -m coverage run --branch --source=src/video_streaming -m pytest -q -p no:cacheprovider tests",
+    "media_example_and_benchmark": "PYTHONPATH=src python -W error examples/media_demo.py --output benchmarks/media-review-2026-11-18.json"
+  },
+  "runtime": {
+    "ffmpeg": "8.1.2, apt runtime archives extracted only into /tmp, SHA512 verified against package metadata",
+    "postgres": "18.6, owned temporary UTF8 cluster, random port/password, stopped; password file deleted",
+    "s3": "test-owned Moto HTTP server; targeted in-memory client is also used, not AWS durability validation"
+  },
+  "media": {
+    "file": "media-review-2026-11-18.json",
+    "original_example_calls_original_benchmark": true,
+    "scope": "one local worker; sequential loopback HTTP; no cloud CDN or production scale claim"
+  },
+  "existing_test_source_changed": false,
+  "benchmark_source_changed": false,
+  "codegraph": {
+    "initialized": true,
+    "version": "1.6.2",
+    "projectPath": "/mnt/e/share/system-design-impl/system-design-impl/video-streaming-system",
+    "indexPath": "/mnt/e/share/system-design-impl/system-design-impl/video-streaming-system/.codegraph-wsl",
+    "lastIndexed": "2026-11-18T01:32:00.009Z",
+    "fileCount": 37,
+    "nodeCount": 729,
+    "edgeCount": 1793,
+    "dbSizeBytes": 2678784,
+    "walSizeBytes": 0,
+    "backend": "node-sqlite",
+    "journalMode": "wal",
+    "nodesByKind": {
+      "class": 38,
+      "file": 35,
+      "function": 172,
+      "import": 283,
+      "method": 172,
+      "variable": 29
+    },
+    "languages": [
+      "python",
+      "yaml"
+    ],
+    "pendingChanges": {
+      "added": 0,
+      "modified": 0,
+      "removed": 0
+    },
+    "worktreeMismatch": null,
+    "index": {
+      "builtWithVersion": "1.6.2",
+      "builtWithExtractionVersion": 27,
+      "currentExtractionVersion": 27,
+      "reindexRecommended": false,
+      "state": "complete",
+      "pendingRefs": 0
+    }
+  },
+  "references": [
+    {
+      "url": "https://github.com/Chocobozzz/PeerTube/blob/fa7d2b5d8a44bbec99159b11e91763f7d2308faa/server/core/lib/runners/job-handlers/vod-hls-transcoding-job-handler.ts",
+      "blob_sha": "75a50d208e943ff9d386b808229494173e143bfe"
+    },
+    {
+      "url": "https://github.com/mediacms-io/mediacms/blob/9bf46be5f4dc00005dd66e868f1d1d23371acadb/files/tasks.py#L400-L530",
+      "blob_sha": "d141e92b08b016d9307340ebd47129420b458b7d"
+    }
+  ],
+  "checks": [
+    "Ruff E/F/I ignoring E501 and format on four changed source/two new test files",
+    "Python3.9 AST for all 14 source files",
+    "canonical/generated learning guide and project Markdown local links",
+    "independent reviewer confirmed remote-corruption starvation blocker closed",
+    "scoped git diff --check"
+  ],
+  "remaining_boundaries": [
+    "publication adds one full streaming read per distinct asset per attempt; damaged records require storage repair then retry",
+    "cold remote HEAD materializes verified bytes; warm cache does not freshly audit remote body",
+    "PostgreSQL keyword=value filename ambiguity: pass PathLike to force SQLite",
+    "no new Patroni failover/object replication/global CDN/multiregion upload/GPU/KMS/commercial DRM or production capacity validation"
+  ],
+  "documentation_checks": {
+    "markdown_documents": 14,
+    "local_links": 243,
+    "canonical_guide_matches_generated": true,
+    "bilingual_requirement_ids": "R1-R13",
+    "bilingual_task_ids": "T1-T13"
+  },
+  "review": {
+    "independent_review": "no remaining blocking finding after typed integrity error repair",
+    "targeted_review_cases_passed": 5
+  }
+}

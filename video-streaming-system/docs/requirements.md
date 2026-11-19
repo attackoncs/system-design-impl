@@ -20,8 +20,13 @@ Source: root System Design Interview.md, Chapter 15, Design YouTube.
   Test-only media adapters must never be described as actual transcoding.
 - R6: Persist publication in a completion outbox; a handler atomically updates ready
   metadata after all outputs are stored. Crash replay cannot publish twice or lose completion.
+  Before READY, stream-check each distinct asset against its content key outside
+  the metadata lock. Missing/corrupt records remain pending for repair/retry without
+  stopping other records in the batch; storage outages must still propagate.
 - R7: Serve bounded HTTP metadata/upload/playback operations, HLS manifests/segments,
   byte ranges and expiring playback grants. Takedown must override cached delivery.
+  Remote GET/HEAD/Range sizes describe the same verified bytes as reads; a cold
+  HEAD can require downloading the object, and corrupt cold objects fail before success headers.
 - R8: Use pluggable object/media interfaces and a bounded read cache for a local CDN
   reference. Cleanup removes abandoned parts/attempt files without deleting active assets.
 - R9: Run actual FFmpeg and network/process tests for interrupted uploads, worker lease
@@ -36,6 +41,8 @@ Source: root System Design Interview.md, Chapter 15, Design YouTube.
   claims and lease fencing across connections, and reconnect after primary loss.
   Do not replay an uncertain write/commit automatically. Surface temporary database
   failure as 503; workers resume polling without silently losing claimed work.
+  Recognize PostgreSQL URIs and leading keyword conninfo, including host defaults;
+  validate through the driver and allow PathLike values to select SQLite explicitly.
 - R13: Provide a reproducible synchronous Patroni/PostgreSQL HA deployment with
   quorum coordination and object storage; record actual failover tests separately
   from configuration validation. Expose migration of SQLite metadata explicitly.

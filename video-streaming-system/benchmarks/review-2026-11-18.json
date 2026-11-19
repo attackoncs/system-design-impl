@@ -1,0 +1,14 @@
+{
+  "phase": "final",
+  "owned_postgres_stopped": true,
+  "postgres_version": "18.6",
+  "ffmpeg_binary": "/tmp/ch15-ffmpeg-native-rarlsx4y/usr/bin/ffmpeg",
+  "runtime": "native packaged FFmpeg, authenticated owned PostgreSQL, test-owned Moto S3",
+  "working_directory": "/tmp/ch15-final-20261118-ucr_pyxz",
+  "tests": 180,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "junit_seconds": 186.503,
+  "pytest_exit_code": 0
+}
