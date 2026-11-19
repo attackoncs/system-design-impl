@@ -10,10 +10,10 @@
 只依赖标准库。[English](README.md) · [章节复审](docs/chapter06-review.md) ·
 [设计](docs/design_cn.md) · [实测](benchmarks/REPORT.md)。
 
-章节核心能力已覆盖。2026-10-31的[GitHub源码对照](docs/open-source-review_cn.md)
-增加未变拓扑规划的O(1)返回，并把属性测试中的统计假设改成准确的迁移局部性
-及计数校验。163项测试通过，另用四个独立进程验证三种哈希函数的主节点/
-副本候选路由一致。
+2026-11-17重新核对[章节与GitHub源码](docs/open-source-review_cn.md)，章节核心
+能力已实现，未发现需修复的实际缺陷；本轮不修改业务、测试或benchmark代码。
+原有163项测试全部通过，行/分支综合覆盖率98%；既有四进程探针确认三种哈希、
+四个拓扑阶段的主节点及副本候选路由完全一致。
 
 ## 运行
 
@@ -26,7 +26,7 @@ python tools/process_probe.py --output benchmarks/process-local.json
 python tools/benchmark.py --output benchmarks/local.json
 ```
 
-源码语法支持Python3.9+，实测3.13.9；pytest/Hypothesis为可选开发依赖。
+源码语法支持Python3.9+，本轮实测3.14.8；pytest/Hypothesis为可选开发依赖。
 复审环境既有pytest缓存/临时目录不可访问，使用-p no:cacheprovider、工作区
 .test-tmp下新的--basetemp并禁用无关插件自动加载。163项均以-Werror执行，
 没有跳过或过滤项目警告。

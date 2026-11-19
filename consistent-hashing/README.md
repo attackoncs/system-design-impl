@@ -11,11 +11,11 @@ changes and streaming migration selection. Runtime dependencies: standard librar
 only. [中文](README_CN.md) · [chapter review](docs/chapter06-review.md) ·
 [design](docs/design.md) · [measurements](benchmarks/REPORT.md).
 
-The chapter's core algorithms are covered. The 2026-10-31
-[GitHub source comparison](docs/open-source-review_cn.md) adds an O(1) return for
-unchanged topology plans and replaces statistical assumptions in property tests
-with exact locality/accounting checks. **163 tests pass**; an independent
-four-process probe verifies deterministic primary/replica candidate selection.
+The 2026-11-17 [chapter and GitHub source review](docs/open-source-review_cn.md)
+confirms the chapter's core algorithms are implemented. No application, test or
+benchmark code changes were needed. **163 tests pass**, with **98%** combined
+line/branch coverage; the existing four-process probe confirms identical primary
+and replica-candidate placement across three hashes and four topology phases.
 
 ## Run
 
@@ -28,7 +28,7 @@ python tools/process_probe.py --output benchmarks/process-local.json
 python tools/benchmark.py --output benchmarks/local.json
 ```
 
-Python3.9+ source syntax, executed on Python3.13.9. Optional dev dependencies are
+Python3.9+ source syntax, latest verification on Python3.14.8. Optional dev dependencies are
 pytest and Hypothesis. In the review environment, inaccessible existing pytest
 cache/temp directories require `-p no:cacheprovider` and a fresh `--basetemp`
 inside `.test-tmp`; unrelated plugin autoload is disabled. All163 tests run with

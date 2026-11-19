@@ -51,3 +51,10 @@
 - [x] Return immediately for shared-state migration plans; measure unchanged and changed plans separately.
 - [x] Replace three statistical assumptions with exact properties; add nine linear-oracle, collision and no-change cases.
 - [x] Pass163 tests, the four-process probe and both examples; update bilingual docs and the reading guide.
+
+## 2026-11-17 review
+
+- [x] Map chapter6 to existing code using CodeGraph and read serialx/hashring plus buraksezer/consistent source.
+- [x] Independent read-only audits found no confirmed core defect; retain existing APIs and immutable publication model.
+- [x] Reuse all 163 passing tests (98% combined coverage), the four-process probe and both examples.
+- [x] Update documentation only; no application, test or benchmark code changes.
