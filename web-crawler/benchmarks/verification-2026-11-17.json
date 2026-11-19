@@ -1,0 +1,49 @@
+{
+  "date": "2026-11-17",
+  "python": "3.14.8",
+  "baseline": {
+    "passed": 259,
+    "seconds": 14.38
+  },
+  "red": {
+    "failed": 15,
+    "normal_domain_passed": 1
+  },
+  "final": {
+    "passed": 275,
+    "seconds": 12.09,
+    "failed": 0,
+    "skipped": 0,
+    "warnings_as_errors": true
+  },
+  "coverage": {
+    "covered_lines": 1154,
+    "num_statements": 1231,
+    "percent_covered": 91.3526868437307,
+    "percent_covered_display": "91",
+    "missing_lines": 77,
+    "excluded_lines": 0,
+    "percent_statements_covered": 93.74492282696994,
+    "percent_statements_covered_display": "94",
+    "num_branches": 388,
+    "num_partial_branches": 57,
+    "covered_branches": 325,
+    "missing_branches": 63,
+    "percent_branches_covered": 83.76288659793815,
+    "percent_branches_covered_display": "84"
+  },
+  "existing_test_files_modified": false,
+  "benchmark_code_modified": false,
+  "http": "http-review-2026-11-17.json",
+  "example_successes": 4,
+  "codegraph": {
+    "python_files": 40,
+    "canonical_host_callers": 11
+  },
+  "state_schema": {
+    "from": 0,
+    "to": 1,
+    "automatic_for_standard_authority_keys": true,
+    "legacy_custom_host_inconsistent_with_url_requires_audit": true
+  }
+}

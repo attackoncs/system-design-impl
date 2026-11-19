@@ -7,15 +7,16 @@ identity or resetting one another's in-flight work during recovery.
 
 from __future__ import annotations
 
+import math
+import os
+import sqlite3
+import time
 from contextlib import closing, contextmanager
 from pathlib import Path
-import sqlite3
-import os
-import math
-import time
 
 from .models import CrawlResult, CrawlStatus, FrontierEntry, Priority
 from .parser import normalize_url
+from .urls import canonical_hostname, host_for_url
 
 
 class SQLiteCrawlState:
@@ -110,6 +111,8 @@ class SQLiteCrawlState:
                         id INTEGER PRIMARY KEY, url TEXT NOT NULL,
                         fetched_at REAL NOT NULL, status INTEGER, html TEXT NOT NULL);
                 """)
+                db.execute("BEGIN IMMEDIATE")
+                self._migrate_host_keys(db)
                 db.execute(
                     "UPDATE jobs SET state='pending',due=0 WHERE state='inflight'"
                 )
@@ -124,6 +127,65 @@ class SQLiteCrawlState:
             self.close()
             raise
 
+    @staticmethod
+    def _migrate_host_keys(db):
+        """One atomic upgrade from authority keys to canonical hostname keys.
+
+        Include delays without pending jobs and keep the longest delay. Updates
+        use the existing (state, host) index, avoiding one full scan per alias.
+        Later opens only read the schema version, not the full jobs table.
+        """
+        version = db.execute("PRAGMA user_version").fetchone()[0]
+        if version == 1:
+            return
+        if version != 0:
+            raise ValueError("unsupported crawl-state schema version")
+        aliases = db.execute(
+            "SELECT host FROM hosts UNION SELECT host FROM jobs"
+        ).fetchall()
+        for (old,) in aliases:
+            try:
+                host = canonical_hostname(old)
+            except ValueError:
+                try:
+                    host = host_for_url("http://" + old)
+                except ValueError:
+                    SQLiteCrawlState._migrate_opaque_host(db, old)
+                    continue
+            if host == old:
+                continue
+            for state in ("pending", "inflight", "done"):
+                db.execute(
+                    "UPDATE jobs SET host=? WHERE state=? AND host=?",
+                    (host, state, old),
+                )
+            SQLiteCrawlState._copy_host_delay(db, old, host)
+            db.execute("DELETE FROM hosts WHERE host=?", (old,))
+        db.execute("PRAGMA user_version=1")
+
+    @staticmethod
+    def _copy_host_delay(db, old, host):
+        db.execute(
+            "INSERT INTO hosts(host,next_ready) SELECT ?,next_ready FROM hosts WHERE host=? "
+            "ON CONFLICT(host) DO UPDATE SET next_ready=MAX(hosts.next_ready,excluded.next_ready)",
+            (host, old),
+        )
+
+    @staticmethod
+    def _migrate_opaque_host(db, old):
+        """Recover valid URLs from legacy custom keys; leave bad URLs to filters."""
+        for state in ("pending", "inflight", "done"):
+            rows = db.execute(
+                "SELECT url FROM jobs WHERE state=? AND host=?", (state, old)
+            )
+            for (url,) in rows.fetchall():
+                try:
+                    host = host_for_url(url)
+                except ValueError:
+                    continue
+                SQLiteCrawlState._copy_host_delay(db, old, host)
+                db.execute("UPDATE jobs SET host=? WHERE url=?", (host, url))
+
     def close(self):
         if self._lock_file is not None:
             self._lock_file.close()  # OS releases the lock even after a crash.
@@ -136,7 +198,7 @@ class SQLiteCrawlState:
                 "INSERT OR IGNORE INTO jobs(url,host,priority,depth,state) VALUES(?,?,?,?,'pending')",
                 (
                     normalize_url(entry.url),
-                    entry.host,
+                    host_for_url(entry.url),
                     entry.priority.value,
                     entry.depth,
                 ),

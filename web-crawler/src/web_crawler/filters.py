@@ -5,6 +5,8 @@ from __future__ import annotations
 import urllib.parse
 from typing import Callable, List, Optional, Set
 
+from .urls import canonical_hostname, host_for_url
+
 
 class URLFilter:
     """Configurable URL filter with multiple rule types.
@@ -30,10 +32,12 @@ class URLFilter:
             ext.lower() for ext in extension_blacklist or []
         )
         self._domain_whitelist: Optional[Set[str]] = (
-            set(d.lower() for d in domain_whitelist) if domain_whitelist else None
+            {canonical_hostname(d) for d in domain_whitelist}
+            if domain_whitelist
+            else None
         )
         self._domain_blacklist: Set[str] = set(
-            d.lower() for d in domain_blacklist or []
+            canonical_hostname(d) for d in domain_blacklist or []
         )
         self._max_url_length: int = max_url_length
         self._custom_filters: List[Callable[[str], bool]] = custom_filters or []
@@ -47,13 +51,11 @@ class URLFilter:
         Returns:
             True if the URL is accepted, False if rejected.
         """
-        if not isinstance(url, str):
+        if not isinstance(url, str) or len(url) > self._max_url_length:
             return False
         try:
             parsed = urllib.parse.urlparse(url)
-            if not parsed.hostname:
-                return False
-            _ = parsed.port  # Reject malformed or out-of-range ports before enqueue.
+            domain = host_for_url(url)
         except ValueError:
             return False
 
@@ -66,7 +68,6 @@ class URLFilter:
             return False
 
         # 3. Domain whitelist (must be in whitelist if configured)
-        domain = parsed.netloc.lower()
         if self._domain_whitelist is not None:
             if domain not in self._domain_whitelist:
                 return False

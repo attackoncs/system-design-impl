@@ -1,0 +1,14 @@
+{
+  "results": {
+    "success": 2,
+    "disallowed": 1
+  },
+  "http_requests": [
+    "/robots.txt",
+    "/index",
+    "/robots.txt",
+    "/assets/child"
+  ],
+  "snapshots": 2,
+  "resumed_new_crawler": true
+}

@@ -9,10 +9,10 @@ import math
 import re
 import time
 import urllib.parse
-from typing import Optional
 
 import web_crawler.fetcher
 from web_crawler import exceptions
+from web_crawler.urls import origin_for_url
 
 MAX_ROBOTS_BYTES = 500 * 1024  # RFC 9309 2.5: parse at least 500 KiB
 MAX_ROBOTS_REDIRECTS = 5  # RFC 9309 2.3.1.2: follow at least five redirects
@@ -68,8 +68,7 @@ class RobotsChecker:
 
     async def is_allowed(self, url: str) -> bool:
         """Return True if robots.txt allows this crawler to fetch ``url``."""
-        parsed = urllib.parse.urlparse(url)
-        origin = f"{parsed.scheme}://{parsed.netloc.lower()}"
+        origin = origin_for_url(url)
         index = int.from_bytes(hashlib.sha256(origin.encode()).digest()[:4], "big") % 64
         async with self._locks[index]:
             rules = await self._get_rules(origin)
@@ -98,8 +97,7 @@ class RobotsChecker:
         return best[1]
 
     def crawl_delay(self, url: str) -> float:
-        parsed = urllib.parse.urlparse(url)
-        key = f"{parsed.scheme}://{parsed.netloc.lower()}"
+        key = origin_for_url(url)
         cached = self._cache.get(key)
         return cached[0].crawl_delay if cached else 0.0
 
@@ -128,7 +126,9 @@ class RobotsChecker:
         """Map the robots.txt response to rules or an unreachable marker."""
         for _ in range(MAX_ROBOTS_REDIRECTS + 1):
             try:
-                response = await self._fetcher.fetch(url, timeout=10.0)
+                response = await self._fetcher.fetch(
+                    url, headers={"User-Agent": self._user_agent}, timeout=10.0
+                )
             except (exceptions.FetchError, OSError) as error:
                 status = getattr(error, "status_code", None)
                 if status is None:

@@ -40,3 +40,12 @@ python examples/basic_crawl.py
 python tools/benchmark.py --output benchmarks/local.json
 python -W error tools/verify_http.py --output benchmarks/http-local.json
 ```
+
+## 2026-11-17 acceptance / 验收
+
+- [x] 原书/Scrapy源码、独立CodeGraph及实际调用核对。
+- [x] robots统一UA及origin；共享hostname防止域名过滤/礼貌槽绕过。
+- [x] 旧库原子迁移、最大主机延时与异常旧任务恢复；路由前重查过滤策略。
+- [x] 275项通过，语句93.74%/分支83.76%；既有真实HTTP及模拟示例通过。
+- [x] 更新双语文档与导读；不修改既有测试和benchmark代码。
+- [ ] 自动控制面/安全迁移、数据库复制分片、留存清理和容量证明仍为边界。

@@ -30,7 +30,9 @@ asyncio.run(main())
 
 分布式路由通过 ConsistentHashPartition 与 route_url(owner, entry) 注入。回调必须在目标持久接收后返回，并支持幂等重投；每个节点使用独立数据库。成员变更需外部协调安全移交，不自动发现或迁移节点。
 
-完整回归 **259 项通过**。连续取消也必须排空已接受的数据库操作和子任务，再释放状态文件owner；在open/finish/close期间取消不能留下迟到文件锁或永久busy标记，清理后可复用Crawler。等待排空不等于强制中断阻塞I/O。本实现未证明每月十亿页面的容量；状态保留、复制/分片、集群控制面及动态渲染仍需独立部署。详情见[原书/开源对照](docs/open-source-review_cn.md)、[章节核对](docs/chapter10-review.md)、[分片契约](docs/partition-review.md)和[下载器边界](docs/transport-review.md)。
+完整回归 **275 项通过**。连续取消也必须排空已接受的数据库操作和子任务，再释放状态文件owner；在open/finish/close期间取消不能留下迟到文件锁或永久busy标记，清理后可复用Crawler。等待排空不等于强制中断阻塞I/O。本实现未证明每月十亿页面的容量；状态保留、复制/分片、集群控制面及动态渲染仍需独立部署。详情见[原书/开源对照](docs/open-source-review_cn.md)、[章节核对](docs/chapter10-review.md)、[分片契约](docs/partition-review.md)和[下载器边界](docs/transport-review.md)。
+
+2026-11-17补齐robots每跳User-Agent及无凭据origin；名单、调度、分片共享规范hostname，端口/凭据/尾点不能绕过。转义或歧义authority拒绝，原URL身份保留。旧状态库单次原子升级到schema 1，合并别名及最长延时后才派发；旧手工自定义且与URL不一致的host须先审计迁移。详见[本轮记录](docs/chapter10-review.md)。
 
 ## 本轮调度与解析改进
 

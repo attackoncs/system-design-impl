@@ -1,5 +1,25 @@
 # 第 10 章实现核对
 
+## 2026-11-17 原书、GitHub与CodeGraph复核
+
+原书2729–3176行的种子、frontier、礼貌访问、robots、下载/DNS、去重、保存/恢复、重爬、分片路由及扩展接口均有执行路径。沿实际Crawler装配核对后，本轮集中修复已复现的身份/主机边界，保留既有测试及benchmark代码。
+
+- robots下载及每个重定向请求显式使用配置User-Agent，避免按错误身份获得规则；origin改为scheme+规范hostname+port，不含userinfo，默认端口合并，不同端口仍隔离缓存。IPv6组装保留方括号。
+- 新增共享urls.py，黑白名单、Crawler分组、SQLite入队和一致性哈希采用同一hostname：去尾点、IDNA、IP规范表示，端口/凭据不能绕过名单或创建并发槽。域名规则仍是精确匹配；配置填写主机名，不能用host:port表达端口规则。
+- 拒绝authority中的百分号/反斜杠及URL原始空白/控制字符，防止urllib在过滤之后unquote authority而改变目标。路径和查询的合法百分号转义不受影响，原URL身份/路径/query/userinfo大小写不重写。
+- 在派发和跨worker移交之前重查当前过滤政策，旧库已排队但现被禁止的URL不会继续下载或转发。自定义过滤器应无副作用，允许入队和派发时重复调用。
+- 旧库在持有owner的open事务中一次性迁移host键，PRAGMA user_version从0升为1；覆盖jobs和无pending任务的hosts记录，合并最大next_ready，再恢复inflight。更新用原有(state,host)索引，后续启动只查版本，不再扫描jobs。无法解释的旧键按URL回填有效任务；违规URL保留供派发过滤，不让整个open失败。
+
+兼容边界：FrontierEntry默认host及显式自定义host字段保持旧API；Crawler显式提供规范调度键，SQLite.put只从URL推导键。旧库若曾直接自定义“语法有效但与URL不一致”的host，不能由别名迁移安全推断，升级前须审计并按URL迁移；常规旧Crawler写入的authority键自动升级。域名匹配不推断子域、CNAME、DNS/IP等价，不是通用SSRF访问控制。旧二进制不应再写升级后的状态库，未来未知schema版本拒绝打开。
+
+实际阅读[Scrapy UserAgentMiddleware](https://github.com/scrapy/scrapy/blob/master/scrapy/downloadermiddlewares/useragent.py)、[robots middleware](https://github.com/scrapy/scrapy/blob/master/scrapy/downloadermiddlewares/robotstxt.py)及[offsite过滤](https://github.com/scrapy/scrapy/blob/master/scrapy/downloadermiddlewares/offsite.py)，对照统一下载身份与hostname判定；本地保持精确匹配及标准库架构，没有照搬其子域正则或Twisted组件。读取的文件blob SHA分别为bea025dac8d3cdb28b68edc8a969f6e074fe62ac、5260adf23bfe8039c6c438bc1b9c568100071d65、bac64b04adb853cd3c6ed8a017b3c5b7fa4aa5b7；这些是文件摘要，不是仓库提交号。
+
+独立CodeGraph覆盖40个Python文件，host_for_url的11个caller包含过滤/入队/分片/迁移/origin；迁移影响链覆盖open及Crawler。图与源码/行为交叉核对，不把空调用或索引边当成功证明。
+
+验证：基线259项/14.38秒；新增16项中15项在对应未修复逻辑上失败、1项正常域名原行为通过；最终275项/12.09秒，-W error，无跳过。语句覆盖93.74%、分支覆盖83.76%（未排除业务模块），独立安全/代码审查无已确认路径的阻断项。真实回环HTTP仍2成功/1禁止/2份快照，新Crawler恢复后无未确认任务；模拟示例4页成功。见[本轮验证](../benchmarks/verification-2026-11-17.json)与[HTTP原始记录](../benchmarks/http-review-2026-11-17.json)。
+
+自动成员发现、安全移交、数据库复制/分片、五年快照保留、动态渲染和生产容量仍未实现；系统DNS不可强制中断、默认robots网络失败兼容放行等既有边界不变。以下为历史记录。
+
 ## 2026-11-09 robots按RFC 9309补齐
 
 已有：origin缓存与miss合并、`*`/`$`、最长匹配且同长Allow优先、百分号转义规范化（保留`%2F`/`%23`/字面`%2A`/`%24`）。

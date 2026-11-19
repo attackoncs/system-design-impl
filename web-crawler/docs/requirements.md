@@ -285,3 +285,11 @@ A Python web crawler library implementing the design from System Design Intervie
 - **NFR-4.2**: Bound task creation before semaphore-protected processing; recheck due hosts every 50 ms only with a free slot and remaining budget.
 - **NFR-4.3**: The frontier belongs to the event-loop thread; blocking downloads/durable I/O use threads and drain started work even after repeated cancellation. Crawl cleanup drains owned child tasks, releases the state-file owner and resets the running flag before returning; cancellation remains observable.
 - **NFR-4.4**: The default fetcher wraps blocking HTTP with body/deadline/slot bounds; unresolved system DNS retains its bounded download slot.
+
+## 2026-11-17 acceptance / 验收
+
+- robots及重定向每跳必须发送配置UA；origin不含凭据，按scheme/hostname/port缓存。
+- 域名精确规则和Crawler/SQLite/分片采用同一规范hostname，保留IDNA、IPv6和端口验证。
+- authority二次解析不能改变过滤后的目标；原始空白/控制及转义authority拒绝，路径/query转义保留。
+- 持久任务派发/移交前重新过滤；旧host键在首次派发前原子合并并取最大访问延时，后续启动不重复迁移。
+- 既有测试/benchmark不改，记录完整回归、分支覆盖、真实HTTP和未完成部署边界。

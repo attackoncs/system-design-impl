@@ -7,12 +7,12 @@ handoffs belong to the scheduler that uses this module.
 from __future__ import annotations
 
 import hashlib
-import ipaddress
 from bisect import bisect_left
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from threading import RLock
-from urllib.parse import urlsplit
+
+from .urls import host_for_url as _host_for_url
 
 
 def _hash_bytes(value: bytes) -> int:
@@ -22,29 +22,6 @@ def _hash_bytes(value: bytes) -> int:
 def _validate_node_id(node_id: str) -> None:
     if not isinstance(node_id, str) or not node_id or node_id.strip() != node_id:
         raise ValueError("node IDs must be non-empty strings without outer whitespace")
-
-
-def _host_for_url(url: str) -> str:
-    if not isinstance(url, str) or not url or url.strip() != url:
-        raise ValueError("url must be a non-empty HTTP or HTTPS URL")
-    try:
-        parsed = urlsplit(url)
-        host = parsed.hostname
-        # Validate the port even though ownership is shared across all ports.
-        _ = parsed.port
-        if parsed.scheme.lower() not in ("http", "https") or not host:
-            raise ValueError("url must contain an HTTP or HTTPS host")
-        if any(character.isspace() for character in host):
-            raise ValueError("url host cannot contain whitespace")
-        host = host.rstrip(".")
-        try:
-            return ipaddress.ip_address(host).compressed.lower()
-        except ValueError:
-            if not host:
-                raise ValueError("url must contain a host")
-            return host.encode("idna").decode("ascii").lower()
-    except (UnicodeError, ValueError) as error:
-        raise ValueError("url must be a valid HTTP or HTTPS URL") from error
 
 
 @dataclass(frozen=True, order=True)

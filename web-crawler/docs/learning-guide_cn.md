@@ -36,18 +36,18 @@ flowchart LR
 
 ## 六站源码阅读路线
 
-1. [Crawler.crawl](../src/web_crawler/crawler.py#L120)：批次入口，先看并发任务集合和max_pages的检查，知道一个批次何时结束。
-2. [Crawler._enqueue_url](../src/web_crawler/crawler.py#L351)：发现URL如何经过深度与过滤限制；持久模式先保存远端发现，再做后续路由移交。
-3. [SQLiteCrawlState.get](../src/web_crawler/state.py#L145)：从持久队列领取到期任务并保留主机；输出FrontierEntry给处理任务。
-4. [Crawler._process_entry](../src/web_crawler/crawler.py#L217)：robots、下载、重定向、HTML检查和发现链接集中在这里；先跟主页正常路径。
-5. [Crawler._claim_content](../src/web_crawler/crawler.py#L319)：跟child的重复内容分支，理解临时指纹拥有者与已提交指纹的区别。
-6. [SQLiteCrawlState.finish](../src/web_crawler/state.py#L229)：提交状态、内容和主机可用时间，最后回到 [Crawler._process_url](../src/web_crawler/crawler.py#L181) 的异常与取消补偿。
+1. [Crawler.crawl](../src/web_crawler/crawler.py#L121)：批次入口，先看并发任务集合和max_pages的检查，知道一个批次何时结束。
+2. [Crawler._enqueue_url](../src/web_crawler/crawler.py#L359)：发现URL如何经过深度与过滤限制；持久模式先保存远端发现，再做后续路由移交。
+3. [SQLiteCrawlState.get](../src/web_crawler/state.py#L207)：从持久队列领取到期任务并保留主机；输出FrontierEntry给处理任务。
+4. [Crawler._process_entry](../src/web_crawler/crawler.py#L219)：robots、下载、重定向、HTML检查和发现链接集中在这里；先跟主页正常路径。
+5. [Crawler._claim_content](../src/web_crawler/crawler.py#L327)：跟child的重复内容分支，理解临时指纹拥有者与已提交指纹的区别。
+6. [SQLiteCrawlState.finish](../src/web_crawler/state.py#L291)：提交状态、内容和主机可用时间，最后回到 [Crawler._process_url](../src/web_crawler/crawler.py#L183) 的异常与取消补偿。
 
 未设置state_path时，第三站改读 [URLFrontier.get](../src/web_crawler/frontier.py#L57)。其他业务管线相同，但恢复能力和队列数据位置不同。
 
 ## 微观一：并发容量在创建任务前就受限制
 
-[crawler.py:141](../src/web_crawler/crawler.py#L141)
+[crawler.py:142](../src/web_crawler/crawler.py#L142)
 
 ```python
 while not await self._queue_call("is_empty") or tasks:
@@ -95,9 +95,15 @@ def _schedule(self, host: str, now: float) -> None:
 
 ## 微观二：内容重复，发现过程仍要继续
 
-[crawler.py:283](../src/web_crawler/crawler.py#L283)
+[crawler.py:285](../src/web_crawler/crawler.py#L285)
 
 ```python
+        url,
+        status.ERROR,
+        http_status=response.status_code,
+        depth=depth,
+        error_message="Non-HTML content",
+    ), None
 fingerprint = self._content_seen.compute_fingerprint(response.body)
 duplicate = await self._claim_content(fingerprint, url)
 html = response.body.decode("utf-8", errors="replace")
@@ -109,12 +115,6 @@ if duplicate:
         await self._enqueue_url(
             link, web_crawler.models.Priority.MEDIUM, depth + 1
         )
-    return web_crawler.models.CrawlResult(
-        url,
-        status.DUPLICATE,
-        http_status=response.status_code,
-        content_fingerprint=fingerprint,
-        depth=depth,
 ```
 
 先得到内容指纹并申领，再用 `response.url` 作为相对链接基准提取链接。重复分支仍把链接入队，只是不再把相同HTML作为新的成功快照保存。否则相同HTML放在 `/a/` 和 `/b/` 下时，两个不同的 `child` 地址会漏掉一组。
@@ -136,7 +136,7 @@ flowchart TD
 
 ## 失败与取消：还没确认的URL要能重新领取
 
-`_process_url` 的finally处理“尚未完成确认”情形。持久模式把领取的任务归还；`crawl` 取消并等待自己创建的任务，再关闭持久状态。[Crawler._io](../src/web_crawler/crawler.py#L109) 经[Crawler._drain](../src/web_crawler/crawler.py#L96)等待已经接受的同步数据库操作。每次取消都继续shield，直到工作完成再传播取消；子任务清理也使用同一规则。只在第一次取消时shield、随后直接await任务，第二次取消仍可能让数据库线程被遗弃。
+`_process_url` 的finally处理“尚未完成确认”情形。持久模式把领取的任务归还；`crawl` 取消并等待自己创建的任务，再关闭持久状态。[Crawler._io](../src/web_crawler/crawler.py#L110) 经[Crawler._drain](../src/web_crawler/crawler.py#L97)等待已经接受的同步数据库操作。每次取消都继续shield，直到工作完成再传播取消；子任务清理也使用同一规则。只在第一次取消时shield、随后直接await任务，第二次取消仍可能让数据库线程被遗弃。
 
 ```mermaid
 sequenceDiagram
@@ -166,13 +166,19 @@ sequenceDiagram
 - **max_concurrent=4能让同一主机同时抓4个URL吗？** 还受主机保留与礼貌间隔约束，不能只看全局并发上限。
 - **Hook异常是否代表网页没下载成功？** Hook按实现隔离错误；不能把业务内容处理Hook当成调度事务的一部分。
 - **只给URLSeen加锁能解决内容重复吗？** 不能，两个不同URL可能返回相同字节。
-- **robots中的`%2A`和`*`一样吗？** 前者是字面字符，后者是通配符。[RobotsChecker._allows](../src/web_crawler/robots.py#L78) 先解析URL再规范化路径，保留转义分隔符；空路径带查询也从`/`开始。回归入口是 [test_robots_preserves_encoded_delimiters_and_literal_metacharacters](../tests/test_open_source_review.py#L214)。
+- **robots中的`%2A`和`*`一样吗？** 前者是字面字符，后者是通配符。[RobotsChecker._allows](../src/web_crawler/robots.py#L77) 先解析URL再规范化路径，保留转义分隔符；空路径带查询也从`/`开始。回归入口是 [test_robots_preserves_encoded_delimiters_and_literal_metacharacters](../tests/test_open_source_review.py#L214)。
 
 ## 动手练习
 
 把max_pages改成1，预期第一批只尝试主页，child仍在持久队列；新建Crawler并用空种子继续，预期child仍可被处理。再将child内容改为不同字节，预期其结果变为SUCCESS且快照数增加。配置和运行方式见 [README_CN.md](../README_CN.md)。
 
 然后运行 [verify_http.py](../tools/verify_http.py) 的自有回环HTTP案例，观察base href、坏链接隔离、robots禁止与重启恢复；测量范围见 [REPORT.md](../benchmarks/REPORT.md)。原书和Scrapy的取舍记录在 [open-source-review_cn.md](../docs/open-source-review_cn.md)。
+
+## 2026-11-17：先统一主机身份，再谈礼貌和域名边界
+
+[host_for_url](../src/web_crawler/urls.py#L36)把URL校验和hostname规范化集中起来，名单、Crawler入队、持久队列与分片复用。port/userinfo不是另一个主机槽，IDNA和尾点也不能制造新身份；原URL路径/query不改。robots用[origin_for_url](../src/web_crawler/urls.py#L58)生成不带凭据的scheme/host/port键，并为每跳请求发送配置UA。
+
+[SQLiteCrawlState._migrate_host_keys](../src/web_crawler/state.py#L131)在owner保护下单次升级旧键，必须先合并所有别名和最长next_ready再派发，不能只改当前候选。已有任务在路由或下载前再次经过过滤，防止旧配置下接受的地址绕过新政策。旧手工自定义且与URL不一致的host须单独审计迁移，精确主机规则不等于通用SSRF防护。
 
 
 ---

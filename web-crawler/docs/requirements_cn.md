@@ -285,3 +285,11 @@
 - **NFR-4.2**：先限制异步任务数量，再由Semaphore保护管线；有空闲槽和剩余预算时每50毫秒复查到期主机。
 - **NFR-4.3**：内存frontier属于事件循环线程；阻塞下载/数据库I/O在线程执行，连续取消也需排空已开始操作。crawl返回前须排空自有子任务、释放状态文件owner并复位running标记，取消仍向调用方传播。
 - **NFR-4.4**：默认Fetcher异步封装阻塞HTTP，限制响应体、总deadline和下载槽；未返回的系统DNS仍占用有限槽。
+
+## 2026-11-17 acceptance / 验收
+
+- robots及重定向每跳必须发送配置UA；origin不含凭据，按scheme/hostname/port缓存。
+- 域名精确规则和Crawler/SQLite/分片采用同一规范hostname，保留IDNA、IPv6和端口验证。
+- authority二次解析不能改变过滤后的目标；原始空白/控制及转义authority拒绝，路径/query转义保留。
+- 持久任务派发/移交前重新过滤；旧host键在首次派发前原子合并并取最大访问延时，后续启动不重复迁移。
+- 既有测试/benchmark不改，记录完整回归、分支覆盖、真实HTTP和未完成部署边界。

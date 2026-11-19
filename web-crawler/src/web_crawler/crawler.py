@@ -23,6 +23,7 @@ import web_crawler.models
 import web_crawler.parser
 import web_crawler.robots
 from web_crawler.state import SQLiteCrawlState
+from web_crawler.urls import host_for_url
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +160,8 @@ class Crawler:
                     self._config.max_pages - self._attempted,
                 )
                 done, pending = await asyncio.wait(
-                    tasks, return_when=asyncio.FIRST_COMPLETED,
+                    tasks,
+                    return_when=asyncio.FIRST_COMPLETED,
                     timeout=0.05 if can_refill else None,
                 )
                 await asyncio.gather(*done)
@@ -217,6 +219,12 @@ class Crawler:
     async def _process_entry(self, entry):
         status = web_crawler.models.CrawlStatus
         url, depth = entry.url, entry.depth
+        # Reapply current policy to persisted work before fetching or handing it
+        # to another worker; admission may have used an older configuration.
+        if depth > self._config.max_depth or not self._url_filter.accept(url):
+            return web_crawler.models.CrawlResult(
+                url, status.FILTERED, depth=depth
+            ), None
         if self._partition is not None and not self._partition.owns(url):
             await self._route(entry)
             return web_crawler.models.CrawlResult(
@@ -351,7 +359,9 @@ class Crawler:
     async def _enqueue_url(self, url, priority, depth):
         if depth > self._config.max_depth or not self._url_filter.accept(url):
             return
-        entry = web_crawler.models.FrontierEntry(url, priority, depth)
+        entry = web_crawler.models.FrontierEntry(
+            url, priority, depth, host_for_url(url)
+        )
         if self._state is not None:
             # Do not route here: persist remote discoveries before handing them
             # to another worker, so a crash cannot lose the handoff.

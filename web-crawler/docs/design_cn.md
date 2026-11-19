@@ -68,3 +68,9 @@ ConsistentHashPartition按主机稳定归属；远端发现先持久保存，再
 - [持久恢复](../tests/test_durable_crawl.py)、[生命周期](../tests/test_lifecycle.py)、[分片管线](../tests/test_partition_pipeline.py)、[真实下载](../tests/test_transport_review.py)。
 - [连续取消回归](../tests/test_cancellation_review.py)：受控阻塞open/finish/close，确认排空前所有权仍保留、取消传播及实例可复用。
 - [基准与HTTP复跑](../benchmarks/REPORT.md)：259项测试、历史相同负载调度对照，以及本轮自有回环服务的下载/重启验证。
+
+## 2026-11-17 host identity / 主机身份
+
+[urls.py](../src/web_crawler/urls.py)统一hostname边界：IDNA/IP/尾点规范化，过滤与Crawler调度/分片不使用userinfo/port区分同一主机。规则精确匹配，不隐式扩展子域或解析DNS；配置仅填写主机名（IPv6可加方括号）。URL本身不重写，转义/反斜杠authority及原始空白/控制字符拒绝。robots origin排除userinfo、合并默认端口但保留其他端口，所有请求使用相同配置UA。
+
+入队与派发均检查当前过滤政策，且在跨worker移交前检查；自定义过滤器必须可重复执行。FrontierEntry旧默认host表示不变，Crawler显式给规范键，SQLite.put只从URL取host。schema 0在owner锁和BEGIN IMMEDIATE内一次性归并jobs/hosts，继承最大next_ready后升到1；后续不再扫jobs。旧无效URL留待过滤，异常自定义键可从有效URL恢复；旧的“合法但与URL不一致”的手工host须先审计迁移，不能自动推断。不要再用旧二进制写升级后的数据库。

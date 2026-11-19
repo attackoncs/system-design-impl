@@ -6,7 +6,7 @@
 [Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
 <!-- LEARNING_GUIDE_END -->
 
-> Chapter 10 includes durable recovery, adaptive recrawling, host partition routing, DNS caching and bounded downloads. The latest [book/open-source review](docs/open-source-review_cn.md) records scheduler, robots, link-parser and repeated-cancellation checks with 259 passing tests and reproducible evidence.
+> Chapter 10 includes durable recovery, adaptive recrawling, host partition routing, DNS caching and bounded downloads. The latest [book/open-source review](docs/open-source-review_cn.md) records scheduler, robots, link-parser and repeated-cancellation checks with 275 passing tests and reproducible evidence.
 
 An asyncio-based Python web crawler library implementing the design from System Design Interview Chapter 10 "Design A Web Crawler". Features a pipeline architecture with URL frontier (priority + politeness), robots.txt compliance, content deduplication, link extraction, and pluggable components — all with zero runtime dependencies (stdlib only).
 
@@ -24,6 +24,8 @@ An asyncio-based Python web crawler library implementing the design from System 
 - **Zero runtime dependencies** — uses only Python standard library
 - **Structured results** — typed `CrawlResult` with status, links, fingerprint, and metadata
 
+
+The 2026-11-17 [review](docs/chapter10-review.md) fixes crawler identity on robots requests and shares canonical host keys across filtering, scheduling and placement. Rules match exact hostnames (IDNA/IP normalized), not credentials or ports. Escaped/ambiguous authorities are rejected; stored URL identities stay unchanged. Durable state schema 0 is upgraded atomically to version 1, merging aliases and the longest host delay before dispatch. Old custom host keys inconsistent with their URLs require an explicit audit/migration.
 
 ## Durable crawling and recovery
 
