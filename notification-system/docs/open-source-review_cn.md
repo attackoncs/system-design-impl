@@ -1,6 +1,8 @@
 # 第11章：原书、GitHub实现与本地代码核对
 
-核对日期：2026-11-01。范围为仓库《System Design Interview.md》3177–3570行，即“Design A Notification System”。使用CodeGraph追踪受理、领取、投递、重试和确认链路，并执行回归与受控并发验证。
+核对日期：2026-11-01，最新复核2026-11-17。范围为仓库《System Design Interview.md》3177–3570行，即“Design A Notification System”。使用CodeGraph追踪受理、领取、投递、重试和确认链路，并执行回归与受控并发验证。下方466项及控制组是11月1日历史记录；11月17日最终为475项，详见[最新章节记录](chapter11-review.md)。
+
+11月17日重新读取下表Novu队列源码和Notifo调度通道源码：继续复用队列/Provider契约与重试分层，补齐本地重复取消、受理快照/记账和持久路径边界。图索引44文件、1279节点、3656边，完整无待更新；新增9项针对性回归，原测试与benchmark代码未改。开源实现用于设计对照，没有声称其实现与本地asyncio取消语义一致。
 
 ## GitHub检索与阅读
 

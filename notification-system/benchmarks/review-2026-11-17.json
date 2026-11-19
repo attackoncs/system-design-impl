@@ -1,0 +1,40 @@
+{
+  "python": "3.14.8",
+  "platform": "Linux",
+  "requests_per_sample": 240,
+  "repeats": 1,
+  "requested_concurrency": 16,
+  "synthetic_queue_delay_ms": 2.0,
+  "cases": {
+    "memory": {
+      "samples": [
+        {
+          "seconds": 0.017350759997498244,
+          "accepted_per_second": 13832.24711969994,
+          "peak_enqueue_calls": 14
+        }
+      ],
+      "median_accepted_per_second": 13832.24711969994
+    },
+    "delayed_memory": {
+      "samples": [
+        {
+          "seconds": 0.05793452500074636,
+          "accepted_per_second": 4142.607538370396,
+          "peak_enqueue_calls": 15
+        }
+      ],
+      "median_accepted_per_second": 4142.607538370396
+    },
+    "sqlite": {
+      "samples": [
+        {
+          "seconds": 0.44918727399999625,
+          "accepted_per_second": 534.2983069462516,
+          "peak_enqueue_calls": null
+        }
+      ],
+      "median_accepted_per_second": 534.2983069462516
+    }
+  }
+}

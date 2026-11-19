@@ -10,18 +10,22 @@ This document describes the executed reference pipeline after the chapter 11 rev
 
 `SQLiteMessageQueue` implements the same worker contract over `notification_jobs`. Database mutations run through `asyncio.to_thread`, with per-instance serialization and SQLite `BEGIN IMMEDIATE` transactions across instances. The file uses WAL and synchronous FULL. A queue has no background connection or scheduler task to close: each operation closes its connection. Depth methods use short synchronous snapshot queries.
 
+Both SQLite backends bind an absolute file path at construction; empty paths and `:memory:` are rejected. `async_work.complete` shields each wait on owned commit/cleanup work, including repeated cancellation. The per-instance lock remains held until the physical thread finishes. Committed claims are returned and provider cleanup finishes before a worker releases its reservation. Pool lifecycle locks cover all shutdown/rollback cleanup. Real operation failures take precedence over caller cancellation; slow or non-returning dependencies can delay cancellation. Normal provider delivery remains cancellable.
+
 `Provider.deliver(task)` receives rendered request data and `task.endpoint`. One worker sends endpoints sequentially with a configurable per-call timeout; concurrent workers provide bounded delivery parallelism. The bundled implementation is simulated. Real adapters must map APNs/FCM/SMS/email responses into `DeliveryResult` and respect cancellation.
 
 ## Acceptance transaction
 
-1. Validate types and timezone-aware schedule values. Under a recipient stripe, look up an explicit business event ID if supplied.
+1. Copy the string-valued request parameter/metadata dictionaries before the first await, then validate types and timezone-aware schedule values. Under a recipient stripe, look up an explicit business event ID if supplied.
 2. Resolve registered endpoints and check preferences. Validate basic email/phone syntax, cap endpoint count at 100 and rendered title/body at 1 MiB.
-3. Resolve templates once and copy all mutable request dictionaries. Platform mappings filter registered push tokens; legacy untyped tokens remain compatible.
+3. Resolve templates once from the request snapshot. Platform mappings filter registered push tokens; legacy untyped tokens remain compatible.
 4. Check per-user channel and per-user cross-channel quota. With no event ID, check local content TTL deduplication using an unambiguous serialized title/body pair. Expiry pops from the oldest end and stops at the first live entry (fixed window, append order = expiry order), so each check is amortized O(1) rather than a scan of the window.
 5. Record local CREATED/QUEUED before making the task visible to workers. Accept into the queue; record quota and content deduplication only after success. Rejections record local FAILED and do not consume those reservations.
 6. SQLite acceptance atomically inserts the job, QUEUED audit entry, and optional unique `(event_id, recipient_id, channel)` ledger row. Capacity counts all queued and claimed rows. A duplicate returns the original notification ID through `DuplicateNotificationError`, including after terminal acknowledgement. First acceptance wins if replay content differs.
 
 Local recipient locks protect same-user checks across channels in one service. Database event uniqueness protects queue instances independently of those locks. Quotas and metadata are not shared across processes. Cancellation during acceptance can leave an accepted row despite an uncertain caller response; producers should replay a stable event ID.
+
+Waiting for the recipient lock is cancellable. After admission starts, `complete(_accept(...))` finishes enqueue and local quota/content-deduplication accounting under that lock before propagating cancellation. It does not roll back accepted work or make local counters durable.
 
 ## Worker lifecycle and retries
 
@@ -39,7 +43,7 @@ Per-device successes and permanent rejections are separate task fields. A normal
 
 ## Auditing, scheduling and APIs
 
-`send_batch(requests, concurrency=16)` runs a fixed number of consumers over one input iterator. It allocates at most `min(concurrency, len(requests))` tasks and fills results at their original indices; isolated failures keep an empty-string result. Recipient locks and queue event uniqueness remain unchanged. Cancellation cancels and awaits all children; accepted notifications remain in the queue. `concurrency=1` keeps sequential admission. This does not change per-channel delivery worker counts. The [controlled comparison](../benchmarks/REPORT.md) distinguishes asynchronous waiting from serialized SQLite writes.
+`send_batch(requests, concurrency=16)` runs at most `min(concurrency, len(requests))` consumer tasks over one input iterator and fills results at their original indices; isolated failures keep an empty-string result. Each active consumer may own temporary commit/cleanup tasks, keeping total task allocation O(concurrency). Recipient locks and queue event uniqueness remain unchanged. Cancellation waits for every consumer, even if another consumer has already cancelled and completed the original gather; accepted notifications remain in the queue. Repeated cancellation cannot skip this drain. `concurrency=1` keeps sequential admission. This does not change per-channel delivery worker counts. The [controlled comparison](../benchmarks/REPORT.md) distinguishes asynchronous waiting from serialized SQLite writes.
 
 SQLite terminal acknowledgement deletes the pending job and writes the terminal audit row in one transaction. `SQLiteNotificationLog` supports filtered audit queries and retention cleanup; attempts are audit facts and may include FAILED attempts before a later success, while `EventTracker` models the live notification lifecycle (`SENDING -> QUEUED` for retry).
 

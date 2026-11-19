@@ -10,18 +10,22 @@
 
 `SQLiteMessageQueue` 使用 `notification_jobs` 表实现相同契约。数据库修改通过 `asyncio.to_thread` 执行，实例内锁顺序提交，多实例通过 SQLite `BEGIN IMMEDIATE` 隔离事务。数据库使用 WAL、synchronous FULL，每次操作关闭连接，无额外后台调度任务需要关闭；监控深度使用同步快照查询。
 
+两个SQLite后端在构造时固定绝对文件路径，拒绝空路径和`:memory:`。`async_work.complete`对拥有的提交/清理操作每次等待都shield，重复取消也必须等物理线程结束才释放实例锁。已提交领取先归还，provider清理结束后再释放worker容量；池生命周期锁覆盖停止和启动回滚的全部清理。真实操作失败优先于调用方取消，缓慢或不返回的依赖会延迟取消；普通provider投递仍可取消。
+
 `Provider.deliver(task)` 接收解析后的正文和本次 `task.endpoint`。单 worker 逐端点发送，并给每次调用设置超时；可配置多个 worker 并发。内置 provider 模拟投递。真实适配器需转换各厂商的响应，支持取消并实现外部幂等键。
 
 ## 接受流程
 
-1. 校验请求类型、带时区的计划时间；取得用户条带锁，有业务事件 ID 时先查询已有接受记录。
+1. 首次await前复制字符串值的参数/元数据字典，再校验请求类型、带时区的计划时间；取得用户条带锁，有业务事件 ID 时先查询已有接受记录。
 2. 解析端点、检查偏好，校验基本邮件和电话号码格式。每次通知最多 100 个端点，解析后的标题加正文最多 1 MiB。
-3. 模板仅解析一次，并复制请求中可变字典。已登记的平台筛选对应 token；旧无平台 token 仍兼容。
+3. 从请求快照解析一次模板。已登记的平台筛选对应 token；旧无平台 token 仍兼容。
 4. 检查该用户的通道额度与跨通道总额度。未传 `event_id` 时，检查单 service 实例的内容 TTL 去重，标题正文采用无歧义序列化。过期清理从最旧端弹出、遇到首个未过期条目即停止（固定窗口，追加顺序即过期顺序），每次检查均摊O(1)，不再扫描整个窗口。
 5. 先记录本地 CREATED/QUEUED，再向 worker 暴露任务。入队成功后才占用额度和内容去重；拒绝记录本地 FAILED，不污染限频和去重。
 6. SQLite 同一接受事务写通知任务、QUEUED 审计和可选唯一 `(event_id, recipient_id, channel)` 账本。容量包含计划及已领取任务。重复通过 `DuplicateNotificationError` 提供原通知 ID，终态完成后仍生效；正文改变的重放同样采用首次接受内容。
 
 同一 service 的用户锁覆盖该用户所有通道；数据库唯一约束另外保护多个队列实例。限频窗口和元数据并未跨进程共享。接受期间取消可能发生数据库已提交、调用方未拿到响应的情况，上游应使用稳定事件 ID 重放。
+
+等待用户锁时可取消；开始受理后，`complete(_accept(...))`会在持锁状态下完成入队及本地额度/内容去重记账，再传播取消。它不回滚已接受任务，也不让本地计数器自动持久化。
 
 ## worker、租约及重试
 
@@ -41,7 +45,7 @@ worker 调用重试器时使用 `defer=True`，原子增加尝试次数并写回
 
 ## 审计、调度与 HTTP
 
-`send_batch(requests, concurrency=16)` 以固定消费者共享输入迭代器，最多创建 `min(concurrency, len(requests))` 个任务；返回位置与输入一致，单项失败为空串。用户条带锁和事件唯一约束继续生效。取消时取消并等待全部子任务退出，已经受理的通知不回滚；`concurrency=1` 保留串行模式。该参数不改变投递worker数；[受控对照](../benchmarks/REPORT.md)区分异步等待收益与SQLite串行写入。
+`send_batch(requests, concurrency=16)` 以至多 `min(concurrency, len(requests))` 个固定消费者共享输入迭代器；返回位置与输入一致，单项失败为空串。每个活跃消费者可能拥有临时提交/清理任务，总数仍为O(concurrency)。用户条带锁和事件唯一约束继续生效。取消时逐个等待全部消费者退出，不能仅等待因首个取消而提前结束的聚合器；重复取消也不会跳过清理。已经受理的通知不回滚；`concurrency=1` 保留串行模式。该参数不改变投递worker数；[受控对照](../benchmarks/REPORT.md)区分异步等待收益与SQLite串行写入。
 
 SQLite 终态确认在同一事务中删除待处理任务并写终态审计。`SQLiteNotificationLog` 支持条件查询和保留期清理；尝试日志可能先出现 FAILED 尝试，再出现后续成功，不能把它当成终态状态机。`EventTracker` 是当前进程实时状态机，重试允许 `SENDING -> QUEUED`。
 

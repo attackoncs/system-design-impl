@@ -28,6 +28,7 @@ import notification_system.rate_limiter
 import notification_system.settings
 import notification_system.templates
 import notification_system.tracker
+from notification_system.async_work import complete
 
 
 class NotificationService:
@@ -171,6 +172,22 @@ class NotificationService:
             DuplicateNotificationError: If duplicate detected.
             QueueFullError: If the channel queue is full.
         """
+        # Freeze nested mutable fields before the first admission wait. Keep
+        # invalid types intact so validation rejects them without coercion.
+        if isinstance(request, notification_system.models.NotificationRequest):
+            request = dataclasses.replace(
+                request,
+                template_params=(
+                    dict(request.template_params)
+                    if isinstance(request.template_params, dict)
+                    else request.template_params
+                ),
+                metadata=(
+                    dict(request.metadata)
+                    if isinstance(request.metadata, dict)
+                    else request.metadata
+                ),
+            )
         self._validate_request(request)
         if scheduled_at is not None and (
             not isinstance(scheduled_at, datetime.datetime)
@@ -181,7 +198,9 @@ class NotificationService:
                 "scheduled_at must be timezone-aware"
             )
         async with self._admission[hash(request.recipient_id) % len(self._admission)]:
-            return await self._accept(request, scheduled_at)
+            # Once admission starts, finish queue/quota/dedup publication as
+            # one owned operation; cancellation is not a rollback of acceptance.
+            return await complete(self._accept(request, scheduled_at))
 
     async def _accept(self, request, scheduled_at):
         notification_id = uuid.uuid4().hex
@@ -392,12 +411,15 @@ class NotificationService:
             asyncio.create_task(consume())
             for _ in range(min(concurrency, len(requests)))
         ]
+        batch = asyncio.gather(*workers)
         try:
-            await asyncio.gather(*workers)
+            await asyncio.shield(batch)
         except BaseException:
             for worker in workers:
                 worker.cancel()
-            await asyncio.gather(*workers, return_exceptions=True)
+            # The original group can finish on the first cancelled consumer;
+            # wait for every consumer as well as observing the group's error.
+            await complete(asyncio.gather(*workers, batch, return_exceptions=True))
             raise
         return results
 

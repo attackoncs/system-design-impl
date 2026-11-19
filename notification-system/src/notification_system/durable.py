@@ -18,6 +18,7 @@ import sqlite3
 import time
 import uuid
 
+from notification_system.async_work import complete
 from notification_system.exceptions import DuplicateNotificationError, QueueFullError
 from notification_system.log import NotificationLogBackend
 from notification_system.models import (
@@ -56,7 +57,9 @@ def _decode(raw: str) -> NotificationTask:
 
 class _Database:
     def __init__(self, path) -> None:
-        self.path = pathlib.Path(path)
+        if str(path) in ("", ":memory:"):
+            raise ValueError("use a file path for persistent storage")
+        self.path = pathlib.Path(path).resolve()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connection() as db:
             db.execute("PRAGMA journal_mode=WAL")
@@ -130,13 +133,8 @@ class SQLiteMessageQueue(MessageQueue):
 
     async def _run(self, operation, *args):
         async with self._io:
-            running = asyncio.create_task(asyncio.to_thread(operation, *args))
-            try:
-                return await asyncio.shield(running)
-            except asyncio.CancelledError:
-                # Keep the serialization lock until the transaction ends.
-                await running
-                raise
+            # Cancellation cannot release the lock while disk work still runs.
+            return await complete(asyncio.to_thread(operation, *args))
 
     def _enqueue(self, task):
         with self._db.connection() as db:
@@ -215,13 +213,17 @@ class SQLiteMessageQueue(MessageQueue):
                 task = await asyncio.shield(operation)
             except asyncio.CancelledError:
                 # A cancelled database claim may already have committed.
-                task = await operation
-                if task is not None:
-                    await self.reschedule(task)
+                await complete(self._return_claim(operation))
                 raise
             if task is not None:
                 return task
             await asyncio.sleep(min(0.05, self.lease_seconds / 3))
+
+    async def _return_claim(self, operation):
+        """Finish the claim and return it before cancellation becomes visible."""
+        task = await operation
+        if task is not None:
+            await self.reschedule(task)
 
     async def dequeue(self, channel):
         """Compatibility pop; consumers needing recovery must use claim/ack."""

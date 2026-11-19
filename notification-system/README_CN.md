@@ -10,7 +10,7 @@
 
 [English](README.md) · [设计文档](docs/design_cn.md) · [章节核对记录](docs/chapter11-review.md)
 
-2026-11-01已对照原书、GitHub源码和CodeGraph复审，见[开源对照与回归记录](docs/open-source-review_cn.md)。
+2026-11-17已对照原书、GitHub源码和CodeGraph复审，见[开源对照与回归记录](docs/open-source-review_cn.md)。
 
 ## 安装和启动
 
@@ -48,7 +48,9 @@ Invoke-RestMethod http://127.0.0.1:8000/notifications -Method Post -Headers $hea
 
 `await service.send_batch(requests, concurrency=16)` 默认最多16个消费者协程，不按批次长度创建同等数量任务。返回列表保留输入位置，失败项为空串；`concurrency=1` 保留串行模式。用户条带锁和事件ID去重继续生效。
 
-取消批次会取消并等待所有子任务退出，已经入队的通知继续保留。响应不确定时，业务方应使用稳定事件ID重放。SQLite仍串行写入，提高受理并发不代表数据库吞吐必然提升；见[受控性能对照](benchmarks/REPORT.md)。
+取消批次会逐个等待消费者清理完成，重复取消也不能提前返回。每个活跃消费者还可能持有临时提交/清理任务，总量仍为O(concurrency)。已经入队的通知继续保留。响应不确定时，业务方应使用稳定事件ID重放。SQLite仍串行写入，提高受理并发不代表数据库吞吐必然提升；见[受控性能对照](benchmarks/REPORT.md)。
+
+`send()`在首次等待受理锁之前复制参数与元数据字典。取得用户锁并开始受理后，即使被取消，也会先完成入队和本地额度/去重记账，再传播取消，因此取消返回时通知可能已被接受。SQLite事务、领取归还和池停止同样等待其拥有的清理完成，真实操作错误优先于取消。磁盘缓慢或不返回的自定义后端/provider清理可能延迟取消。
 
 内存队列每次领取返回独立receipt快照，旧引用不能获得新凭据；SQLite领取/续租在取得写锁后才采样时间；复用Worker在退出后等待下一次启动信号。
 
@@ -69,6 +71,8 @@ Invoke-RestMethod http://127.0.0.1:8000/notifications -Method Post -Headers $hea
 
 本项目使用 SQLite 本地持久队列，不提供复制型消息代理。计划任务和已领取任务计入容量；`depth()` 包含等待、计划及租约到期任务，`in_flight()` 统计有效租约。SQLite 修改和审计写入在线程执行，监控深度接口是同步快照；写事务串行化，不能据此声称已达到书中每日千万级容量。
 
+两个SQLite后端在构造时固定文件绝对路径，后续切换工作目录不会改写其他数据库。空路径和`:memory:`会被拒绝；进程内存队列请使用`MessageQueue`。
+
 投递为**至少一次**。外部服务接受后、数据库确认前崩溃，会重发；事件 ID 防止上游请求被再次接受，不保证 provider 外部副作用恰好一次。真实适配器应使用稳定的逐端点幂等键。已成功和永久拒绝端点在重新调度时检查点落盘，检查点前崩溃仍可能重发端点。
 
 联系人、偏好、模板、状态统计、内容 TTL 去重仍在内存；启动恢复 worker 前需重新加载。共享元数据、跨进程限频、缓存失效、真实渠道适配、外部告警、消息代理复制和自动扩容属于尚未实现的部署工作。HTTP 示例串行处理请求，worker 异步并发投递。
@@ -77,7 +81,7 @@ Invoke-RestMethod http://127.0.0.1:8000/notifications -Method Post -Headers $hea
 
 ## 验证
 
-本轮466项测试通过，包含19项新增回归。未editable安装、直接从源码运行子进程测试时，需要将绝对src目录写入PYTHONPATH；详见[核对记录](docs/open-source-review_cn.md)及[并发验证工具](tools/benchmark.py)。
+最新全套475项通过（原466项加9项针对性回归），语句覆盖94.87%、分支覆盖84.14%；原测试和benchmark代码保留。未editable安装、直接从源码运行子进程测试时，需要将绝对src目录写入PYTHONPATH；详见[章节记录](docs/chapter11-review.md)、[验证证据](benchmarks/verification-2026-11-17.json)及[并发验证工具](tools/benchmark.py)。
 
 ```powershell
 python -m pytest tests -q

@@ -11,7 +11,7 @@
 ```mermaid
 flowchart TB
   B[业务调用者] -->|await send 仅等受理| S[NotificationService]
-  B -->|send_batch| A[有界受理协程 默认最多16个]
+  B -->|send_batch| A[固定消费者 默认最多16个]
   A --> S
   C[联系人 偏好 模板] --> S
   S -->|事务入队及事件身份| Q[(SQLite队列与事件账本)]
@@ -36,17 +36,17 @@ flowchart TB
 
 ## 七站阅读路线
 
-1. [NotificationService.send](../src/notification_system/service.py#L145)：检查请求和计划时间，再按收件人条带锁串行受理；返回通知ID。
-2. [NotificationService._accept](../src/notification_system/service.py#L186)：先检查显式event_id，再解析端点、偏好和模板；找到任务快照在哪里构造。
-3. [SQLiteMessageQueue._enqueue](../src/notification_system/durable.py#L141)：在写事务里重新检查事件身份并接受任务；这才守住跨实例重复受理。
-4. [SQLiteMessageQueue._claim](../src/notification_system/durable.py#L191)：输入通道，取得写锁后采样时间，输出带receipt的任务；数据库不删除任务，只标记租约。先读时钟再等写锁会白白消耗租期。
-5. [Worker._process_claim](../src/notification_system/worker.py#L138)：并行监视投递与续租，处理取消时返回任务或依赖租约恢复。
-6. [Worker._process_task](../src/notification_system/worker.py#L179)：再查偏好、跳过已完成端点、调用Provider；下一站处理失败。
-7. [RetryHandler.handle_failure](../src/notification_system/retry.py#L70)：决定重试或终态；最后看 [SQLiteMessageQueue._ack](../src/notification_system/durable.py#L235) 如何核验当前租约。
+1. [NotificationService.send](../src/notification_system/service.py#L146)：首次await前复制参数/元数据字典，检查请求和计划时间，再按收件人条带锁串行受理；返回通知ID。
+2. [NotificationService._accept](../src/notification_system/service.py#L205)：先检查显式event_id，再解析端点、偏好和模板；找到任务快照在哪里构造。
+3. [SQLiteMessageQueue._enqueue](../src/notification_system/durable.py#L139)：在写事务里重新检查事件身份并接受任务；这才守住跨实例重复受理。
+4. [SQLiteMessageQueue._claim](../src/notification_system/durable.py#L189)：输入通道，取得写锁后采样时间，输出带receipt的任务；数据库不删除任务，只标记租约。先读时钟再等写锁会白白消耗租期。
+5. [Worker._process_claim](../src/notification_system/worker.py#L139)：并行监视投递与续租，处理取消时返回任务或依赖租约恢复。
+6. [Worker._process_task](../src/notification_system/worker.py#L182)：再查偏好、跳过已完成端点、调用Provider；下一站处理失败。
+7. [RetryHandler.handle_failure](../src/notification_system/retry.py#L70)：决定重试或终态；最后看 [SQLiteMessageQueue._ack](../src/notification_system/durable.py#L237) 如何核验当前租约。
 
 ## 微观一：先查去重还不够，接受事务必须再查
 
-[durable.py:141](../src/notification_system/durable.py#L141)
+[durable.py:139](../src/notification_system/durable.py#L139)
 
 ```python
 def _enqueue(self, task):
@@ -74,7 +74,7 @@ def _enqueue(self, task):
 
 ## 微观二：旧Worker不能确认新Worker领到的任务
 
-[durable.py:235](../src/notification_system/durable.py#L235)
+[durable.py:237](../src/notification_system/durable.py#L237)
 
 ```python
 def _ack(self, task, status, details):
@@ -117,28 +117,38 @@ sequenceDiagram
 
 这条时序不承诺外部恰好一次：Provider已发送但Worker来不及确认时，恢复可能重复调用。供应商幂等需要额外集成。
 
-## 微观三：批量并发上限限制的是任务数
+## 微观三：固定数量的批量受理消费者
 
-[service.py:391](../src/notification_system/service.py#L391)
+[service.py:410](../src/notification_system/service.py#L410)
 
 ```python
 workers = [
     asyncio.create_task(consume())
     for _ in range(min(concurrency, len(requests)))
 ]
+batch = asyncio.gather(*workers)
 try:
-    await asyncio.gather(*workers)
+    await asyncio.shield(batch)
 except BaseException:
     for worker in workers:
         worker.cancel()
-    await asyncio.gather(*workers, return_exceptions=True)
-    raise
-return results
+    # The original group can finish on the first cancelled consumer;
+    # wait for every consumer as well as observing the group's error.
 ```
 
 `send_batch` 前半部分预分配结果位置，共享 `enumerate(requests)` 迭代器；消费者取下一项时没有await，同一事件循环中不会重复领取输入。这里只创建最多concurrency个消费者，不会先为百万条输入创建百万个任务再套Semaphore。默认16，传1可串行受理；结果顺序仍对应输入顺序。
 
 这层并发负责受理，不改变通道worker的投递并发。取消批次会取消并等待子任务退出，已经入队的任务仍保留；SQLite写入仍串行，不能以协程数量推导数据库吞吐。对照结果见 [REPORT.md](../benchmarks/REPORT.md)。
+
+每个活跃消费者还可能拥有临时提交/清理任务，因此总量为O(concurrency)，不能把“16个消费者”读成所有asyncio任务严格最多16个。批次取消时必须逐个等待消费者：原gather可能在第一个消费者取消后就结束，另一个消费者的finally却还没完成。
+
+## 微观四：取消请求不等于本地提交已经停止
+
+[complete](../src/notification_system/async_work.py#L8) 在每次等待时保护拥有的本地操作，反复取消也要先完成再返回。SQLite的to_thread不能被协程取消强行停掉，所以实例锁必须保持到物理线程结束。Worker先等provider清理，再归还领取；正常provider投递本身仍可取消。
+
+`send`取得用户锁后，也会先完成入队与额度/内容去重记账。因此取消可能对应已接受的通知，上游应复用稳定event_id；真实操作错误优先于取消。等待锁时仍可取消，磁盘或不返回的自定义清理会延迟取消。SQLite队列和日志在构造时固定绝对文件路径，切换cwd不会改写另一文件，空路径和`:memory:`会被拒绝。
+
+对应回归见 [test_recovery_boundaries.py](../tests/test_recovery_boundaries.py)：包括重复取消、快速/慢速消费者混合清理、等待受理期间修改请求字典、切换cwd与已接受任务的额度/去重记账。
 
 ## 两个很容易误解的失败结果
 

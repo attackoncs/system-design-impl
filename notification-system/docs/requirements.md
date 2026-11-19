@@ -65,6 +65,10 @@ Original requirement numbers are retained. Unless marked otherwise, entries desc
 
 1.11 Batch cancellation SHALL cancel and await internal admission coroutines before propagating cancellation. It SHALL NOT roll back or revoke work already accepted by the queue.
 
+1.12 `send` SHALL snapshot the string-valued parameter/metadata dictionaries before its first admission wait. Invalid dictionary types SHALL retain the normal validation errors.
+
+1.13 Once admission starts under the recipient lock, cancellation SHALL wait for enqueue and local quota/deduplication accounting to complete. The response may be cancelled after acceptance; retrying uncertain responses requires a stable `event_id`. Batch cleanup SHALL wait for every consumer despite repeated cancellation. Temporary commit/cleanup tasks SHALL remain O(concurrency).
+
 ### Requirement 2: Message Queue System
 
 **User Story:** As a developer, I want separate in-process message queues per notification channel, so that each channel can be processed independently with appropriate concurrency.
@@ -87,6 +91,8 @@ Original requirement numbers are retained. Unless marked otherwise, entries desc
 
 2.8 SQLite `claim` / `renew` SHALL sample the lease clock only after acquiring `BEGIN IMMEDIATE`, so writer-lock waits do not shorten a newly granted lease. Renewal SHALL check both receipt and an unexpired lease; expired claims SHALL NOT be revived.
 
+2.9 Repeated cancellation SHALL NOT release SQLite serialization while physical thread work runs or skip returning a committed claim. SQLite backends SHALL bind their absolute file path at construction and reject empty paths and `:memory:`.
+
 ### Requirement 3: Worker Pool and Delivery
 
 **User Story:** As a developer, I want a configurable worker pool that processes queued notifications, so that notifications are delivered concurrently with controlled parallelism.
@@ -104,6 +110,8 @@ Original requirement numbers are retained. Unless marked otherwise, entries desc
 3.5 THE Worker_Pool SHALL support graceful shutdown, allowing in-flight deliveries to complete before stopping.
 
 3.6 THE Worker and Worker_Pool SHALL support start/stop across their lifetime. A reused Worker SHALL clear its readiness signal on exit or cancellation so `wait_started()` cannot reuse readiness from a previous run. Hot-resizing an existing worker pool is not supplied.
+
+3.7 Repeated cancellation of pool shutdown or startup rollback SHALL wait for owned provider cleanup and claim return before releasing lifecycle ownership. Real operation failures take precedence over caller cancellation; non-returning custom dependencies may delay cleanup without a fixed deadline.
 
 ### Requirement 4: Third-Party Provider Abstraction
 

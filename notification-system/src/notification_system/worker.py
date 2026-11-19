@@ -18,8 +18,9 @@ import notification_system.models
 import notification_system.provider
 import notification_system.queue
 import notification_system.retry
-import notification_system.tracker
 import notification_system.settings
+import notification_system.tracker
+from notification_system.async_work import complete
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +103,7 @@ class Worker:
                     if self._claim_task.done() and not self._claim_task.cancelled():
                         try:
                             claimed = self._claim_task.result()
-                            await self._queue.reschedule(claimed)
+                            await complete(self._queue.reschedule(claimed))
                         except Exception:
                             logger.exception(
                                 "Unable to return completed claim during cancellation"
@@ -146,22 +147,24 @@ class Worker:
                 await heartbeat
             await delivery
         except BaseException as error:
-            delivery.cancel()
-            await asyncio.gather(delivery, return_exceptions=True)
-            # Preserve accepted work when a worker is cancelled or dependencies fail.
-            try:
-                await self._queue.reschedule(task, 0.1)
-            except Exception:
-                logger.exception(
-                    "Unable to release %s; durable leases recover it",
-                    task.notification_id,
-                )
+            await complete(self._return_delivery(task, delivery))
             if isinstance(error, asyncio.CancelledError):
                 raise
             logger.exception("Delivery failure isolated for %s", task.notification_id)
         finally:
             heartbeat.cancel()
-            await asyncio.gather(heartbeat, return_exceptions=True)
+            await complete(asyncio.gather(heartbeat, return_exceptions=True))
+
+    async def _return_delivery(self, task, delivery):
+        """Drain provider cleanup and return its reservation as one operation."""
+        delivery.cancel()
+        await asyncio.gather(delivery, return_exceptions=True)
+        try:
+            await self._queue.reschedule(task, 0.1)
+        except Exception:
+            logger.exception(
+                "Unable to release %s; durable leases recover it", task.notification_id
+            )
 
     async def wait_started(self) -> None:
         """Wait until the worker can receive a stop request without losing
@@ -341,7 +344,7 @@ class WorkerPool:
             try:
                 await self._start()
             except BaseException:
-                await self._stop(graceful=False)
+                await complete(self._stop(graceful=False))
                 raise
 
     async def _start(self) -> None:
@@ -377,7 +380,7 @@ class WorkerPool:
 
     async def stop(self, graceful: bool = True) -> None:
         async with self._lifecycle:
-            await self._stop(graceful)
+            await complete(self._stop(graceful))
 
     async def _stop(self, graceful: bool) -> None:
         """Stop all workers.

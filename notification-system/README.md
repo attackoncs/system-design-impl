@@ -6,7 +6,7 @@
 [Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
 <!-- LEARNING_GUIDE_END -->
 
-Reviewed against Chapter 11, GitHub source and CodeGraph on 2026-11-01. See the [source comparison and regression record](docs/open-source-review_cn.md).
+Reviewed against Chapter 11, GitHub source and CodeGraph on 2026-11-17. See the [source comparison and regression record](docs/open-source-review_cn.md).
 
 A Python 3.9+ asyncio reference implementation of chapter 11 of `System Design Interview.md`. It supports iOS push, Android push, SMS and email through a pluggable `Provider` interface. The bundled provider **simulates delivery**; it does not contact APNs, FCM, SMS or email services.
 
@@ -78,7 +78,9 @@ Use `NotificationService()` for a bounded in-memory queue. Its tasks and dedupli
 
 `await service.send_batch(requests, concurrency=16)` accepts several requests concurrently with at most 16 consumer tasks, regardless of batch size. Results preserve input positions; a rejected item returns `""`. Set `concurrency=1` for sequential admission. Recipient-striped locks and event-ID uniqueness still apply.
 
-Cancellation waits for all child tasks to exit; notifications already accepted by the queue remain accepted. Use stable event IDs when retrying an uncertain response. SQLite still serializes writes, so increasing admission concurrency does not guarantee higher database throughput. See the [measured comparison](benchmarks/REPORT.md).
+Cancellation waits for every consumer to finish cleanup, including after repeated cancellation. Each active consumer may own temporary commit/cleanup tasks; their number remains O(concurrency). Notifications already accepted by the queue remain accepted. Use stable event IDs when retrying an uncertain response. SQLite still serializes writes, so increasing admission concurrency does not guarantee higher database throughput. See the [measured comparison](benchmarks/REPORT.md).
+
+`send()` copies the request's parameter and metadata dictionaries before its first admission wait. Once admission starts under the recipient lock, cancellation waits for enqueue and local quota/deduplication accounting to finish, then propagates. It can therefore report cancellation after the notification was accepted. SQLite transactions, claim return and pool shutdown also finish owned cleanup before exposing cancellation; operation failures take precedence. Slow disk or a custom backend/provider cleanup that does not return can delay cancellation.
 
 Each memory claim now has an independent receipt snapshot. SQLite claim/renew samples time after acquiring the writer reservation, and a reused Worker waits for a fresh readiness signal after exit.
 
@@ -112,6 +114,8 @@ A shared bearer key demonstrates verified internal callers. Production deploymen
 
 SQLite supplies a local durable queue, not a replicated broker. It counts scheduled and leased jobs toward channel capacity; `depth()` reports waiting/scheduled/expired-lease jobs and `in_flight()` reports live leases. Monitoring queries are synchronous snapshots. SQLite mutations and audit writes run in worker threads; it serializes writers and is not proof of million-notification daily capacity.
 
+Both SQLite backends resolve their file path at construction, so changing the working directory cannot redirect later operations. Empty paths and `:memory:` are rejected; use `MessageQueue` for process-local storage.
+
 The delivery guarantee is **at least once**. A provider can accept a request before the process dies and before local acknowledgement, causing replay. Use a stable per-endpoint idempotency key in a real provider adapter. `event_id` prevents producer re-acceptance, not duplicate provider side effects during crash recovery. Completed/rejected endpoint progress is persisted when a job is rescheduled; a crash before that checkpoint can replay an endpoint.
 
 Contacts, preferences, templates, counters and content TTL deduplication are memory-resident. Rehydrate them before starting recovered workers. Shared durable metadata, cross-process frequency caps, metadata cache invalidation, real provider adapters, external alerting, broker replication and autoscaling remain deployment work. The demo uses one HTTP request thread; concurrency is in the worker pipeline.
@@ -120,7 +124,7 @@ The durable event ledger is intentionally retained after audit cleanup. Plan its
 
 ## Verification
 
-The review passed 466 tests, including 19 new regressions. Source-only runs that spawn child interpreters need the same `src` path in `PYTHONPATH`; an editable installation already provides it. See the [review](docs/open-source-review_cn.md) and [benchmark tool](tools/benchmark.py).
+The latest review passed 475 tests (466 existing plus 9 focused regressions), with 94.87% statement and 84.14% branch coverage. Existing test and benchmark code was preserved. Source-only runs that spawn child interpreters need the same absolute `src` path in `PYTHONPATH`; an editable installation already provides it. See the [review](docs/chapter11-review.md), [verification record](benchmarks/verification-2026-11-17.json) and [benchmark tool](tools/benchmark.py).
 
 ```powershell
 python -m pytest tests -q

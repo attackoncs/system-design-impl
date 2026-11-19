@@ -1,3 +1,23 @@
+# 2026-11-17：取消与恢复边界复核
+
+基线466项通过，新增9项先失败的回归后，最终475项通过（27.98秒，Linux/Python3.14.8，严格警告模式，无跳过）。生产源码语句覆盖94.87%、分支84.14%，没有排除行。原测试及本文件所引用的benchmark源码均未改。详见[章节记录](../docs/chapter11-review.md)及[验证JSON](verification-2026-11-17.json)。
+
+完整套件结束后单独复用原工具，每场景240条、并发16、重复1次：
+
+```bash
+PYTHONPATH=src python tools/benchmark.py --requests 240 --repeats 1 --concurrency 16 --output benchmarks/review-2026-11-17.json
+```
+
+| 场景 | 受理/秒 |
+|---|---:|
+| 内存队列 | 13832.25 |
+| 内存队列附加2ms模拟异步等待 | 4142.61 |
+| SQLite | 534.30 |
+
+这是[单次运行检查](review-2026-11-17.json)，不是配对性能对照，也没有启动投递worker。环境与11月1日不同，不能跨日期据此宣称提升或推导真实渠道容量。每个场景均检查接受ID唯一且队列深度正确。消费者数量固定，临时受理提交/清理任务的总量仍为O(concurrency)。
+
+---
+
 # 2026-11-09 内容去重过期清理
 
 窗口内5万条存活条目时单次`Deduplicator.check`：1124.7微秒→0.4微秒（同机，旧代码取自`git show HEAD`）。完整套件466项通过（WSL/Python3.14，`-W error`）。详见[第11章复审](../docs/chapter11-review.md)。

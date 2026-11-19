@@ -81,6 +81,9 @@ This document retains the historical foundational task table for Notification Sy
 
 ## Current Implementation and Acceptance
 
+- [x] 2026-11-17: drain owned SQLite, claim, worker/pool and batch cleanup despite repeated cancellation; wait for every consumer after the original gather ends early.
+- [x] Snapshot request dictionaries before admission waits; finish queue/quota/deduplication accounting before exposing cancellation. Bind SQLite file paths at construction and reject temporary paths.
+- [x] Preserve 466 existing tests and benchmark source; add 9 failing-first regressions, then verify 475 tests, 94.87% statement / 84.14% branch coverage. See the [verification record](../benchmarks/verification-2026-11-17.json).
 - [x] `send_batch(requests, *, concurrency=16)` uses a fixed admission-coroutine pool bounded by the concurrency argument, not one task per item. `concurrency=1` retains sequential processing.
 - [x] Batch results retain input order. An individual admission failure leaves an empty string while other items continue; successes return notification IDs. Batch admission does not wait for external delivery.
 - [x] Cancellation cleans up and awaits internal admission coroutines before propagating. Notifications already accepted are not rolled back and remain available to workers.

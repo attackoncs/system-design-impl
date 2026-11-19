@@ -1,0 +1,68 @@
+{
+  "date": "2026-11-17",
+  "chapter": 11,
+  "python": "3.14.8",
+  "platform": "Linux/WSL",
+  "baseline": {
+    "passed": 466,
+    "seconds": 27.63
+  },
+  "regressions": {
+    "new_cases": 9,
+    "confirmed_failing_before_fix": 9,
+    "file": "../tests/test_recovery_boundaries.py"
+  },
+  "final": {
+    "passed": 475,
+    "skipped": 0,
+    "seconds": 27.98,
+    "warnings": "error"
+  },
+  "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=<absolute notification-system/src> COVERAGE_FILE=/tmp/ch11-coverage-complete-20261117 python -m coverage run --branch --source=src/notification_system -m pytest -q -W error -p pytest_asyncio.plugin -p no:cacheprovider --basetemp=/tmp/ch11-complete-20261117 tests",
+  "coverage": {
+    "covered_lines": 1128,
+    "num_statements": 1189,
+    "percent_covered": 92.76538201487492,
+    "percent_covered_display": "93",
+    "missing_lines": 61,
+    "excluded_lines": 0,
+    "percent_statements_covered": 94.86963835155593,
+    "percent_statements_covered_display": "95",
+    "num_branches": 290,
+    "num_partial_branches": 46,
+    "covered_branches": 244,
+    "missing_branches": 46,
+    "percent_branches_covered": 84.13793103448276,
+    "percent_branches_covered_display": "84"
+  },
+  "existing_test_source_changed": false,
+  "benchmark_source_changed": false,
+  "benchmark": {
+    "file": "review-2026-11-17.json",
+    "requests_per_case": 240,
+    "repeats": 1,
+    "concurrency": 16,
+    "scope": "admission only; simulated wait and local SQLite; unpaired run, no speedup claim"
+  },
+  "readme_example": "passed with simulated provider and temporary SQLite file",
+  "codegraph": {
+    "files": 44,
+    "nodes": 1279,
+    "edges": 3656,
+    "state": "complete",
+    "pending_changes": 0,
+    "directory": ".codegraph-wsl",
+    "limitations": "static calls supplement source and runtime evidence"
+  },
+  "references": [
+    "https://github.com/novuhq/novu/blob/6c5b0ea30fe5a12e740db3f3c0fc635f5fcf75dc/libs/application-generic/src/services/queues/inbound-parse-queue.service.ts",
+    "https://github.com/notifo-io/notifo/blob/54da324ff6f4c51ca959751bdc6572e20c10a6e4/backend/src/Notifo.Domain/Channels/SchedulingChannelBase.cs"
+  ],
+  "remaining_boundaries": [
+    "real provider adapters",
+    "shared metadata and cross-process frequency caps",
+    "replicated broker and host/disk failover",
+    "at-least-once external delivery",
+    "cancellation waits for owned cleanup; non-returning dependencies can delay it"
+  ]
+}
