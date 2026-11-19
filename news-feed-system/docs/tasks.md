@@ -1,6 +1,8 @@
 # Chapter 12 implementation and verification tasks
 
-Updated 2026-11-05. The [Chinese task list](tasks_cn.md) has matching task IDs. These tasks implement the [requirements](requirements.md); the [chapter audit](chapter12-review.md) records the current review's final verification. Checked items describe the local implementation inspected in this review, not deployment acceptance or a substitute for the final regression run.
+Updated 2026-11-17. The [Chinese task list](tasks_cn.md) has matching task IDs. These tasks implement the [requirements](requirements.md); the [chapter audit](chapter12-review.md) records the current review's final verification. Checked items describe the local implementation inspected in this review, not deployment acceptance or a substitute for the final regression run.
+
+Latest changes: repeated-cancellation ownership in shared helpers/claims/pool stop, visibility-change continuation, and UTC-instant source/feed ordering. New cases are in `test_cancellation_boundaries.py`, `test_visibility_pagination_review.py` and `test_time_order_review.py`.
 
 ## Implemented local reference
 
@@ -26,7 +28,7 @@ Updated 2026-11-05. The [Chinese task list](tasks_cn.md) has matching task IDs. 
 | --- | --- | --- | --- |
 | TASK-12-14 | [x] | Re-read chapter 12 and use CodeGraph/code-review-graph to trace the publication, fanout, read, cache and test paths. | Source-backed requirement matrix; graph results are navigation evidence, not proof that dynamic calls or tests are complete. See the chapter audit. |
 | TASK-12-15 | [x] | Restore English/Chinese `requirements` and `tasks`, with stable IDs, acceptance mapping and explicit local/deployment boundaries. | All four documents exist, cross-links resolve, requirement/task IDs agree across languages; README/design/audit are updated by the coordinating review. |
-| TASK-12-16 | [x] | Complete the current review's final regression and static/documentation checks. | 2026-11-05: 311 passed/17.48s, no failures/skips, warnings as errors; one new real-HTTP nesting/recovery regression. Retains the 2026-11-01 evidence (310 tests, 28 added then); [source review](open-source-review_cn.md), [HTTP restart output](../benchmarks/features-2026-11-05.json), [verification report](../benchmarks/REPORT.md). |
+| TASK-12-16 | [x] | Complete the current review's final regression and static/documentation checks. | 2026-11-17: 323 passed/15.44s, warnings as errors, no skips; 12 added cases (11 failing before fixes, one SQLite guard). Statement coverage 94.74%, branch 84.63%; original tests/benchmark source preserved. [Verification JSON](../benchmarks/verification-2026-11-17.json), [chapter audit](chapter12-review.md), [report](../benchmarks/REPORT.md). |
 
 ## Deployment and operations backlog
 

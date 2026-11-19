@@ -8,7 +8,13 @@
 
 Chapter 12 of *System Design Interview*: an executable Python reference for publishing and reading a reverse chronological feed. See [requirements](docs/requirements.md), [tasks](docs/tasks.md), [the chapter audit](docs/chapter12-review.md) and [design](docs/design.md) for acceptance evidence and deployment limits.
 
-## 2026-11-05 follow-up review
+## 2026-11-17 review
+
+Rechecked Chapter 12, fixed GitHub source and CodeGraph. The latest changes drain threads/children/claims despite repeated cancellation, preserve pagination after concurrent visibility changes, and compare aware timestamps by UTC instant across a repeated local hour. **323 tests passed in 15.44 seconds**, with 94.74% statement and 84.63% branch coverage. Existing test and benchmark source was preserved; 12 focused regressions were added. See the [chapter audit](docs/chapter12-review.md) and [verification record](benchmarks/verification-2026-11-17.json).
+
+Cancellation waits for owned blocking work or cleanup, which may delay it; cancelling `api.stop()` still leaves its shared shutdown running. Visibility changes can produce short or empty pages with a continuation cursor: follow `has_more`/`next_cursor` to scan older posts. Imported post/feed payloads retain their original timestamps; only ordering keys are normalized. Deployment limits below remain in force.
+
+## 2026-11-05 follow-up review (historical)
 
 Rechecked the chapter and CodeGraph call paths, and read Stream-Framework at a [fixed commit](docs/open-source-review_cn.md). The publication/fanout/cache/read flows already exist. One narrow fix converts JSON parser nesting exhaustion into HTTP 400 before publication; a wire regression verifies rejection and a subsequent valid request. Final validation: **311 passed in 17.48 seconds**, warnings as errors, no skips. [Actual HTTP/SQLite output](benchmarks/features-2026-11-05.json) also verifies same-file restart with the same post, persisted follow relationship and author profile. This input fix changes no read/fanout algorithm or deployment guarantees; previous performance data is retained as history.
 
@@ -113,6 +119,6 @@ python -m pip install -e ".[dev]"
 python -m pytest tests -q -p no:cacheprovider
 ```
 
-The latest recorded run, on 2026-11-05, passed **311 tests in 17.48 seconds**, with warnings treated as errors and no skips. It retains the 2026-11-01 coverage (310 tests in 17.24 seconds) for subprocess exit recovery, SQLite contention, privacy changes, bounded concurrent reads, cancellation draining, request observations and worker retry, and adds the real HTTP JSON-nesting rejection/recovery regression. Delayed queue timeouts use `asyncio.TimeoutError` for the declared Python 3.9/3.10 support; a regression simulates their separate exception hierarchy. Python 3.13 was executed; a full runtime-version matrix was not run. See the [dated verification report](benchmarks/REPORT.md).
+The latest full run passed **323 tests in 15.44 seconds** on Python 3.14.8, with warnings treated as errors and no skips. It preserves the 311 existing tests, including subprocess recovery, SQLite contention, real HTTP, privacy, bounded reads, metrics and worker retry. The 12 new cases cover repeated cancellation, visibility-change continuation and repeated-hour ordering. Source parses as Python 3.9; a full runtime-version matrix was not run. See the [dated verification report](benchmarks/REPORT.md).
 
 If using an uninstalled source checkout, set `PYTHONPATH` to this project's absolute `src` directory before testing so subprocesses inherit it. Restricted Windows environments also need a writable `TEMP`/`TMP` and permission for local loopback sockets.

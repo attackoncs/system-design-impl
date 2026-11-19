@@ -11,6 +11,7 @@ from typing import Optional
 import news_feed_system.models
 import news_feed_system.news_feed_cache
 import news_feed_system.queue
+from news_feed_system.concurrency import complete
 
 logger = logging.getLogger(__name__)
 # Kept for callers that explicitly supply an asyncio.Queue to FanoutWorker.
@@ -84,17 +85,22 @@ class FanoutWorker:
                 (claim_task, stop_task), return_when=asyncio.FIRST_COMPLETED
             )
             stop_task.cancel()
-            await asyncio.gather(stop_task, return_exceptions=True)
+            await complete(asyncio.gather(stop_task, return_exceptions=True))
             if claim_task.done():
                 return claim_task.result()
             claim_task.cancel()
-            await asyncio.gather(claim_task, return_exceptions=True)
+            await complete(asyncio.gather(claim_task, return_exceptions=True))
             self._release_completed_claim(claim_task)
             return None
         except asyncio.CancelledError:
             claim_task.cancel()
             stop_task.cancel()
-            await asyncio.gather(claim_task, stop_task, return_exceptions=True)
+            try:
+                await complete(
+                    asyncio.gather(claim_task, stop_task, return_exceptions=True)
+                )
+            except asyncio.CancelledError:
+                pass
             self._release_completed_claim(claim_task)
             raise
 
@@ -224,14 +230,15 @@ class WorkerPool:
             _, pending = await asyncio.wait(tasks, timeout=timeout)
             for task in pending:
                 task.cancel()
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            results = await complete(asyncio.gather(*tasks, return_exceptions=True))
             for result in results:
                 if isinstance(result, Exception):
                     logger.error("Fanout worker exited unexpectedly: %r", result)
         except asyncio.CancelledError:
             for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+                if not task.done():
+                    task.cancel()
+            await complete(asyncio.gather(*tasks, return_exceptions=True))
             raise
         finally:
             self._workers = []

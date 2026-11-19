@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import heapq
 import collections
+import heapq
+from collections.abc import Awaitable, Callable, Collection, Iterable
 from dataclasses import dataclass
 from time import monotonic
-from collections.abc import Awaitable, Callable, Collection, Iterable
 from typing import Optional, TypeVar
 
 from news_feed_system.action_cache import ActionCache
@@ -27,7 +27,7 @@ from news_feed_system.models import (
     PostCounters,
     UserProfile,
 )
-from news_feed_system.news_feed_cache import NewsFeedCache
+from news_feed_system.news_feed_cache import NewsFeedCache, feed_key
 from news_feed_system.post_cache import PostCache
 from news_feed_system.social_graph_cache import CachedSocialGraph
 from news_feed_system.storage import PostKey, UserStore, post_key
@@ -160,12 +160,18 @@ class NewsFeedService:
             if entry.post.author_id in current
             and self._fanout.can_view(user_id, entry.post)
         ]
-        has_more = len(hydrated) > limit
+        has_more = len(posts) > limit
         entries = hydrated[:limit]
+        next_cursor = None
+        if has_more:
+            # A permission change can leave a short or empty page. Continue
+            # below its scanned window rather than hiding older visible posts.
+            last = entries[-1].post if len(entries) == limit else posts[-1]
+            next_cursor = encode_cursor(post_key(last))
         return HydratedFeed(
             entries=entries,
             has_more=has_more,
-            next_cursor=encode_cursor(post_key(entries[-1].post)) if has_more else None,
+            next_cursor=next_cursor,
         )
 
     async def _candidates(
@@ -193,8 +199,7 @@ class NewsFeedService:
             if len(candidates) >= candidates.limit:
                 return
             if entry.author_id in following and (
-                candidates.before is None
-                or (entry.timestamp, entry.post_id) < candidates.before
+                candidates.before is None or feed_key(entry) < candidates.before
             ):
                 post = await run_sync(self._posts.get, entry.post_id)
                 if post is not None:

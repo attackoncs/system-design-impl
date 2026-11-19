@@ -1,5 +1,11 @@
 # 第12章：原书、GitHub源码与本地实现复核
 
+## 2026-11-17复核
+
+重新读取本地原章及下方固定提交的`feed_managers/base.py`（115–210行）和`storage/redis/timeline_storage.py`（24–128行），blob仍分别为`666168260e11541b1ee1031b673fc67ab7473b9c`、`9498c34240fb94248f89cfcca8af91455a8a7195`。前者先保存作者活动再分批扇出；后者使用数值排序、独占边界与有界窗口。参考其源/Feed分层和边界语义，继续保留本地时间/ID游标，没有照搬上游数值activity_id、执行上游或新增依赖。
+
+CodeGraph与行为回归确认本地重复取消排空、最终隐私过滤后续读和带时区回拨排序缺口，已最小修复。原311项加12项针对性回归，最终323项通过；原测试与benchmark源码未改。源码对照不代表上游采用相同asyncio取消实现。最新数据及部署边界见[章节记录](chapter12-review.md)和[验证证据](../benchmarks/verification-2026-11-17.json)，下方日期记录保留历史值。
+
 ## 2026-11-05固定版本复查
 
 重新通过GitHub搜索`Stream-Framework activity feeds`核实主仓库，并读取固定提交[8b18655aa78b4e1e78bdddc2baa9e46b1d66fe3b](https://github.com/tschellenbach/Stream-Framework/tree/8b18655aa78b4e1e78bdddc2baa9e46b1d66fe3b)的实际源码：

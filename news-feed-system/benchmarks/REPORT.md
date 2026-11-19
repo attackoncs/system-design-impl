@@ -1,3 +1,17 @@
+# 2026-11-17：取消、权限续页及时间排序
+
+原311项基线14.76秒通过；新增12项（11项先失败、1项SQLite兼容保护），最终**323 passed / 15.44秒，-W error，无跳过**。Linux/WSL、Python3.14.8，生产源码语句94.74%、分支84.63%；coverage默认排除协议桩及TYPE_CHECKING共24行，未排除业务实现。原测试和benchmark源码均未改。详见[章节核对](../docs/chapter12-review.md)及[验证JSON](verification-2026-11-17.json)。
+
+完整套件结束后单独复用原工具：
+
+```bash
+PYTHONPATH=src python tools/benchmark.py --posts 500 --page-size 20 --requests 20 --clients 4 --repeats 1 --output benchmarks/review-2026-11-17.json
+```
+
+20次顺序热读0.189901秒；4客户端共20次热读0.171312秒；两组各720次正文读取，即每请求36次。所有请求均校验返回ID顺序、条目数、has_more及游标。[原始结果](review-2026-11-17.json)是本地内存/热缓存单次运行检查，没有配对旧实现，也不含HTTP、SQLite、故障、真实推送或生产SLO。环境不同，不能与下方11月1日数据比较宣称提升。
+
+---
+
 # 2026-11-09 内存帖子存储分页
 
 单作者2万帖、每页100翻完200页：468.0毫秒→36.8毫秒（同机，旧代码取自`git archive HEAD`）。详见[第12章复审](../docs/chapter12-review.md)。

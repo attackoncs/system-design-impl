@@ -2,7 +2,7 @@
 
 The application has separate publication and read paths. `NewsFeedAPI` composes storage, policies, caches, the queue and owned background tasks. See [requirements](requirements.md), [tasks](tasks.md) and the [chapter audit](chapter12-review.md) for acceptance criteria, book coverage and verification evidence.
 
-The [source comparison](open-source-review_cn.md) now pins Stream-Framework to a verified commit. The 2026-11-05 follow-up only converts JSON parser nesting exhaustion to a validation error at the HTTP parse boundary: reject with 400 before source acceptance, then continue serving valid requests. Business exceptions keep their existing handling. The [verification record](../benchmarks/REPORT.md) preserves the 2026-11-01 read-window measurements separately.
+The [source comparison](open-source-review_cn.md) pins Stream-Framework to a verified commit. The 2026-11-17 review covers owned cancellation and pagination during visibility changes; the 2026-11-05 HTTP JSON-nesting fix and 2026-11-01 read-window measurements remain separate historical records in the [verification report](../benchmarks/REPORT.md).
 
 ```mermaid
 flowchart LR
@@ -36,6 +36,10 @@ Ordinary authors push batched IDs. Celebrities are queried by `(author_id, creat
 
 Sort and cursor keys include timestamp and post ID. New posts cannot shift the cursor to repeat an earlier page. Follow/mute/sharing rules are checked again before return. Hydration reads content and author caches with source fallback, plus the local action/counter caches. Media remains a client-loadable URL.
 
+Source-post keys, feed-ID keys and in-memory cursor boundaries normalize aware times to UTC before comparing the ID tie-break. This keeps both folds of a repeated local hour ordered by instant, matching SQLite. Payload timestamps are preserved; the persisted timestamp/cursor format is unchanged.
+
+If that final visibility check removes entries from a full candidate window, a short or empty page retains a continuation cursor at the oldest scanned candidate. This avoids declaring the feed exhausted while older visible source posts may remain. Normal full pages still continue from the last returned entry. Clients follow `has_more`/`next_cursor`, rather than treating an empty page as final. Under concurrent visibility changes a continuation can lead to another empty page; this is keyset traversal, not a cross-page snapshot or an unbounded retry of changing policies.
+
 Fixed readers consume cached IDs newest first. Once a visible page and its extra continuation candidate are complete, stop starting older content I/O and drain already-started reads before selecting the final sorted page. Private/missing entries require continued scanning. Without filtering, content lookups are bounded by page size + 1 + read concurrency - 1, or 36 with defaults. The ID snapshot/traversal remains; this is not an overall O(page_size) claim. Celebrity pulls, repair, cursor fallback and cancellation ownership are preserved.
 
 The outbox confirms local dispatch rather than durable worker completion. Restart reconstructs feed content from indexed source; proactive notification delivery is not durable. Caches, engagement state and quotas are process-local. SQLite mute snapshots and graph caches require explicit refresh or TTL for external writes. Normal feed updates are eventually consistent.
@@ -43,6 +47,8 @@ The outbox confirms local dispatch rather than durable worker completion. Restar
 ## Read concurrency and request observations
 
 The read service uses one shared fixed-worker pattern for cache-ID content loading, author classification, indexed author reads and profile hydration. Each phase is capped by `read_concurrency` (default 16), without one task per ID or author. Results are assembled in chronological order. Author pages merge as they arrive; completed author-page lists do not accumulate across the full graph. Failure/cancellation cancels sibling tasks and drains blocking source work before returning.
+
+The shared concurrency helpers protect every wait during owned cleanup, including repeated cancellation. `run_sync` cannot stop a physical thread, so source work finishes before a publication leaves the shutdown barrier or a read returns. `run_sync` preserves its source-operation error over caller cancellation; grouped reads retain their original group failure or cancellation after draining. Child groups receive cancellation, then every child and the original group result are observed; one fast child cannot hide a sibling's slow cleanup. Fanout claim cleanup returns a completed claim before propagating cancellation, and pool shutdown retains its workers/running state until cleanup completes. Slow disk or custom cleanup can delay cancellation; no fixed cleanup deadline is guaranteed. `api.stop()` retains its existing contract: cancelling a waiter leaves the shared shutdown running, and another call can await it.
 
 A fixed array of 64 async profile locks coalesces concurrent misses for the same author; it never grows with author count. Cache hits bypass these locks. Locks can serialize unrelated authors that hash to the same stripe; they protect process-local cache loading rather than cross-instance profile consistency.
 

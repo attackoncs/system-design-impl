@@ -11,8 +11,8 @@ from __future__ import annotations
 import bisect
 import contextlib
 import dataclasses
-import itertools
 import datetime as dt
+import itertools
 import json
 import sqlite3
 import threading
@@ -25,7 +25,7 @@ PostKey = Tuple[dt.datetime, str]
 
 
 def post_key(post: Post) -> PostKey:
-    return post.created_at, post.post_id
+    return utc_time(post.created_at), post.post_id
 
 
 def snapshot(post: Post) -> Post:
@@ -38,10 +38,15 @@ def snapshot(post: Post) -> Post:
     )
 
 
-def timestamp(value: dt.datetime) -> str:
+def utc_time(value: dt.datetime) -> dt.datetime:
+    """Compare instants, including both folds of a repeated local hour."""
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("Post timestamps must include a timezone")
-    return value.astimezone(dt.timezone.utc).isoformat(timespec="microseconds")
+    return value.astimezone(dt.timezone.utc)
+
+
+def timestamp(value: dt.datetime) -> str:
+    return utc_time(value).isoformat(timespec="microseconds")
 
 
 def _payload(post: Post) -> str:
@@ -110,6 +115,8 @@ class InMemoryPostStore:
         self, author_id: str, limit: int = 20, before: Optional[PostKey] = None
     ) -> list[Post]:
         _limit(limit)
+        if before is not None:
+            before = (utc_time(before[0]), before[1])
         with self._lock:
             keys, posts = self._authors.get(author_id, ((), ()))
             end = len(keys) if before is None else bisect.bisect_left(keys, before)

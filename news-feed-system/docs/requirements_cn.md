@@ -1,8 +1,11 @@
 # 第12章需求：新闻动态系统
 
-依据仓库《System Design Interview.md》第12章“Design A News Feed System”核对，更新于2026-11-05。本文约定可执行的本地参考实现，并将其与书中的部署讨论分开。[英文版本](requirements.md)使用相同需求编号；[任务清单](tasks_cn.md)、[设计](design_cn.md)和[章节核对](chapter12-review.md)提供实现及验证背景。
+依据仓库《System Design Interview.md》第12章“Design A News Feed System”核对，更新于2026-11-17。本文约定可执行的本地参考实现，并将其与书中的部署讨论分开。[英文版本](requirements.md)使用相同需求编号；[任务清单](tasks_cn.md)、[设计](design_cn.md)和[章节核对](chapter12-review.md)提供实现及验证背景。
 
 2026-11-05复核保留需求编号和既有本地/部署边界。REQ-12-01同时覆盖小于正文字节上限、但超过JSON解析器嵌套上限的请求：发布前返回400，并继续服务后续合法请求。新增真实HTTP回归位于`test_http.py`；最终311项、警告视为错误、无跳过，详见章节核对。
+
+
+2026-11-17复核补强REQ-12-08/14/15的重复取消排空，以及REQ-12-09/10的UTC瞬间排序和末次隐私过滤后的续读。最新证据见章节记录；下方先前日期结果保留为历史。
 
 ## 范围与状态
 
@@ -21,14 +24,14 @@
 | REQ-12-05 | 在 `SocialGraph` 接口后管理关注/被关注关系，支持缓存查询并执行读取范围上限。本地社交关系变更使相关缓存失效；失效前已开始的旧加载不能在失效后回填旧关系。 | 本地已实现：`social_graph.py`、`sqlite_graph.py`、`social_graph_cache.py`；`test_social_graph.py`、`test_social_graph_cache.py`、`test_cache_reliability.py`、`test_chapter12.py`。外部写入依赖刷新/TTL，不提供全局即时一致性。 |
 | REQ-12-06 | 使用混合扇出。普通作者通过队列分批推送帖子 ID 给合格关注者；关注者数达到或超过明星阈值的作者跳过推送，在读取时按源索引拉取。分类/关注变化需触发源修复，不能静默隐藏较早内容。 | 本地已实现：`fanout_service.py`、`news_feed_service.py`；`test_fanout_service.py`、`test_chapter12.py`。 |
 | REQ-12-07 | 扇出、读取和本地通知使用统一静音/定向分享策略。分享名单为 `None` 表示所有合格关注者，空列表表示无接收者。异步加载后、返回条目或记录通知前，重新检查当前关系和可见性。SQLite 静音偏好重开可恢复。 | 本地已实现：`policy.py`、`fanout_service.py`、`news_feed_service.py`、`notification_service.py`；`test_mute_policy.py`、`test_notification_reliability.py`、`test_chapter12.py`。 |
-| REQ-12-08 | 队列容量共同计算待处理、延迟重试和已领取任务。领取凭据拒绝旧确认/重试；重试次数和退避、诊断死信均有界；取消时归还拥有的领取。部分扇出成功后的重试不能重复 Feed ID，也不能使其他 worker 停止。延迟任务领取须兼容支持的 Python 版本，包括 Python 3.9/3.10 的超时异常语义。 | 本地已实现：`queue.py`、`worker.py`、`news_feed_cache.py`；`test_queue.py`、`test_worker.py`、`test_worker_reliability.py`、`test_chapter12_queue_audit.py`。队列、领取及死信在内存中。 |
-| REQ-12-09 | 每位读者保留可配置数量的 Feed ID，按 `(timestamp, post_id)` 倒序并按帖子 ID 去重；保存 ID/作者/时间元数据，不保存组装后的帖子和资料对象。迟到或重复任务不能错误挤掉较新条目。 | 本地已实现：`news_feed_cache.py`；`test_news_feed_cache.py`、`test_worker_reliability.py`、`test_chapter12.py`。每读者容量不等于全局内存上限。 |
-| REQ-12-10 | 将普通作者推送和明星作者拉取合并为有界候选页。游标包含时间和帖子 ID，并严格校验，新增帖子不改变旧页边界。只组装可见候选；存在下一条可见内容时返回续读游标。并行组装须保持已排序的输出顺序。页面代表当前数据，不是跨页数据库快照。  热ID由固定协程按倒序读取，得到可见页面+1后停止更旧内容I/O，并排空在途读取；私有/缺失项仍继续扫描。无过滤时最多页大小+读取并发次内容读取，ID元数据仍遍历。 | 本地已实现：`news_feed_service.py`；`test_chapter12.py`、`test_http.py`、`test_chapter12_read_audit.py`。  `test_open_source_review.py`。 |
+| REQ-12-08 | 队列容量共同计算待处理、延迟重试和已领取任务。领取凭据拒绝旧确认/重试；重试次数和退避、诊断死信均有界；取消时归还拥有的领取。部分扇出成功后的重试不能重复 Feed ID，也不能使其他 worker 停止。延迟任务领取须兼容支持的 Python 版本，包括 Python 3.9/3.10 的超时异常语义。 重复取消也必须排空领取清理并归还容量。 | 本地已实现：`queue.py`、`worker.py`、`news_feed_cache.py`；`test_queue.py`、`test_worker.py`、`test_worker_reliability.py`、`test_chapter12_queue_audit.py`。队列、领取及死信在内存中。 |
+| REQ-12-09 | 每位读者保留可配置数量的 Feed ID，按 `(timestamp, post_id)` 倒序并按帖子 ID 去重；保存 ID/作者/时间元数据，不保存组装后的帖子和资料对象。迟到或重复任务不能错误挤掉较新条目。 带时区时间按UTC瞬间排序，包括回拨小时；保留载荷原时间。 | 本地已实现：`news_feed_cache.py`；`test_news_feed_cache.py`、`test_worker_reliability.py`、`test_chapter12.py`。每读者容量不等于全局内存上限。 |
+| REQ-12-10 | 将普通作者推送和明星作者拉取合并为有界候选页。游标包含时间和帖子 ID，并严格校验，新增帖子不改变旧页边界。只组装可见候选；存在下一条可见内容时返回续读游标。并行组装须保持已排序的输出顺序。页面代表当前数据，不是跨页数据库快照。  热ID由固定协程按倒序读取，得到可见页面+1后停止更旧内容I/O，并排空在途读取；私有/缺失项仍继续扫描。无过滤时最多页大小+读取并发次内容读取，ID元数据仍遍历。 末次隐私过滤使完整候选窗口缩小时，即使为空页仍保留扫描floor游标；客户端按has_more/next_cursor继续。 | 本地已实现：`news_feed_service.py`；`test_chapter12.py`、`test_http.py`、`test_chapter12_read_audit.py`。  `test_open_source_review.py`。 |
 | REQ-12-11 | 冷缓存、到期、策略/分类变化及历史窗口从权威的每作者索引修复，不能遇到一批私有帖就停止。普通作者完整热窗口复用推送 ID，频繁刷新不得无限推迟修复。覆盖记录及作者查询并发均有界。 | 本地已实现：`news_feed_service.py`、`storage.py`；`test_chapter12.py`、`test_cache_reliability.py`。修复由读取触发，不是定时预加载。 |
 | REQ-12-12 | 接入书中的五组缓存：Feed ID、热/普通内容、关注/被关注关系、用户互动、计数。组装作者名称/头像、正文/媒体、互动状态和计数。内容/资料未命中回源，作者资料不存在时以 ID 占位。缓存 ID 加载及资料组装也使用固定 worker；同作者的并发资料缺失通过有界条带锁合并回源。公开缓存值不能让调用者通过修改返回值改变内部状态。 | 本地已实现：各缓存模块及 `news_feed_service.py`；`test_action_cache.py`、`test_counter_cache.py`、`test_user_cache.py`、`test_cache_reliability.py`、`test_chapter12.py`、`test_chapter12_read_audit.py`。互动状态在本进程内。 |
 | REQ-12-13 | 使用每接收者有界且去重的本地记录，通知合格关注者有新内容；接收者验证使用固定数量 worker，不为每位关注者创建任务。 | 已实现本地模拟：`notification_service.py`；`test_notification_service.py`、`test_notification_reliability.py`。真实移动/Web 推送、持久通知恢复和供应商回执尚未实现。 |
-| REQ-12-14 | 明确拥有后台任务。API 实例属于一个事件循环，并发启动/关闭共用生命周期同步。关闭拒绝新发布，等待已接纳发布并停止拥有的恢复/worker；取消关闭等待者不能遗弃共享清理。HTTP 请求线程提交到共享循环，不为每个请求创建循环。 | 本地已实现：`api.py`、`concurrency.py`、`http.py`、`worker.py`；`test_api_lifecycle.py`、`test_worker_reliability.py`、`test_http.py`、`test_chapter12.py`。 |
-| REQ-12-15 | 领域决策与持久化、HTTP、调度分离；注入存储/鉴权/图适配器，构造时校验不可变配置，阻塞存储不占用事件循环。限制请求并发、正文大小、请求/连接期限和每请求的读取并发。失败/取消须在返回前排空拥有的异步读取及已提交的线程工作。 | 本地已实现：协议/接口、配置、并发及 HTTP 模块；`test_chapter12.py`、`test_http.py`、`test_cache_reliability.py`、`test_chapter12_read_audit.py`。这些限制在本地执行，不是集群准入控制。 |
+| REQ-12-14 | 明确拥有后台任务。API 实例属于一个事件循环，并发启动/关闭共用生命周期同步。关闭拒绝新发布，等待已接纳发布并停止拥有的恢复/worker；取消关闭等待者不能遗弃共享清理。HTTP 请求线程提交到共享循环，不为每个请求创建循环。 池停止重复取消也保留清理所有权；取消API关闭等待者后共享关闭仍运行。 | 本地已实现：`api.py`、`concurrency.py`、`http.py`、`worker.py`；`test_api_lifecycle.py`、`test_worker_reliability.py`、`test_http.py`、`test_chapter12.py`。 |
+| REQ-12-15 | 领域决策与持久化、HTTP、调度分离；注入存储/鉴权/图适配器，构造时校验不可变配置，阻塞存储不占用事件循环。限制请求并发、正文大小、请求/连接期限和每请求的读取并发。失败/取消须在返回前排空拥有的异步读取及已提交的线程工作。 重复取消也逐个等待全部子任务，不能只等待提前完成的聚合器；缓慢清理会延迟取消。 | 本地已实现：协议/接口、配置、并发及 HTTP 模块；`test_chapter12.py`、`test_http.py`、`test_cache_reliability.py`、`test_chapter12_read_audit.py`。这些限制在本地执行，不是集群准入控制。 |
 
 ## 默认值与不变量
 

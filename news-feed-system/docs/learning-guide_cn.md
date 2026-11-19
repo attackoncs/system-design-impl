@@ -119,13 +119,17 @@ async def _dispatch(self, post: Post) -> bool:
 
 ## 微观三：为什么读取要重新找候选
 
-从 [NewsFeedService._candidates](../src/news_feed_system/news_feed_service.py#L171) 看普通Feed与作者拉取如何合并，再看 [NewsFeedService._hydrate_posts](../src/news_feed_system/news_feed_service.py#L290) 如何保序补全。
+从 [NewsFeedService._candidates](../src/news_feed_system/news_feed_service.py#L177) 看普通Feed与作者拉取如何合并，再看 [NewsFeedService._hydrate_posts](../src/news_feed_system/news_feed_service.py#L295) 如何保序补全。
 
 例子里n3与c2来自不同路径，最终必须在同一个排序空间内比较。补全的并发完成顺序不能改变页面顺序；同作者资料未命中也不能让每条帖子都独立回源。最后的`can_view`检查覆盖读取过程中发生的静音或关注变化。
 
+如果加载资料时取消关注，最新的一整页候选可能全部被末次检查过滤。此时空页不代表更旧的可见帖子不存在：已满候选窗口要保留基于扫描最旧键的续读游标。正常满页继续使用最后返回条目；客户端按`has_more`/`next_cursor`继续，而不是见空页就停止。这样不必在持续变动的关系上无限重查。
+
+时间键也必须统一：[post_key](../src/news_feed_system/storage.py#L27)与[feed_key](../src/news_feed_system/news_feed_cache.py#L10)先把带时区时间转为UTC瞬间，再以ID打破并列。相同tzinfo的回拨小时在Python中可能按墙钟比较，直接比较会让内存与SQLite顺序不同。原帖子/Feed时间载荷保留，游标格式不变；[test_time_order_review.py](../tests/test_time_order_review.py)检查源排序、容量淘汰和实际API续页。
+
 ### 只读足够的内容，保留固定工作协程
 
-[news_feed_service.py:190](../src/news_feed_system/news_feed_service.py#L190)
+[news_feed_service.py:196](../src/news_feed_system/news_feed_service.py#L196)
 
 ```python
 async def load(entry: FeedEntry) -> None:
@@ -134,17 +138,23 @@ async def load(entry: FeedEntry) -> None:
     if len(candidates) >= candidates.limit:
         return
     if entry.author_id in following and (
-        candidates.before is None
-        or (entry.timestamp, entry.post_id) < candidates.before
+        candidates.before is None or feed_key(entry) < candidates.before
     ):
         post = await run_sync(self._posts.get, entry.post_id)
         if post is not None:
             candidates.merge([post])
+
 ```
 
 `candidates.limit`包含页面之外用于判断has_more的一条。这里按**已得到的可见候选数**停止更旧内容I/O，而不是盲取前几个缓存ID。私有或缺失内容不能填满候选，需要继续扫描。[NewsFeedService._read_each](../src/news_feed_system/news_feed_service.py#L114) 仍只创建一组固定读取协程；已经开始的较新读取会排空并参与最终排序。
 
 默认保留500个ID、页面20条、读取并发16：没有过滤时，最多读取20+1+15=36条内容，其余仅遍历ID元数据。页面不能再被未必需要的第500条内容故障拖垮；但必需内容的异常仍正常传播，不会被吞掉。[test_unneeded_old_content_failure_cannot_break_complete_page](../tests/test_open_source_review.py#L75) 检查这一边界。
+
+### 取消之后，谁还拥有线程和领取？
+
+[run_sync](../src/news_feed_system/concurrency.py#L25)把阻塞源操作交给线程，协程取消无法强行停止线程；重复取消也必须等源操作结束，发布才可离开API关闭屏障。真实源操作错误优先于取消。[gather_owned](../src/news_feed_system/concurrency.py#L29)先取消所属读取/通知协程，再逐个等待其清理，不能只等首个取消就完成的聚合器。
+
+[FanoutWorker._next_claim](../src/news_feed_system/worker.py#L80)还要处理“领取已成功、父协程正好取消”：必须先排空领取/停止子任务，再归还容量。池停止同样保持所有权直到worker清理完成；慢磁盘和不返回的自定义清理可能延迟取消。`api.stop()`取消等待者后，共享关闭仍继续运行，另一调用可以等待它。
 
 ## 用两组测试检验理解
 

@@ -1,0 +1,80 @@
+{
+  "date": "2026-11-17",
+  "chapter": 12,
+  "python": "3.14.8",
+  "platform": "Linux/WSL",
+  "book_lines": [
+    3571,
+    3854
+  ],
+  "baseline": {
+    "passed": 311,
+    "seconds": 14.76
+  },
+  "regressions": {
+    "new_cases": 12,
+    "confirmed_failing_before_fix": 11,
+    "existing_behavior_guard_cases": 1,
+    "files": [
+      "../tests/test_cancellation_boundaries.py",
+      "../tests/test_visibility_pagination_review.py",
+      "../tests/test_time_order_review.py"
+    ]
+  },
+  "final": {
+    "passed": 323,
+    "skipped": 0,
+    "seconds": 15.44,
+    "warnings": "error"
+  },
+  "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=<absolute news-feed-system/src> COVERAGE_FILE=/tmp/ch12-coverage-complete-20261117 python -m coverage run --branch --source=src/news_feed_system -m pytest -q -W error -p pytest_asyncio.plugin -p no:cacheprovider --basetemp=/tmp/ch12-complete-20261117 tests",
+  "coverage": {
+    "covered_lines": 1947,
+    "num_statements": 2055,
+    "percent_covered": 92.97470895222803,
+    "percent_covered_display": "93",
+    "missing_lines": 108,
+    "excluded_lines": 24,
+    "percent_statements_covered": 94.74452554744525,
+    "percent_statements_covered_display": "95",
+    "num_branches": 436,
+    "num_partial_branches": 63,
+    "covered_branches": 369,
+    "missing_branches": 67,
+    "percent_branches_covered": 84.63302752293578,
+    "percent_branches_covered_display": "85"
+  },
+  "coverage_exclusions": "24 lines: coverage defaults for Protocol stubs and TYPE_CHECKING; no business implementation excluded",
+  "existing_test_source_changed": false,
+  "benchmark_source_changed": false,
+  "benchmark": {
+    "file": "review-2026-11-17.json",
+    "posts": 500,
+    "page_size": 20,
+    "requests_per_sample": 20,
+    "clients": 4,
+    "repeats": 1,
+    "lookups_per_request": 36,
+    "scope": "warm in-memory reads; no paired baseline, HTTP, SQLite or production-capacity claim"
+  },
+  "examples": "English and Chinese README examples passed with temporary SQLite databases and strict warnings",
+  "codegraph": {
+    "files": 55,
+    "nodes": 1196,
+    "edges": 3312,
+    "state": "complete",
+    "directory": ".codegraph-wsl",
+    "limitations": "Static edges are navigation evidence; dynamic dispatch checked through source/runtime tests"
+  },
+  "references": [
+    "https://github.com/tschellenbach/Stream-Framework/blob/8b18655aa78b4e1e78bdddc2baa9e46b1d66fe3b/stream_framework/feed_managers/base.py",
+    "https://github.com/tschellenbach/Stream-Framework/blob/8b18655aa78b4e1e78bdddc2baa9e46b1d66fe3b/stream_framework/storage/redis/timeline_storage.py"
+  ],
+  "remaining_boundaries": [
+    "outbox confirms local dispatch; queue/notifications remain process-local",
+    "real push providers/CDN/shared broker/cache/replication/sharding/regions not deployed",
+    "no ten-million-DAU or production SLO validation",
+    "owned cleanup can delay cancellation; API stop waiter cancellation leaves shared shutdown running",
+    "concurrent visibility changes can produce empty continuation pages; follow has_more/next_cursor"
+  ]
+}

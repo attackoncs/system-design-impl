@@ -4,6 +4,12 @@ import bisect
 import threading
 
 from news_feed_system.models import FeedEntry
+from news_feed_system.storage import PostKey, utc_time
+
+
+def feed_key(entry: FeedEntry) -> PostKey:
+    """Use the same instant/ID ordering as source posts and cursors."""
+    return utc_time(entry.timestamp), entry.post_id
 
 
 class NewsFeedCache:
@@ -36,8 +42,7 @@ class NewsFeedCache:
             if any(existing.post_id == entry.post_id for existing in feed):
                 return
             index = bisect.bisect_right(
-                [(item.timestamp, item.post_id) for item in feed],
-                (entry.timestamp, entry.post_id),
+                [feed_key(item) for item in feed], feed_key(entry)
             )
             feed.insert(index, entry)
             if len(feed) > self._max_entries:

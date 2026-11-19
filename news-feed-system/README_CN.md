@@ -8,7 +8,9 @@
 
 对应《System Design Interview》第12章，提供可运行的发布、读取与倒序动态参考实现。需求及验收见[需求文档](docs/requirements_cn.md)，进度见[任务清单](docs/tasks_cn.md)，逐项覆盖见[章节核对](docs/chapter12-review.md)，架构见[设计文档](docs/design_cn.md)。
 
-2026-11-05重新结合原书、CodeGraph及[Stream-Framework固定源码](docs/open-source-review_cn.md)核对，既有发布/扇出/缓存/读取主链已实现。本轮仅修复JSON解析器嵌套上限错误：过深请求返回400且不发布，后续合法请求仍成功。最终 **311项通过，17.48秒，警告视为错误，无跳过**。[实际HTTP/SQLite输出](benchmarks/features-2026-11-05.json)验证原库重启后帖子ID、关注关系和资料可恢复；不新增部署能力或性能结论。
+2026-11-17结合原书、CodeGraph及[Stream-Framework固定源码](docs/open-source-review_cn.md)复核，补齐重复取消后的线程/子任务/领取排空、权限变化后的分页续读，以及夏令时回拨期间的UTC瞬间排序。最终 **323项通过（15.44秒），警告视为错误，无跳过**；语句覆盖94.74%、分支84.63%。原311项测试与benchmark源码保留，新增12项针对性回归，见[章节记录](docs/chapter12-review.md)和[验证JSON](benchmarks/verification-2026-11-17.json)。
+
+取消会等待拥有的阻塞操作或清理完成，可能延迟返回；`api.stop()`取消等待者后仍继续共享关闭。并发可见性变更可能产生带续读游标的短页或空页，客户端应跟随`has_more`/`next_cursor`。导入帖子及Feed的原始时间载荷保留，仅排序键统一UTC。11月5日真实HTTP/SQLite恢复和11月1日热读测量在章节记录中保留为历史。
 
 此前2026-11-01复核优化热首页，历史证据见[开源对照与修复记录](docs/open-source-review_cn.md)。热首页保留固定读取协程，足够组成可见页面及续读判断后停止更旧内容I/O；默认20条页面、16并发、500个缓存ID时，内容读取最多36次。私有前缀仍继续扫描，已经开始的读取仍须排空。
 
@@ -96,7 +98,7 @@ python -m pip install -e ".[dev]"
 python -m pytest tests -q -p no:cacheprovider
 ```
 
-最近一次已记录的完整回归为2026-11-05的 **311项通过（17.48秒），无跳过**，以警告作为错误运行。保留2026-11-01的310项（17.24秒），覆盖真实子进程退出恢复、SQLite并发、隐私变更、有限读取/取消排空、请求指标、worker重试和本地HTTP；新增1项真实HTTP深嵌套JSON拒绝及后续请求恢复回归。11-01当时新增的28项覆盖热窗口停止条件、私有前缀补页、无关旧内容故障及发布前输入校验。实际执行Python3.13，未跑完整版本矩阵；详见[带日期的验证报告](benchmarks/REPORT.md)。
+最近全套为2026-11-17的 **323项通过（15.44秒），无跳过**，Python3.14.8、警告视为错误。原311项继续覆盖真实子进程退出恢复、SQLite并发、本地HTTP、隐私、有限读取、指标和worker重试；新增12项覆盖重复取消、权限变更续页及回拨排序。源码通过Python3.9语法解析，未跑完整运行时版本矩阵，详见[带日期的验证报告](benchmarks/REPORT.md)。
 
 可复跑相同负载的[读取基准与原始数据](benchmarks/REPORT.md)：
 

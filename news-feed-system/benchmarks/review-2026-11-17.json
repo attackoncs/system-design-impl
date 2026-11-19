@@ -1,0 +1,32 @@
+{
+  "python": "3.14.8",
+  "platform": "Linux",
+  "posts": 500,
+  "cache_ids": 500,
+  "page_size": 20,
+  "requests_per_sample": 20,
+  "clients": 4,
+  "read_concurrency_per_request": 16,
+  "repeats": 1,
+  "seconds": {
+    "sequential": [
+      0.18990095899789594
+    ],
+    "concurrent": [
+      0.171311947000504
+    ]
+  },
+  "median_seconds": {
+    "sequential": 0.18990095899789594,
+    "concurrent": 0.171311947000504
+  },
+  "content_lookups": {
+    "sequential": [
+      720
+    ],
+    "concurrent": [
+      720
+    ]
+  },
+  "scope": "Warm in-memory API reads; excludes seeding, initial repair, HTTP, SQLite and external services."
+}
