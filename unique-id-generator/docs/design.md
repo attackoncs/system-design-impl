@@ -1,6 +1,6 @@
 # Design: Unique ID Generator
 
-> 2026-10-31：[开源对照、章节覆盖与122项验证](open-source-review_cn.md)；[历史审查](chapter08-review.md)。组件实现以源码链接为准，避免维护第二份过期代码。
+> 2026-11-17：[开源对照与章节覆盖](open-source-review_cn.md)；[持久恢复修复与126项验证](chapter08-review.md)。组件实现以源码链接为准，避免维护第二份过期代码。
 
 ## Architecture Overview
 
@@ -196,6 +196,13 @@ persists `timestamp + window_ms` (temp file, fsync, atomic replace, directory fs
 under its lock, so every returned ID is at or below a durable ceiling and the hot
 path writes once per window. A new instance issues only timestamps above the loaded
 ceiling, so a crash, same-millisecond restart or rollback cannot reissue an ID.
+The restart barrier is cleared only when range validation and durable reservation
+succeed and the next timestamp/sequence are committed together; waiting past the
+ceiling alone does not publish state. Failed generation retains the old barrier.
+HighWaterMark binds a relative path to an absolute location at construction;
+load/store keep using it after cwd changes, and its path property returns it.
+Each reservation includes file and, on POSIX, directory fsync; window-internal
+IDs perform no disk I/O. File loss or snapshot rollback is outside the guarantee.
 No identity lease, cross-process lock, NTP management or automatic failover is
 implemented; one ceiling file must belong to one identity and one live generator.
 MonotonicClock only protects its local lifetime against rollback; it cannot

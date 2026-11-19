@@ -344,3 +344,12 @@ Task 1 (Project Scaffolding)
 - [x] Replace duplicated stale design code with source links; update README, requirements, tasks and learning guide.
 - [x] Persistent restart high-water mark (2026-11-09): optional `HighWaterMark` file, window reservation with fsync + atomic replace, start-up wait/rollback refusal; see [review](chapter08-review.md).
 - [ ] Deployment identity leases, clock synchronization and automatic failover remain unimplemented; see [coverage](open-source-review_cn.md).
+
+## 2026-11-17 durable restart follow-up
+
+- [x] Re-read chapter 8 and bwmarrin/Sonyflake source; build an independent chapter CodeGraph index.
+- [x] Reproduce reservation/range failure after restart waiting and retain the old barrier until successful state commit.
+- [x] Bind the high-water path at construction so cwd changes cannot redirect persistence.
+- [x] Keep window-internal generation free of disk I/O; preserve existing tests, benchmarks and file format.
+- [x] 126 tests pass; statement coverage 95.53%, branch coverage 90.91%; both examples and the original real-clock/thread/process benchmark pass.
+- [x] Update bilingual docs and the authored code-reading guide; disclose unique-identity/file-retention assumptions.

@@ -1,5 +1,20 @@
 # 第 08 章原书核对
 
+## 2026-11-17 持久重启边界复核
+
+本轮阅读原书2214–2425行，以既有Snowflake实现为基础，核对GitHub源码与独立CodeGraph后，仅修复两处已复现的重复ID风险。默认41/5/5/12布局、epoch、互斥锁、批量调用和高水位整数文件格式均不变，没有新增运行依赖或模拟身份协调服务。
+
+1. **失败不能删除旧重启屏障**：旧代码等待时钟越过已加载上限后立即清除`_restart_ceiling`。若随后预留写入失败或时间偏移越界，没有ID返回，但下一次回到历史毫秒会重发此前的ID。现在仅在范围校验和持久预留成功后，与`_last_timestamp/_sequence`一起提交清除；失败保留原屏障，重试必须再次越过它。
+2. **高水位文件身份不能随cwd漂移**：旧相对路径每次按当前目录解释，进程切换目录后会在另一处保存新预留，回到原目录重启只读到旧上限。现在构造时固定绝对路径，load/store始终用同一路径；`HighWaterMark.path`返回该绝对位置。这不解析或租约节点身份。
+
+开源对照：[bwmarrin/snowflake](https://github.com/bwmarrin/snowflake/blob/master/snowflake.go)用于核对锁内序列推进、预计算位移和唯一机器编号前提；[Sonyflake](https://github.com/sony/sonyflake/blob/master/sonyflake.go)用于核对位布局、时间上限与可选身份检查。保留本地可注入时钟、回拨拒绝、有界sleep及独立高水位预留，没有照搬忙等或切换协议。
+
+CodeGraph使用`unique-id-generator/.codegraph-wsl`独立索引，最终24文件、307节点、706边；`_generate_locked`影响15个符号，等待辅助函数只有生成状态机调用。`HighWaterMark.store`动态接收者未被图链接（callers返回0），已按源码与回归补核，不能据此判断它未被使用。
+
+验证：基线122项/1.50秒；新增4项回归中3项在旧实现失败、1项原有窗口行为通过；最终**126项通过/2.01秒**，`-W error`，无跳过。语句覆盖95.53%、分支覆盖90.91%、综合94.68%，未排除业务模块。独立审查未发现重要遗留问题。两个既有示例、原有真实SystemClock基准均通过，详见[验证记录](../benchmarks/verification-2026-11-17.json)和[实测](../benchmarks/REPORT.md)。既有测试与benchmark代码未改。
+
+边界保持：一个高水位文件只能属于同一布局/epoch下的一个身份及一个存活生成器；没有跨进程锁、分布式身份租约、NTP管理或自动故障切换。磁盘文件丢失、回滚旧快照、路径被外部替换及真实断电不在本轮验证范围内。热路径窗口内无新增I/O，每次预留在POSIX含文件及目录fsync；不能将“每窗口一次预留”误写为“每窗口只一次fsync”。
+
 ## 2026-11-09 持久化重启高水位
 
 **做了什么**：新增可选 [HighWaterMark](../src/unique_id/high_water.py)，`SnowflakeGenerator(..., high_water=HighWaterMark(path, window_ms=1000))`。不传时行为与此前完全相同。下文“未实现持久化时间戳高水位”的边界由此关闭；身份租约、时钟同步与自动故障切换仍未实现。

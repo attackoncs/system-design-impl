@@ -29,12 +29,12 @@ class HighWaterMark:
     ) -> None:
         if type(window_ms) is not int or window_ms <= 0:
             raise ValueError("window_ms must be a positive integer")
-        self._path = os.fspath(path)
+        self._path = os.path.abspath(os.fspath(path))
         self._window_ms = window_ms
 
     @property
     def path(self) -> str:
-        """Location of the ceiling file."""
+        """Absolute ceiling-file location, fixed when the store is constructed."""
         return self._path
 
     @property
@@ -60,7 +60,7 @@ class HighWaterMark:
 
     def store(self, ceiling_ms: int) -> None:
         """Durably replace the ceiling: temp file, fsync, rename, fsync dir."""
-        directory = os.path.dirname(os.path.abspath(self._path))
+        directory = os.path.dirname(self._path)
         fd, temp_path = tempfile.mkstemp(dir=directory, prefix=".high-water-")
         try:
             with os.fdopen(fd, "w", encoding="ascii") as handle:

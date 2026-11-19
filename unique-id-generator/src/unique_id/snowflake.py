@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import math
 import threading
 import time
-import math
 from typing import Optional
 
 import unique_id.clock
@@ -113,7 +113,13 @@ class SnowflakeGenerator:
             ceiling = timestamp + self._high_water.window_ms
             self._high_water.store(ceiling)
             self._reserved_until = ceiling
-        self._last_timestamp, self._sequence = timestamp, sequence
+        # Release the restart barrier only with a successfully reserved ID.
+        # Waiting alone must not discard history if validation or I/O fails.
+        self._last_timestamp, self._sequence, self._restart_ceiling = (
+            timestamp,
+            sequence,
+            -1,
+        )
         return (offset << self._timestamp_shift) | self._node_prefix | sequence
 
     def generate_batch(self, count: int) -> list[int]:
@@ -182,12 +188,9 @@ class SnowflakeGenerator:
         while timestamp <= ceiling:
             remaining_ms = (deadline - time.monotonic()) * 1000
             if ceiling - timestamp >= remaining_ms:
-                raise unique_id.exceptions.ClockMovedBackwardsError(
-                    ceiling, timestamp
-                )
+                raise unique_id.exceptions.ClockMovedBackwardsError(ceiling, timestamp)
             time.sleep(0.001)
             timestamp = self._current_millis()
-        self._restart_ceiling = -1
         return timestamp
 
     def _current_millis(self) -> int:

@@ -85,7 +85,7 @@ These are workload-dependent targets, not latency/availability guarantees. Recor
 
 - **NFR-2.1**: No duplicate IDs shall be generated within the same generator instance (same datacenter + machine).
 - **NFR-2.2**: Across generators in the same layout/epoch namespace, IDs remain unique when active datacenter/machine identities are distinct and no identity/time/sequence state is reused after restart.
-- **NFR-2.3**: Lifetime uniqueness requires no identity/time/sequence reuse across instances or restarts. Distributed leases and persisted high-water marks are not implemented.
+- **NFR-2.3**: Lifetime uniqueness requires no identity/time/sequence reuse across instances or restarts. Optional HighWaterMark persists a restart ceiling for one identity and one live generator. Failed validation/reservation must retain the loaded restart barrier; relative paths bind at construction. Distributed leases, shared-process ownership and recovery from file loss/snapshot rollback are not implemented.
 
 ### NFR-3: Monotonicity
 

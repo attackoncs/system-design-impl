@@ -6,7 +6,7 @@
 [Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
 <!-- LEARNING_GUIDE_END -->
 
-> [Latest chapter/open-source review (Chinese)](docs/open-source-review_cn.md): **122 tests**, precise UTC parsing, bounded alternatives and measured generation. [Earlier review](docs/chapter08-review.md).
+> [Latest chapter/open-source review (Chinese)](docs/open-source-review_cn.md): **126 tests**, restart reservation recovery, stable high-water paths and measured generation. [Chapter review](docs/chapter08-review.md).
 
 A Python implementation of the Twitter Snowflake algorithm for numeric, time-sortable IDs. Uniqueness requires a shared layout/epoch, distinct active node identities and no reuse of old time/sequence state after restart. An optional `HighWaterMark` file persists a restart timestamp ceiling so a restarted generator never reissues an ID; the library still does not allocate or lease identities.
 
@@ -18,7 +18,7 @@ A Python implementation of the Twitter Snowflake algorithm for numeric, time-sor
 - **Configurable bit layout** — tune timestamp range, datacenter/machine capacity, and throughput
 - **Thread-safe** — concurrent generation via `threading.Lock`
 - **Clock abstraction** — SystemClock or MonotonicClock for drift-prone environments
-- **Restart high-water mark** — optional durable timestamp ceiling, reserved ahead in windows (one fsync per window), blocks reissue after restart or clock rollback
+- **Restart high-water mark** — optional durable timestamp ceiling, reserved ahead once per window with file/directory sync, blocks reissue after restart or clock rollback
 - **ID parsing** — decompose an ID with the matching layout/epoch; integer UTC conversion preserves milliseconds
 - **Alternative strategies** — UUID v4 and timestamp-random generators for comparison
 - **Zero runtime dependencies** — stdlib only
@@ -41,20 +41,20 @@ Key insight: by embedding time in the high-order bits, IDs are naturally sorted 
   │                  │                        │           └─ 32 machines per datacenter
   │                  │                        └─ 32 datacenters
   │                  └─ Milliseconds since epoch (~69 years)
-  └─ Sign bit (always 0, ensures positive integer)
+  └─ Sign bit (always 0, ensures nonnegative integer)
 ```
 
 **Capacity with default layout:**
 
 | Component | Bits | Range | Capacity |
 |-----------|------|-------|----------|
-| Sign | 1 | Always 0 | Positive integers only |
+| Sign | 1 | Always 0 | Nonnegative integers only |
 | Timestamp | 41 | 0 to 2^41 - 1 | ~69.7 years from epoch |
 | Datacenter | 5 | 0 to 31 | 32 datacenters |
 | Machine | 5 | 0 to 31 | 32 machines per DC |
 | Sequence | 12 | 0 to 4095 | 4,096 IDs per ms per machine |
 
-**Total throughput**: 4,096 × 1,000 = **4.096 million IDs/second** per machine.
+**Theoretical sequence capacity**: 4,096 × 1,000 = **4.096 million IDs/second** per machine; measured throughput depends on the implementation and host.
 
 ### ID Composition
 
@@ -219,8 +219,13 @@ normally only one write happens per window. On restart it issues nothing until
 the clock passes the stored ceiling: a gap that closes within
 `overflow_timeout_seconds` is waited out, otherwise `ClockMovedBackwardsError`
 is raised and the caller retries later. A failed write raises and issues no ID.
+Passing the restart wait alone does not clear the old ceiling: validation and
+durable reservation must succeed before generation commits its state. Relative
+paths are resolved once at `HighWaterMark` construction; `path` returns that
+absolute location, and changing the working directory cannot redirect writes.
 One file per node identity and per live generator; without `high_water` the
-behavior is unchanged.
+behavior is unchanged. Keep the same layout/epoch and durable file when reusing
+an identity; file loss or rollback to an old snapshot is outside this guarantee.
 
 ## API Reference
 

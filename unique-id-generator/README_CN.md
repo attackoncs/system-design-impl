@@ -6,7 +6,7 @@
 [跟着一个案例读懂系统：架构、状态变化与关键代码详解](docs/learning-guide_cn.md)。
 <!-- LEARNING_GUIDE_END -->
 
-> [最新章节与开源对照](docs/open-source-review_cn.md)：**122项测试**，精确UTC解析、备用策略边界校验与实测发号性能。[历史审查](docs/chapter08-review.md)。
+> [最新章节与开源对照](docs/open-source-review_cn.md)：**126项测试**，重启预留失败恢复、固定高水位路径与实测发号。[章节审查](docs/chapter08-review.md)。
 
 基于 Twitter Snowflake 算法的 Python 实现，生成 64 位唯一、时间可排序的 ID，适用于分布式系统。
 
@@ -215,7 +215,9 @@ gen = SnowflakeGenerator(
 签发超过持久上限的时间戳前，先写入 `timestamp + window_ms`（临时文件、fsync、原子rename、目录fsync），
 通常每个窗口只写一次。重启后时钟未超过该上限前不发号：差距能在 `overflow_timeout_seconds` 内追上则等待，
 否则抛 `ClockMovedBackwardsError` 由调用方稍后重试。写入失败直接抛错且不发ID。每个节点身份、每个存活实例
-独占一个文件；不传 `high_water` 时行为不变。
+独占一个文件；不传 `high_water` 时行为不变。只有范围校验与持久预留成功、发号状态正式提交时才解除旧重启屏障，等待结束本身不解除。
+相对路径在`HighWaterMark`构造时固定为绝对路径，`path`返回该位置；之后切换工作目录不会改变预留文件。
+同身份重用须保持相同布局/epoch和持久文件；文件丢失或回滚旧快照不在保护范围内。
 
 ## 错误处理
 

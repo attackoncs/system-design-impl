@@ -1,0 +1,56 @@
+{
+  "date": "2026-11-17",
+  "python": "3.14.8",
+  "baseline": {
+    "passed": 122,
+    "seconds": 1.5
+  },
+  "red": {
+    "failed": 3,
+    "passed_existing_window_behavior": 1
+  },
+  "final": {
+    "passed": 126,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 2.01,
+    "warnings_as_errors": true
+  },
+  "coverage": {
+    "covered_lines": 278,
+    "num_statements": 291,
+    "percent_covered": 94.67787114845939,
+    "percent_covered_display": "95",
+    "missing_lines": 13,
+    "excluded_lines": 0,
+    "percent_statements_covered": 95.53264604810997,
+    "percent_statements_covered_display": "96",
+    "num_branches": 66,
+    "num_partial_branches": 6,
+    "covered_branches": 60,
+    "missing_branches": 6,
+    "percent_branches_covered": 90.9090909090909,
+    "percent_branches_covered_display": "91"
+  },
+  "existing_examples": [
+    "basic_usage.py",
+    "multi_generator.py"
+  ],
+  "benchmark": "review-2026-11-17.json",
+  "benchmark_high_water_enabled": false,
+  "codegraph": {
+    "files": 24,
+    "nodes": 307,
+    "edges": 706,
+    "generate_locked_affected_symbols": 15,
+    "dynamic_high_water_store_edge_missing": true
+  },
+  "existing_test_files_modified": false,
+  "benchmark_code_modified": false,
+  "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=src COVERAGE_FILE=/tmp/ch08-coverage-final-20261117 /tmp/ch05-review-venv/bin/python -m coverage run --branch --source=src/unique_id -m pytest -q -W error -p no:cacheprovider --basetemp=/tmp/ch08-final-20261117 tests",
+  "limits": [
+    "One layout/epoch, one identity and one live generator per durable file.",
+    "No identity leases, cross-process locking, file-loss or old-snapshot recovery.",
+    "No physical power-loss or sustained capacity experiment."
+  ]
+}

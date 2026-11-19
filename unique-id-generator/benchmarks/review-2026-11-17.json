@@ -1,0 +1,76 @@
+{
+  "python": "3.14.8",
+  "platform": "Linux-6.18.58.1-microsoft-standard-WSL2-x86_64-with-glibc2.44",
+  "clock": "SystemClock",
+  "clients": 4,
+  "repeats": 1,
+  "batch_size": 1000,
+  "scenarios": {
+    "single": {
+      "samples": [
+        {
+          "ids": 100000,
+          "seconds": 0.06143443400014803,
+          "ids_per_second": 1627751.6286673862
+        }
+      ],
+      "median_ids_per_second": 1627751.6286673862
+    },
+    "batch": {
+      "samples": [
+        {
+          "ids": 100000,
+          "seconds": 0.04521234599997115,
+          "ids_per_second": 2211785.2499860064
+        }
+      ],
+      "median_ids_per_second": 2211785.2499860064
+    },
+    "shared_threads": {
+      "samples": [
+        {
+          "ids": 100000,
+          "seconds": 0.0629936440000165,
+          "ids_per_second": 1587461.744552733
+        }
+      ],
+      "median_ids_per_second": 1587461.744552733
+    },
+    "independent_processes": {
+      "ids": 100000,
+      "seconds_including_startup": 0.40884938899944245,
+      "ids_per_second_including_startup": 244588.84540521196,
+      "workers": [
+        {
+          "pid": 15547,
+          "machine_id": 0,
+          "ids": 25000,
+          "seconds": 0.014455739999903017,
+          "ids_per_second": 1729416.8268222674
+        },
+        {
+          "pid": 15550,
+          "machine_id": 1,
+          "ids": 25000,
+          "seconds": 0.015622130999872752,
+          "ids_per_second": 1600293.8395666785
+        },
+        {
+          "pid": 15551,
+          "machine_id": 2,
+          "ids": 25000,
+          "seconds": 0.014646892999735428,
+          "ids_per_second": 1706846.6329652017
+        },
+        {
+          "pid": 15552,
+          "machine_id": 3,
+          "ids": 25000,
+          "seconds": 0.014875437999762653,
+          "ids_per_second": 1680622.782361023
+        }
+      ],
+      "distinct_pids": 4
+    }
+  }
+}

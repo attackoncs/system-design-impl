@@ -18,7 +18,7 @@ flowchart LR
   F --> G[IDParser 反解字段]
 ```
 
-所有节点均在本进程；图中没有中心发号服务。实例锁不替代跨进程机器身份分配，重启后也不能自动证明不会使用旧的时间／序列组合。
+所有节点均在本进程；图中没有中心发号服务。实例锁不替代跨进程机器身份分配。可选`HighWaterMark`为独占身份保存重启上限；不配置它时，重启仍需部署方保证不会重用旧时间／序列。
 
 ## 哪些数据必须记住
 
@@ -38,7 +38,7 @@ flowchart LR
 2. [SnowflakeGenerator.__init__](../src/unique_id/snowflake.py#L24)：定位初始状态与锁。输入配置和Clock，输出一个带独立状态的实例。
 3. [SnowflakeGenerator.generate](../src/unique_id/snowflake.py#L76)：看锁覆盖的范围；入口本身不负责算法，下一站才是状态机。
 4. [SnowflakeGenerator._generate_locked](../src/unique_id/snowflake.py#L93)：输入当前毫秒和旧状态，决定新序列并生成ID。重点找“状态何时正式写回”。
-5. [SnowflakeGenerator._wait_next_millis](../src/unique_id/snowflake.py#L141)：只在序列耗尽时进入；等待的是业务时钟推进，截止时间使用单调时钟。
+5. [SnowflakeGenerator._wait_next_millis](../src/unique_id/snowflake.py#L147)：只在序列耗尽时进入；等待的是业务时钟推进，截止时间使用单调时钟。
 6. [IDParser.parse](../src/unique_id/parser.py#L49)：拿到ID后用相同布局反解。把输出字段对回案例，证明理解了按位组合。
 
 ## 微观一：异常之前不提交状态
@@ -64,7 +64,7 @@ if not 0 <= offset <= self._max_timestamp:
 
 第一段拒绝比 `_last_timestamp` 更小的时间。局部变量 `sequence` 先从0开始；相同毫秒时加1并用位掩码限制范围。加到4后 `4 & 3 == 0`，表示耗尽，而非允许重用0，所以调用等待函数。
 
-范围校验通过后，最后一行才一起更新 `_last_timestamp` 和 `_sequence`。如果等待超时、时钟回拨或时间偏移超出布局，在这行之前就会抛异常，不能偷偷消耗或重置序列状态。
+范围校验通过、可选高水位预留持久化成功后，才一起发布`_last_timestamp`、`_sequence`并清除旧`_restart_ceiling`。等待结束本身不能解除重启屏障：若随后预留失败又回到历史时间，仍必须拒绝发号。高水位文件的相对路径在构造时固定为绝对路径，切换工作目录不会换一份历史文件。
 
 ```mermaid
 flowchart TD
@@ -83,7 +83,7 @@ flowchart TD
 
 ## 微观二：等待不会占满CPU，但仍持有生成器锁
 
-[snowflake.py:152](../src/unique_id/snowflake.py#L152)
+[snowflake.py:158](../src/unique_id/snowflake.py#L158)
 
 ```python
 deadline = time.monotonic() + self._overflow_timeout
@@ -105,7 +105,7 @@ while True:
 
 循环每次重新读业务时钟，发现推进便返回；回拨立即报错，截止则抛 `SequenceOverflowError`。`sleep` 让出CPU，但外层 `generate` 的实例锁仍被持有，其他线程不能同时修改序列。等待上限限制了这段串行等待的时间，不能把它描述成无等待的无限吞吐。
 
-[SnowflakeGenerator.generate_batch](../src/unique_id/snowflake.py#L119) 一次持锁生成多个ID。如果中途失败，之前已经生成的内部状态不会回滚；调用者不能把批量方法当成事务。
+[SnowflakeGenerator.generate_batch](../src/unique_id/snowflake.py#L125) 一次持锁生成多个ID。如果中途失败，之前已经生成的内部状态不会回滚；调用者不能把批量方法当成事务。
 
 ## 失败案例与两项测试
 
