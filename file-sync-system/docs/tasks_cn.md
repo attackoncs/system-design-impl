@@ -2,8 +2,8 @@
 
 来源：根目录 `System Design Interview.md` 第 16 章，章节起始行 5369。
 
-状态：2026-11-02核心核对完成，122项严格测试通过，无跳过；独立API/设备进程、自动扫描同步及重启已验证。
-见[开源源码对照](open-source-review_cn.md)、[章节核对](chapter16-review.md)和[验证报告](../benchmarks/results.md)。
+2026-11-19 完整测试 133 项通过，其中 11 项新增回归覆盖分页恢复、坏块补传、删除重放、长轮询唤醒和 Unicode 路径冲突。
+既有进程示例验证增量传输与重启。[验证记录](../benchmarks/verification-2026-11-19.json)。
 
 ## 范围
 
@@ -39,6 +39,6 @@
 - [x] 有界设备块缓存和服务端清单缓存，权限实时复核。
 - [x] 事件保留/重新快照策略：按工作区最长保留30天、最多10万行，带 floor 的增量
   索引前缀裁剪，`resnapshot` 信号与事务性 `POST /snapshot`，客户端按冲突规则对账（2026-11-09）。
-- [ ] 事件保留与同步的持续压测。
+- [x] 完成单机并发写入、长轮询与离线同步的 62 秒事件保留压力验收。[实测](../benchmarks/verification-2026-11-19.json)。
 
 验收：[验证报告](../benchmarks/results.md)、[网络示例](../examples/network_demo.py)。当前提交与推送状态以 `git status`、`git log` 及远程分支记录为准。

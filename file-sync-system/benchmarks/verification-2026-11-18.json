@@ -1,0 +1,68 @@
+{
+  "chapter": 16,
+  "date": "2026-11-18",
+  "python": "3.14.8",
+  "book_lines": [
+    5369,
+    5879
+  ],
+  "baseline": {
+    "passed": 122,
+    "seconds": 13.38,
+    "warnings": "error",
+    "loopback": "NO_PROXY=127.0.0.1,localhost"
+  },
+  "final": {
+    "tests": "132",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "15.915"
+  },
+  "coverage": {
+    "covered_lines": 1614,
+    "num_statements": 1919,
+    "percent_covered": 80.24549290372074,
+    "percent_covered_display": "80",
+    "missing_lines": 305,
+    "excluded_lines": 0,
+    "percent_statements_covered": 84.10630536737884,
+    "percent_statements_covered_display": "84",
+    "num_branches": 688,
+    "num_partial_branches": 160,
+    "covered_branches": 478,
+    "missing_branches": 210,
+    "percent_branches_covered": 69.47674418604652,
+    "percent_branches_covered_display": "69"
+  },
+  "coverage_scope": {
+    "source_modules": 14,
+    "child_processes_instrumented": false
+  },
+  "suite_command": "NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=$PWD/src python -W error -m coverage run --branch --source=src/file_sync -m pytest -p no:cacheprovider -q tests",
+  "large_workspace_http_recovery": {
+    "heads": 1600,
+    "legacy_json_bytes": 4629810,
+    "actual_http_pages": 7,
+    "largest_page_json_bytes": 743852,
+    "durable_cursor": 1600
+  },
+  "process_benchmark": "review-2026-11-18.json",
+  "compatibility": "Legacy source from 5af24d8. Verified new client with legacy API, migration of legacy stored revision and block, legacy client with new API.",
+  "codegraph": {
+    "fileCount": 27,
+    "nodeCount": 549,
+    "edgeCount": 1680,
+    "pendingChanges": {
+      "added": 0,
+      "modified": 0,
+      "removed": 0
+    }
+  },
+  "references": [
+    "https://github.com/syncthing/syncthing/blob/ed38528d7fba3dd6a42c9c9fc6780af432dc15d2/lib/scanner/blocks.go",
+    "https://github.com/haiwen/seafile/blob/af6539cebf8484fcd07a4cab7ddfdfc425034a76/common/block-mgr.c#L216"
+  ],
+  "regression_tests_added": 10,
+  "existing_tests_and_benchmark_source_changed": false
+}

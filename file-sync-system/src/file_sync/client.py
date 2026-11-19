@@ -1,23 +1,24 @@
 """Durable filesystem push/pull with bounded transport and delta caching."""
 
-from functools import wraps
 import hashlib
-import math
 import json
+import math
 import os
 import re
+import sqlite3
 import stat
 import threading
 import time
+import uuid
+from functools import wraps
 from pathlib import Path
-import sqlite3
 from urllib.error import HTTPError
 from urllib.parse import urlencode, urlsplit
-import uuid
 
-from .paths import safe_path
-from .manifests import normalize
 from .client_transport import request as transport_request
+from .manifests import normalize
+from .paths import safe_path
+from .snapshots import PAGE_SIZE, decode_page
 
 # Minimum age of a file's mtime before its stat may stand in for its hash.
 STAT_SETTLE_NS = 2 * 10**9
@@ -143,7 +144,9 @@ class DeviceClient:
                     "INSERT OR IGNORE INTO state VALUES('identity',?)", (identity,)
                 )
                 self.db.execute("INSERT OR IGNORE INTO state VALUES('cursor','0')")
-            block_size = self.request("GET", "/config")["block_size"]
+            config = self.request("GET", "/config")
+            self._paged_snapshots = config.get("paged_snapshots") is True
+            block_size = config["block_size"]
             if type(block_size) is not int or not 1 <= block_size <= 4 * 1024**2:
                 raise OSError("invalid server block size")
             self.block_size = block_size
@@ -294,6 +297,22 @@ class DeviceClient:
             return True
         digest = self.checksum(path)
         return digest != incoming and (old is None or digest != old[1])
+
+    def _apply_tombstone(self, path, old):
+        # This revision deletes a file. Its old path can now be a directory
+        # containing other live files, or sit below a new regular file.
+        try:
+            mode = path.lstat().st_mode
+        except (FileNotFoundError, NotADirectoryError):
+            return
+        if stat.S_ISREG(mode):
+            # A tombstone has no local content. Even an empty file can be an
+            # unsynchronized edit relative to the last materialized revision.
+            if self._dirty(path, old, None):
+                self.preserve(path)
+            else:
+                path.unlink(missing_ok=True)
+                self._sync_directory(path.parent)
 
     def _copy_conflict(self, source, destination, expected):
         temporary = self.control / (uuid.uuid4().hex + ".tmp")
@@ -607,16 +626,14 @@ class DeviceClient:
             return
         path = self.path(meta["path"])
         old = self.db.execute(
-            "SELECT revision,checksum,version FROM files WHERE file=?", (meta["file"],)
+            "SELECT revision,CASE WHEN deleted=0 THEN checksum END,version "
+            "FROM files WHERE file=?",
+            (meta["file"],),
         ).fetchone()
         if old and old[2] >= meta["version"]:
             return
         if meta["deleted"]:
-            path = self.path(meta["path"])
-            if self._dirty(path, old, meta["checksum"]):
-                self.preserve(path)
-            path.unlink(missing_ok=True)
-            self._sync_directory(path.parent)
+            self._apply_tombstone(path, old)
             self.remember(meta)
             return
         temporary = self.control / (uuid.uuid4().hex + ".tmp")
@@ -706,15 +723,20 @@ class DeviceClient:
         value = {"device": self.device}
         if self.space is not None:
             value["space"] = self.space
-        snapshot = self.request("POST", "/snapshot", value)
-        if (
-            not isinstance(snapshot, dict)
-            or type(snapshot.get("cursor")) is not int
-            or snapshot["cursor"] < cursor
-            or not isinstance(snapshot.get("files"), list)
-        ):
-            raise OSError("invalid snapshot")
-        for entry in snapshot["files"]:
+        if self._paged_snapshots:
+            value["limit"] = PAGE_SIZE
+        while True:
+            snapshot = self.request("POST", "/snapshot", value)
+            high, files, continuation = decode_page(snapshot, value, cursor)
+            self._apply_heads(files)
+            if continuation is None:
+                break
+            value = {**value, "after": continuation, "cursor": high}
+        self._advance(high)
+        return {"events": [], "cursor": high, "resnapshot": True}
+
+    def _apply_heads(self, files):
+        for entry in files:
             if (
                 not isinstance(entry, dict)
                 or not isinstance(entry.get("file"), str)
@@ -734,8 +756,6 @@ class DeviceClient:
                 if "space" in entry:
                     event["space"] = entry["space"]
                 self.apply(event)
-        self._advance(snapshot["cursor"])
-        return {"events": [], "cursor": snapshot["cursor"], "resnapshot": True}
 
     @serialized
     def delete(self, space, relative):

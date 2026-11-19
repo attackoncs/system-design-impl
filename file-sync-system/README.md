@@ -10,10 +10,12 @@ Chapter 16, Design Google Drive: encrypted block storage, resumable uploads,
 immutable revisions, delta sync, conflict copies, sharing and durable notifications.
 [中文说明](README_CN.md).
 
-2026-11-02 [source comparison and chapter review](docs/open-source-review_cn.md):
-read actual Syncthing/Seafile implementations, reject truncated client responses
-without advancing sync progress, and verify the existing conflict/retry boundaries.
-The complete warnings-as-errors suite passes **122 tests**, with no skips.
+A device that has fallen behind event retention recovers file heads in pages of up
+to 256. If a block fails integrity verification, a resumed upload requests that
+block again. Replaying a file deletion preserves a directory that now occupies the
+same path and protects unsynchronized edits, including edits to zero bytes.
+File commits seek through an index of live paths to check for case and directory conflicts.
+See the [chapter review](docs/chapter16-review.md) and [verification results](benchmarks/verification-2026-11-19.json).
 
 ## Run
 
@@ -74,7 +76,7 @@ reads credentials from the environment.
 | POST /device | Register a device identifier |
 | GET /changes?device=ID&cursor=N&wait=25 | Durable paginated long poll; `resnapshot: true` if the cursor fell behind retention |
 | POST /ack | Acknowledge device/cursor after applying events |
-| POST /snapshot | Current heads plus their cursor: device[, space] |
+| POST /snapshot | File heads and event watermark. Optional limit enables paging with after and cursor |
 
 POST bodies are JSON. Each manifest block has `digest` and `size`. Default chunks
 are 4 MiB; files are capped at 10 GiB. `request` identifies a stable upload attempt;
@@ -113,10 +115,10 @@ event_max_per_space=...)`, CLI `--event-max-age`/`--event-max-per-space`, 0 or N
 disables a bound). Each append prunes a bounded oldest prefix of its own workspace by
 indexed range delete; `cleanup` also sweeps idle workspaces. A device whose cursor is
 below a pruned prefix gets `{"events": [], "resnapshot": true}` instead of a gapped
-batch; the client then fetches `POST /snapshot` (heads and cursor read in one
-transaction), applies newer heads with the usual local-conflict rules and resumes
-from that cursor. The service uses local files/SQLite, not metadata HA or
-replicated S3 storage. It does not establish the book's traffic or durability scale.
+batch. The device pages through the current heads and checks permissions on every
+page. It applies newer revisions and resumes incremental delivery from the first
+page's watermark. SQLite and encrypted local objects provide persistence on one host.
+
 Remote deployment needs HTTPS; the demo binds to loopback by default.
 
 See [design](docs/design.md) and [verified measurements](benchmarks/results.md).
@@ -156,7 +158,7 @@ HTTP capacity, do not repeatedly write while idle and are cancelled during close
 Socket deadlines do not forcibly cancel filesystem/SQLite work.
 
 See [chapter audit](docs/chapter16-review.md) for executed regressions, graph review
-and remaining deployment boundaries. [Latest process report](benchmarks/review-2026-11-02.json)
+and remaining deployment boundaries. [Latest process report](benchmarks/review-2026-11-19.json)
 again verified 4,096 delta bytes downloaded and 8,192 unchanged bytes reused, with
 durable device progress after an API restart; these tiny local fixtures are not a
 production capacity claim.

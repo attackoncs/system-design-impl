@@ -1,24 +1,26 @@
 """Transactional revisions, upload reservations, ACLs and durable device events."""
 
-from contextlib import contextmanager
 import hashlib
-import math
-from collections import OrderedDict
 import json
-from pathlib import PurePosixPath
+import math
 import re
 import secrets
 import sqlite3
 import threading
 import time
 import uuid
+from collections import OrderedDict
+from contextlib import contextmanager
+from pathlib import PurePosixPath
 
-from .storage import BlockStore, CorruptBlock
-from .paths import safe_path as safe_path
+from .lifecycle import Operations, owned
 from .manifests import normalize
 from .notifications import EventLog
-from .lifecycle import Operations, owned
-from .schema import SCHEMA
+from .paths import live_path_conflict
+from .paths import safe_path as safe_path
+from .schema import initialize
+from .snapshots import file_heads, validate_page
+from .storage import BlockStore, CorruptBlock
 
 
 class Conflict(ValueError):
@@ -53,8 +55,10 @@ class Drive:
             )
         except OverflowError:
             valid_age = False
-        if not valid_age or event_max_per_space is not None and (
-            type(event_max_per_space) is not int or event_max_per_space < 1
+        if (
+            not valid_age
+            or event_max_per_space is not None
+            and (type(event_max_per_space) is not int or event_max_per_space < 1)
         ):
             raise ValueError("invalid event retention policy")
         self.clock, self.block_size = clock, block_size
@@ -68,64 +72,7 @@ class Drive:
         self._manifest_bytes = 0
         self.db = sqlite3.connect(db, timeout=10, check_same_thread=False)
         try:
-            self.db.row_factory = sqlite3.Row
-            deadline = time.monotonic() + 10
-            while True:
-                try:
-                    self.db.execute("PRAGMA journal_mode=WAL")
-                    break
-                except sqlite3.OperationalError as error:
-                    if (
-                        "locked" not in str(error).lower()
-                        or time.monotonic() >= deadline
-                    ):
-                        raise
-                    time.sleep(0.01)
-            self.db.executescript(SCHEMA)
-            with self.transaction():
-                if "used" not in {
-                    row[1] for row in self.db.execute("PRAGMA table_info(users)")
-                }:
-                    # Pre-counter database: add and backfill users.used once,
-                    # atomically, from the revisions it summarizes.
-                    self.db.execute(
-                        "ALTER TABLE users ADD COLUMN used INTEGER NOT NULL DEFAULT 0"
-                    )
-                    self.db.execute(
-                        "UPDATE users SET used=(SELECT COALESCE(SUM(r.size),0) FROM revisions r JOIN files f ON r.file=f.id JOIN spaces s ON f.space=s.id WHERE s.owner=users.name)"
-                    )
-                if "created" not in {
-                    row[1] for row in self.db.execute("PRAGMA table_info(events)")
-                }:
-                    # Pre-retention database: start every retained event's age
-                    # now and count rows per space once; nothing was pruned yet.
-                    self.db.execute("ALTER TABLE events ADD COLUMN created REAL")
-                    self.db.execute("UPDATE events SET created=?", (clock(),))
-                    self.db.execute(
-                        "INSERT OR REPLACE INTO event_spaces(space,floor,retained) "
-                        "SELECT space,0,COUNT(*) FROM events GROUP BY space"
-                    )
-                self.db.execute(
-                    "INSERT OR IGNORE INTO settings VALUES('master',?)",
-                    (secrets.token_hex(32),),
-                )
-                self.db.execute(
-                    "INSERT OR IGNORE INTO settings VALUES('block_size',?)",
-                    (str(block_size),),
-                )
-            configured = int(
-                self.db.execute(
-                    "SELECT value FROM settings WHERE key='block_size'"
-                ).fetchone()[0]
-            )
-            if configured != block_size:
-                self.db.close()
-                raise ValueError("block size differs from persisted configuration")
-            master = bytes.fromhex(
-                self.db.execute(
-                    "SELECT value FROM settings WHERE key='master'"
-                ).fetchone()[0]
-            )
+            master = initialize(self.db, block_size, clock)
             self.store = BlockStore(objects, master, block_size)
             self.events = EventLog(
                 self.db,
@@ -357,12 +304,11 @@ class Drive:
             manifest = json.loads(row["blocks"]) if row["state"] == "OPEN" else []
             stored = self._block_rows(row["space"], manifest)
         missing = sorted(
-            {
-                block["digest"]
-                for block in manifest
-                if block["digest"] not in stored
-                or not self.store.exists(stored[block["digest"]]["key"])
-            }
+            digest
+            for digest in {block["digest"] for block in manifest}
+            if digest not in stored
+            or stored[digest]["repair_needed"]
+            or not self.store.exists(stored[digest]["key"])
         )
         with self.read():
             row = self.session(user, upload)
@@ -411,8 +357,8 @@ class Drive:
             if not self.store.exists(key):
                 raise OSError("written block disappeared; retry")
             self.db.execute(
-                "INSERT INTO blocks VALUES(?,?,?,?,0,?) ON CONFLICT(space,digest) "
-                "DO UPDATE SET key=excluded.key,size=excluded.size",
+                "INSERT INTO blocks(space,digest,size,key,refs,created) VALUES(?,?,?,?,0,?) "
+                "ON CONFLICT(space,digest) DO UPDATE SET key=excluded.key,size=excluded.size,repair_needed=0",
                 (row["space"], digest, len(data), key, self.clock()),
             )
             return not reused
@@ -422,6 +368,19 @@ class Drive:
         """Append events inside the current metadata transaction."""
         self.events.emit(kind, space, file, revision, path, users)
         self._event_epoch += 1
+
+    def _read_block(self, space, digest, size):
+        try:
+            return self.store.get(space, digest, size)
+        except CorruptBlock:
+            # An upload can declare an incorrect length for an existing digest.
+            # Only flag corruption verified against the stored block's own size.
+            with self.transaction():
+                self.db.execute(
+                    "UPDATE blocks SET repair_needed=1 WHERE space=? AND digest=? AND size=?",
+                    (space, digest, size),
+                )
+            raise
 
     @owned
     def commit(self, token, upload):
@@ -436,7 +395,7 @@ class Drive:
         digest = hashlib.sha256()
         for block in manifest:
             digest.update(
-                self.store.get(snapshot["space"], block["digest"], block["size"])
+                self._read_block(snapshot["space"], block["digest"], block["size"])
             )
         if digest.hexdigest() != snapshot["checksum"]:
             raise ValueError("file checksum mismatch")
@@ -478,21 +437,14 @@ class Drive:
                 ).fetchone():
                     raise Conflict("conflict path collision")
             file = current["id"] if current else uuid.uuid4().hex
-            safe_path(path)
-            for other in self.db.execute(
-                "SELECT f.id,f.path FROM files f JOIN revisions r ON f.head=r.id WHERE f.space=? AND r.deleted=0",
-                (row["space"],),
-            ):
-                if other["id"] != file:
-                    a, b = other["path"].casefold(), path.casefold()
-                    if a == b or a.startswith(b + "/") or b.startswith(a + "/"):
-                        raise Conflict(
-                            "file/directory or case-insensitive path collision"
-                        )
+            key = safe_path(path).casefold()
+            if live_path_conflict(self.db, row["space"], file, key):
+                raise Conflict("file/directory or case-insensitive path collision")
             revision = uuid.uuid4().hex
             if current is None:
                 self.db.execute(
-                    "INSERT INTO files VALUES(?,?,?,NULL)", (file, row["space"], path)
+                    "INSERT INTO files(id,space,path) VALUES(?,?,?)",
+                    (file, row["space"], path),
                 )
             self.db.execute(
                 "INSERT INTO revisions(id,file,size,checksum,blocks,deleted,created) VALUES(?,?,?,?,?,0,?)",
@@ -514,7 +466,10 @@ class Drive:
                 "UPDATE users SET used=used+? WHERE name=(SELECT owner FROM spaces WHERE id=?)",
                 (row["size"], row["space"]),
             )
-            self.db.execute("UPDATE files SET head=? WHERE id=?", (revision, file))
+            self.db.execute(
+                "UPDATE files SET head=?,live_path_key=? WHERE id=?",
+                (revision, key, file),
+            )
             result = {
                 "file": file,
                 "revision": revision,
@@ -586,7 +541,7 @@ class Drive:
             if type(index) is not int or not 0 <= index < len(blocks):
                 raise ValueError("invalid block index")
             digest, size = blocks[index]
-        data = self.store.get(space, digest, size)
+        data = self._read_block(space, digest, size)
         with self.read():
             self.access(user, space)
         return data
@@ -632,7 +587,10 @@ class Drive:
                 "INSERT INTO revisions(id,file,size,checksum,blocks,deleted,created) VALUES(?,?,0,?,'[]',1,?)",
                 (revision, file, hashlib.sha256(b"").hexdigest(), self.clock()),
             )
-            self.db.execute("UPDATE files SET head=? WHERE id=?", (revision, file))
+            self.db.execute(
+                "UPDATE files SET head=?,live_path_key=NULL WHERE id=?",
+                (revision, file),
+            )
             self.emit("delete", meta["space"], file, revision, meta["path"])
             return revision
 
@@ -695,14 +653,16 @@ class Drive:
         )
 
     @owned
-    def snapshot(self, token, device, space=None):
-        """Current heads plus the event cursor they reflect, for re-snapshots.
+    def snapshot(
+        self, token, device, space=None, *, limit=None, after=None, cursor=None
+    ):
+        """Recover heads in stable path order, then replay from the first page's cursor.
 
-        One write transaction reads the file heads, the cursor and records the
-        delivery, so no event at or below the cursor is missing from the heads
-        and every later event is either still retained or flagged by a floor.
-        Without `space`, covers every workspace the user can read.
+        Each page reads current heads with current permissions. Concurrent changes
+        are replayable after the original watermark, including new paths that sort
+        behind the continuation. Omitting limit preserves the single-response API.
         """
+        validate_page(space, limit, after, cursor)
         user = self.auth(token)
         with self.transaction():
             if (
@@ -712,56 +672,26 @@ class Drive:
                 is None
             ):
                 raise PermissionError("device registration required")
-            if space is None:
-                spaces = [
-                    row[0]
-                    for row in self.db.execute(
-                        "SELECT space FROM members WHERE user=? ORDER BY space", (user,)
-                    )
-                ]
-            else:
+            if space is not None:
                 self.access(user, space)
-                spaces = [space]
-            files = []
-            for current in spaces:
-                files.extend(
-                    {
-                        "file": row["id"],
-                        "space": current,
-                        "path": row["path"],
-                        "revision": row["head"],
-                        "version": row["version"],
-                        "deleted": bool(row["deleted"]),
-                    }
-                    for row in self.db.execute(
-                        "SELECT f.id,f.path,f.head,r.version,r.deleted FROM files f "
-                        "JOIN revisions r ON r.id=f.head WHERE f.space=? ORDER BY f.path",
-                        (current,),
-                    )
-                )
-            cursor = self.events.high()
+            high = self.events.high()
+            if cursor is not None and cursor > high:
+                raise ValueError("snapshot cursor beyond log")
+            watermark = high if cursor is None else cursor
+            files, continuation = file_heads(self.db, user, space, after, limit)
+            page = {"cursor": watermark, "files": files}
+            if continuation is not None:
+                return {**page, "next": continuation}
             self.db.execute(
                 "UPDATE devices SET delivered=MAX(delivered,?) WHERE id=?",
-                (cursor, device),
+                (watermark, device),
             )
-            return {"cursor": cursor, "files": files}
+            return page
 
     @owned
     def expire_events(self, budget=1000):
-        """Maintenance sweep: apply retention to idle spaces as well.
-
-        Appends already prune their own space incrementally; this catches spaces
-        that stopped receiving events. One short transaction per space.
-        """
-        if type(budget) is not int or budget < 1:
-            raise ValueError("invalid retention budget")
-        with self.read():
-            spaces = [r[0] for r in self.db.execute("SELECT space FROM event_spaces")]
-        removed = 0
-        for space in spaces:
-            with self.transaction():
-                removed += self.events.retain(space, budget)
-        return removed
+        """Apply retention to idle workspaces."""
+        return self.events.expire(budget)
 
     @owned
     def ack(self, token, device, cursor):

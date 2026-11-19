@@ -1,0 +1,163 @@
+{
+  "chapter": 16,
+  "date": "2026-11-19",
+  "python": "3.14.8",
+  "book_lines": [
+    5369,
+    5879
+  ],
+  "baseline": {
+    "passed": 122,
+    "seconds": 13.38,
+    "warnings": "error",
+    "loopback": "NO_PROXY=127.0.0.1,localhost"
+  },
+  "final": {
+    "tests": 133,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": 16.224
+  },
+  "coverage": {
+    "covered_lines": 1630,
+    "num_statements": 1936,
+    "percent_covered": 80.29725609756098,
+    "percent_covered_display": "80",
+    "missing_lines": 306,
+    "excluded_lines": 0,
+    "percent_statements_covered": 84.19421487603306,
+    "percent_statements_covered_display": "84",
+    "num_branches": 688,
+    "num_partial_branches": 161,
+    "covered_branches": 477,
+    "missing_branches": 211,
+    "percent_branches_covered": 69.3313953488372,
+    "percent_branches_covered_display": "69"
+  },
+  "coverage_scope": {
+    "source_modules": 14,
+    "child_processes_instrumented": false
+  },
+  "suite_command": "NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=$PWD/src python -W error -m coverage run --branch --source=src/file_sync -m pytest -p no:cacheprovider -q tests",
+  "large_workspace_http_recovery": {
+    "heads": 1600,
+    "legacy_json_bytes": 4629810,
+    "actual_http_pages": 7,
+    "largest_page_json_bytes": 743852,
+    "durable_cursor": 1600
+  },
+  "process_benchmark": "review-2026-11-19.json",
+  "compatibility": "Legacy source from 5af24d8. Verified new client with legacy API, migration of legacy stored revision and block, legacy client with new API.",
+  "codegraph": {
+    "fileCount": 27,
+    "nodeCount": 556,
+    "edgeCount": 1697,
+    "pendingChanges": {
+      "added": 0,
+      "modified": 0,
+      "removed": 0
+    }
+  },
+  "references": [
+    "https://github.com/syncthing/syncthing/blob/ed38528d7fba3dd6a42c9c9fc6780af432dc15d2/lib/scanner/blocks.go",
+    "https://github.com/haiwen/seafile/blob/af6539cebf8484fcd07a4cab7ddfdfc425034a76/common/block-mgr.c#L216"
+  ],
+  "regression_tests_added": 11,
+  "existing_tests_and_benchmark_source_changed": false,
+  "retention_stress": {
+    "python": "3.14.8",
+    "sqlite": "3.53.4",
+    "cryptography": "50.0.2",
+    "platform": "Linux-6.18.58.1-microsoft-standard-WSL2-x86_64-with-glibc2.44",
+    "logical_cpu": 16,
+    "writers": 2,
+    "live_pollers": 2,
+    "offline_filesystem_devices": 1,
+    "independent_drive_connections": 5,
+    "event_max_age": null,
+    "event_max_per_space": 40,
+    "workspaces": 1,
+    "writer_throttle_seconds": 0.07,
+    "offline_poll_interval_seconds": 2,
+    "write_interval_seconds": 62,
+    "writer_elapsed_seconds": [
+      62.043,
+      62.04
+    ],
+    "commits_by_writer": [
+      851,
+      851
+    ],
+    "unique_revisions": 1702,
+    "events_emitted": 3404,
+    "retained_counter": 40,
+    "actual_retained": 40,
+    "floor": 3364,
+    "actual_retained_range": [
+      3365,
+      3404
+    ],
+    "live_poll_results": [
+      {
+        "events": 3404,
+        "batches": 618,
+        "cursor": 3404
+      },
+      {
+        "events": 3404,
+        "batches": 622,
+        "cursor": 3404
+      }
+    ],
+    "offline_pulls": 31,
+    "offline_snapshots": 31,
+    "device_cursors_and_delivered": {
+      "offline": [
+        3404,
+        3404
+      ],
+      "live-0": [
+        3404,
+        3404
+      ],
+      "live-1": [
+        3404,
+        3404
+      ]
+    },
+    "committed_plaintext_bytes": 1742848,
+    "offline_downloaded_block_bytes": 63488,
+    "file_size_bytes": 1024,
+    "verified_final_file_sha256": {
+      "0.bin": "31c9ff08f066b41ca7f1dab1160b74ec1f51e7e099cdaec574a9c5963f35641c",
+      "1.bin": "7d4cf068942f813d789ea3c45d289bc9025be0477259412f5079840dacdb08d0"
+    },
+    "elapsed_through_checks_seconds": 62.309,
+    "sqlite_quick_check": "ok",
+    "scope": "One WSL host, local WAL and filesystem, count-based retention, two distinct paths, paced writes. Offline device uses loopback HTTP. No external services, cross-host failover or capacity claim.",
+    "workers_joined_and_connections_closed": true,
+    "temporary_data_removed": true
+  },
+  "path_commit_comparison": {
+    "workspace_files": 20000,
+    "scope": "local SQLite, empty file, sequential Drive.commit only, 3 warmups then 25 updates; excludes database setup/migration",
+    "before": {
+      "samples": 25,
+      "median_ms": 24.1991,
+      "min_ms": 23.479
+    },
+    "after": {
+      "samples": 25,
+      "median_ms": 0.205,
+      "min_ms": 0.194
+    }
+  },
+  "path_index_probe": {
+    "workspace_live_files": 8000,
+    "approximate_sqlite_vm_steps_before": 97400,
+    "approximate_sqlite_vm_steps_after": 1500,
+    "query_plan": "Both branches SEARCH files USING INDEX live_path. Ancestors use indexed equality probes. Descendants use a bounded binary range."
+  },
+  "path_index_migration": "Existing live heads backfilled atomically when upgrading an old DB or changing the Python Unicode data version. Normal reopen skips backfill."
+}

@@ -1,8 +1,8 @@
 """Ownership of operations that release the metadata lock for I/O or polling."""
 
+import threading
 from contextlib import contextmanager
 from functools import wraps
-import threading
 
 
 class Operations:
@@ -27,7 +27,10 @@ class Operations:
             with self.condition:
                 self.local.depth -= 1
                 self.active -= 1
-                self.condition.notify_all()
+                # Only drain waits for active operations to finish. Idle device
+                # polls share this condition and wake on publication or shutdown.
+                if self.closing and self.active == 0:
+                    self.condition.notify_all()
 
     def drain(self):
         if getattr(self.local, "depth", 0):

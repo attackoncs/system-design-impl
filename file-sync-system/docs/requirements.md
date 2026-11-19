@@ -6,7 +6,7 @@ Source: root System Design Interview.md, Chapter 16, Design Google Drive.
   Split files into bounded blocks (default 4 MiB); do not buffer an entire large file.
 - R2. Authenticated, resumable upload sessions with request IDs, SHA-256 checksums,
   account/workspace-scoped deduplication and atomic publication after every block
-  is stored and verified. Conflicting retries must fail.
+  is stored and verified. Conflicting retries must fail. A verified corrupt block must reappear in missing-block lists until repaired.
 - R3. Compress blocks and encrypt at rest using cryptography AES-GCM, random nonces
   and authenticated namespace/hash/size metadata. Detect ciphertext corruption.
 - R4. Immutable revisions, optimistic base-revision writes, conflict copies preserving
@@ -14,7 +14,9 @@ Source: root System Design Interview.md, Chapter 16, Design Google Drive.
 - R5. Owner-controlled workspace read/write sharing, immediate server-side revocation,
   quota enforcement including retained revisions and pending uploads.
 - R6. Transactional per-user change events, long polling, persistent device cursors,
-  explicit acknowledgements and replay after disconnection/server restart.
+  explicit acknowledgements and replay after disconnection/server restart. Devices
+  recovering a pruned cursor can apply a set of heads larger than the transport
+  response bound and catch up with changes committed while recovery was in progress.
 - R7. A real filesystem client uses safe relative paths, atomic file replacement,
   persisted local state and block cache; transfer only missing/modified blocks,
   retain unsynchronized local edits rather than overwrite them.

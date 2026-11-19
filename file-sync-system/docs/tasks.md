@@ -2,10 +2,9 @@
 
 Source: root `System Design Interview.md`, Chapter 16, starting at line 5369.
 
-Status: Core reviewed on 2026-11-02, with 122 tests passing and no skips; independent
-API/device processes, automatic scan synchronization and restart verified.
-See [source comparison](open-source-review_cn.md), [chapter review](chapter16-review.md)
-and [validation](../benchmarks/results.md).
+On 2026-11-19 all 133 tests passed, including 11 new regressions for paged recovery,
+block repair, deletion replay, long-poll wakeups and Unicode path conflicts. The original process demo also
+verified delta transfer and restart. [Verification](../benchmarks/verification-2026-11-19.json).
 
 ## Scope
 
@@ -66,7 +65,7 @@ revisions, sharing and notifications; document co-editing is out of scope.
 - [x] Event retention/re-snapshot policy: per-space max age (30 days) and max rows
   (100,000), incremental indexed prefix pruning with floors, `resnapshot` signal and
   transactional `POST /snapshot` reconciled by the client (2026-11-09).
-- [ ] Sustained stress testing of event retention and synchronization.
+- [x] A 62-second single-host retention run with concurrent writers, live pollers and a periodically offline filesystem device. [Measurements](../benchmarks/verification-2026-11-19.json).
 
 Acceptance: benchmarks/results.md; examples/network_demo.py. Currently not
 committed or pushed.

@@ -1,5 +1,13 @@
 # 第16章：开源源码对照与实现核对
 
+## 2026-11-18 分块校验与断点恢复
+
+Syncthing 的扫描器按块限制读取范围，复用 32 KiB 缓冲计算 SHA-256，同时记录块的大小与偏移。Seafile 的块管理器流式计算内容摘要，并分别报告读取失败与摘要不符。本次据此核对了本项目校验失败后，设备如何得知需要重传的块。[Syncthing 扫描器](https://github.com/syncthing/syncthing/blob/ed38528d7fba3dd6a42c9c9fc6780af432dc15d2/lib/scanner/blocks.go) · [Seafile 块校验](https://github.com/haiwen/seafile/blob/af6539cebf8484fcd07a4cab7ddfdfc425034a76/common/block-mgr.c#L216)
+
+此前服务端可以检出密文损坏，但恢复会话只检查块是否存在。现在只有明确的内容错误会在匹配的块记录上留下标记，客户端沿用原来的缺块列表和上传接口修复。CodeGraph 关联了上传状态、设备恢复入口及原有回归路径。[本轮结果](chapter16-review.md)
+
+## 2026-11-02 历史核对
+
 日期：2026-11-02。对照根目录《System Design Interview.md》第16章“Design Google Drive”。
 
 ## 开源参考

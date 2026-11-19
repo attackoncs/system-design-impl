@@ -4,8 +4,6 @@ Absolute deadlines cover socket I/O. Metadata/storage calls may finish after a
 client disconnects; accepted mutations still require reconciliation by the client.
 """
 
-from contextlib import suppress
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import math
 import re
@@ -14,6 +12,8 @@ import sqlite3
 import sys
 import threading
 import time
+from contextlib import suppress
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 from .service import Conflict
@@ -45,7 +45,7 @@ _POST_FIELDS = {
     "/restore": ("restore", {"file", "revision", "base", "request"}, set()),
     "/share": ("share", {"space", "recipient", "role"}, set()),
     "/ack": ("ack", {"device", "cursor"}, set()),
-    "/snapshot": ("snapshot", {"device"}, {"space"}),
+    "/snapshot": ("snapshot", {"device"}, {"space", "after", "cursor", "limit"}),
 }
 
 
@@ -277,7 +277,9 @@ class _Handler(BaseHTTPRequestHandler):
         return result
 
     def config(self, token, _query):
-        return self.send(200, {"block_size": self.drive.block_size})
+        return self.send(
+            200, {"block_size": self.drive.block_size, "paged_snapshots": True}
+        )
 
     def upload_status(self, token, query):
         return self.send(200, self.drive.upload_status(token, query["upload"]))

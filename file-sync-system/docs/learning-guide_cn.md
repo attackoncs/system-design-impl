@@ -37,17 +37,17 @@ flowchart TB
 
 ## 七站阅读路线
 
-1. [DeviceClient.push](../src/file_sync/client.py#L449)：输入space与相对路径，读取本地基线，形成待提交内容；先寻找本地pending恢复分支。
-2. [Drive.begin](../src/file_sync/service.py#L247)：服务器为目标路径、基线和内容申请上传会话，预留所需资源。
+1. [DeviceClient.push](../src/file_sync/client.py#L468)：输入space与相对路径，读取本地基线，形成待提交内容；先寻找本地pending恢复分支。
+2. [Drive.begin](../src/file_sync/service.py#L194)：服务器为目标路径、基线和内容申请上传会话，预留所需资源。
 3. [BlockStore.put](../src/file_sync/storage.py#L206)：理解块身份与命名空间，区分重复块和损坏对象。
-4. [Drive.commit](../src/file_sync/service.py#L427)：最关键一站；先校验内容，再在事务内复核会话、权限与基线，决定原文件还是冲突文件。
-5. [DeviceClient.pull](../src/file_sync/client.py#L673)：读取变更页；失败不能直接推进本地游标。
-6. [DeviceClient.apply](../src/file_sync/client.py#L589)：下载、校验并替换文件前，检查本地是否又被修改。最后看 [EventLog.ack](../src/file_sync/notifications.py#L189)。
+4. [Drive.commit](../src/file_sync/service.py#L386)：最关键一站；先校验内容，再在事务内复核会话、权限与基线，决定原文件还是冲突文件。
+5. [DeviceClient.pull](../src/file_sync/client.py#L690)：读取变更页；失败不能直接推进本地游标。
+6. [DeviceClient.apply](../src/file_sync/client.py#L608)：下载、校验并替换文件前，检查本地是否又被修改。最后看 [EventLog.ack](../src/file_sync/notifications.py#L189)。
 7. [request](../src/file_sync/client_transport.py#L22)：网络读取是提交本地状态之前的一道边界；有效JSON前缀仍可能来自不完整响应。
 
 ## 微观一：为什么commit有两次会话读取
 
-[service.py:427](../src/file_sync/service.py#L427)
+[service.py:386](../src/file_sync/service.py#L386)
 
 ```python
 def commit(self, token, upload):
@@ -62,14 +62,14 @@ def commit(self, token, upload):
     digest = hashlib.sha256()
     for block in manifest:
         digest.update(
-            self.store.get(snapshot["space"], block["digest"], block["size"])
+            self._read_block(snapshot["space"], block["digest"], block["size"])
         )
     if digest.hexdigest() != snapshot["checksum"]:
 ```
 
 第一段取得会话快照，处理已经DONE的幂等重试，再校验文件内容。读取所有块、计算校验和可能慢，因此不能只相信最初读到的状态。
 
-[service.py:443](../src/file_sync/service.py#L443)
+[service.py:402](../src/file_sync/service.py#L402)
 
 ```python
 with self.transaction():
@@ -92,6 +92,8 @@ with self.transaction():
 第二段进入事务重新取得会话。期间上传可能被取消、权限可能改变、块状态可能变化。只有事务内复核通过，才能继续更新文件版本和发出变更事件。
 
 这里的核心不是“加一把大锁”，而是**锁外验证慢内容，锁内重新判断提交资格**。
+
+同一事务还会判断路径是否能由各设备表示。[live_path_conflict](../src/file_sync/paths.py#L7) 通过索引区分同名、祖先和后代。例如已有文件 `Straße` 时，另一设备不能创建 `STRASSE/笔记`。已删除文件会释放对应的路径键。
 
 ## 微观二：并发冲突是一个保留策略
 
@@ -155,6 +157,18 @@ flowchart TD
   I -->|"完整或合法关闭定界"| P["解析并应用整页"]
   P --> A["持久游标并确认"]
 ```
+
+## 离线设备从哪一个游标继续
+
+假设第一页的事件水位是 H，设备刚写完 `a`，另一台设备又修改了 `a`。
+[Drive.snapshot](../src/file_sync/service.py#L656) 按工作区和路径继续查下一页，
+页与页之间允许写入。[DeviceClient.resnapshot](../src/file_sync/client.py#L715)
+应用全部页面后确认 H，下一次 pull 会读到修改 `a` 的事件。若中途断线，已经落盘的版本
+可在重试时跳过。已过期的事件通过再次取快照恢复。
+
+下载或提交发现坏块时，[Drive._read_block](../src/file_sync/service.py#L372) 把损坏标志写入匹配的块记录。
+比较 [Drive.upload_status](../src/file_sync/service.py#L299) 返回的 `missing` 与原清单，
+就能看到为什么同一块出现两次也只需补传一次。
 
 ## 用测试追踪数据变化
 

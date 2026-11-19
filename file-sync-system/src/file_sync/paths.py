@@ -4,6 +4,20 @@ import re
 import unicodedata
 
 
+def live_path_conflict(db, space, file, key):
+    """Check the folded file name, file ancestors, and live descendants."""
+    names = [key[:i] for i, char in enumerate(key) if char == "/"] + [key]
+    placeholders = ",".join("?" for _ in names)
+    # In binary order [key + '/', key + '0') contains exactly the descendants.
+    collision = db.execute(
+        f"SELECT 1 FROM files WHERE space=? AND live_path_key IN ({placeholders}) AND id<>? "
+        "UNION ALL SELECT 1 FROM files WHERE space=? AND live_path_key>=? AND live_path_key<? "
+        "AND id<>? LIMIT 1",
+        (space, *names, file, space, key + "/", key + "0", file),
+    ).fetchone()
+    return collision is not None
+
+
 def safe_path(value):
     if (
         not isinstance(value, str)

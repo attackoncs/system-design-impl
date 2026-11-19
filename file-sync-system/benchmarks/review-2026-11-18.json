@@ -1,0 +1,17 @@
+{
+  "file_bytes": 12288,
+  "block_bytes": 4096,
+  "initial_upload_then_second_process_pull_ms": 1235.947,
+  "delta_pull_ms": 100.579,
+  "delta_download_bytes": 4096,
+  "unchanged_bytes_reused": 8192,
+  "server_restart_cursor_verified": true,
+  "retained_revision_bytes": 24576,
+  "unique_plaintext_block_bytes": 16384,
+  "encrypted_object_bytes": 16552,
+  "environment": {
+    "python": "3.14.8",
+    "platform": "Linux-6.18.58.1-microsoft-standard-WSL2-x86_64-with-glibc2.44"
+  },
+  "scope": "one local API process; independent filesystem client processes; loopback HTTP"
+}

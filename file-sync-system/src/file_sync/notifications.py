@@ -200,3 +200,19 @@ class EventLog:
             self.db.execute(
                 "UPDATE devices SET cursor=MAX(cursor,?) WHERE id=?", (cursor, device)
             )
+
+    def expire(self, budget=1000):
+        """Maintenance sweep: apply retention to idle spaces as well.
+
+        Appends already prune their own space incrementally; this catches spaces
+        that stopped receiving events. One short transaction per space.
+        """
+        if type(budget) is not int or budget < 1:
+            raise ValueError("invalid retention budget")
+        with self.read():
+            spaces = [r[0] for r in self.db.execute("SELECT space FROM event_spaces")]
+        removed = 0
+        for space in spaces:
+            with self.transaction():
+                removed += self.retain(space, budget)
+        return removed

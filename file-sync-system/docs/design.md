@@ -13,6 +13,13 @@ event log and periodic database reads, so lost wake-ups cannot lose changes.
 
 ## Upload and revisions
 
+Live file heads carry a Python case-folded path key in a partial SQLite index on
+(space, live_path_key). The write transaction probes the path and its ancestors
+by equality and seeks descendants in the binary range [key + '/', key + '0').
+Updating a head sets the key and deleting it clears the key. Initialization fills
+keys from existing live heads when the column or Unicode version changes. Writers
+sharing a database must use the same Unicode data version.
+
 The client hashes fixed-size chunks and declares their ordered digest/size manifest.
 A session ID and caller request ID identify retryable work. Same-workspace blocks
 can be reused, while unrelated workspaces cannot probe each other's hashes. Block
@@ -107,21 +114,34 @@ Consistency: `changes` reads the high-water mark, the floors of the user's
 workspaces and the events in one read transaction. If any floor exceeds the cursor
 it returns no events, the same cursor and `resnapshot: true`; otherwise every event
 after the cursor is still present in that snapshot, so no gap is delivered.
-`POST /snapshot` reads current heads, the high-water mark H and records delivery of
-H in one `BEGIN IMMEDIATE` transaction: all events <= H are reflected in the heads
-and events > H are either retained or, if later pruned, raise a floor above H and
-trigger another re-snapshot. The client applies heads newer than its local version
-through the normal `apply` path (dirty local files become local-conflict copies,
-tombstones delete), then persists and acknowledges H; a failure keeps the old cursor.
-The check is conservative: pruning in any of a user's workspaces may force a cheap
-re-snapshot (unchanged versions are skipped without requests). One snapshot response
-is bounded by the 4 MiB client JSON limit (tens of thousands of files).
+At startup the client reads `paged_snapshots` from `GET /config`. When available,
+it sends `POST /snapshot` with a limit of 256. The first page records the starting
+watermark H. An unfinished page returns `next: [space, path]`. The next request
+sends that pair as `after` and echoes H as `cursor`. Each short transaction checks
+membership and seeks through the existing (space, path) file index. After the last
+page the service records delivery of H. The client persists H after applying all
+pages, then acknowledges it. A failed page can be retried from the old cursor.
+Updates during the scan are replayed after H. If retention passes H, the device
+takes another snapshot. Clients that omit the limit receive the original single
+response. A client connected to an older server also uses that format.
+
+Reading ordinary metadata leaves idle long polls asleep. Committing an event wakes
+local waiters. Periodic reads still pick up events committed by other processes,
+and shutdown wakes waiting handlers so active operations can finish.
+
+A failed block integrity check during download or commit flags the stored block
+when its workspace, digest and declared size match. Open sessions report the digest
+in `missing` until a verified upload clears the flag. A database upgrade initializes
+existing blocks as unflagged. Upgrade metadata writers together because older binaries
+use positional block inserts. A file tombstone applies only to a regular file at
+that path. A directory can now contain other live files, and an empty local edit can
+still differ from the last materialized version.
 
 ## Limits and validation
 
 Fixed-size chunks reuse unchanged aligned blocks, not rsync-style byte shifting.
 SQLite/local storage provide a runnable persistence reference; multi-host HA,
-replicated object storage, sustained stress testing of event retention and mobile
+replicated object storage, production-scale load testing and mobile
 watchers remain extensions. Simple uploads reuse the resumable state machine up to one block;
 large files retain the manifest/session flow. File history supports an optional limit.
 

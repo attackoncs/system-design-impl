@@ -9,9 +9,9 @@
 第 16 章 Google Drive 的参考实现：分块上传、断点续传、工作区内去重、压缩与
 AES-256-GCM 存储加密、修订历史、增量同步、冲突副本、分享撤销和持久化通知。
 
-2026-11-02 [开源源码与章节核对](docs/open-source-review_cn.md)：阅读 Syncthing、
-Seafile 实现，修复客户端接受截断响应的问题，失败不推进同步游标；保留已有冲突和
-重试机制。完整严格套件 **122项通过，无跳过**。
+2026-11-18 至 19 日复核补齐了离线恢复。事件过期后，设备每页取最多 256 个文件头，应用完末页才确认游标。
+断点续传会提示重传已知损坏的块。重放删除时，客户端保留同名目录及未同步的空文件编辑。
+提交时通过索引检查同名和目录冲突。详见[章节核对](docs/chapter16-review.md)和[验证结果](benchmarks/verification-2026-11-19.json)。
 
 在本目录运行：
 
@@ -43,9 +43,8 @@ python -m venv .venv
 事件日志按工作区有界：默认裁剪30天前或超出最新10万行的事件（`Drive(event_max_age=...,
 event_max_per_space=...)`，CLI `--event-max-age`/`--event-max-per-space`，0或None
 关闭对应上限）。每次追加按索引范围删除本工作区最旧的有限前缀，`cleanup` 再清扫
-空闲工作区。游标落在已裁剪前缀之下的设备收到 `{"events": [], "resnapshot": true}`
-而不是有缺口的批次；客户端随即调用 `POST /snapshot`（同一事务读取 head 与游标），
-按既有本地冲突规则应用更新的 head，再从该游标继续。持续压测与监控仍待完成。
+空闲工作区。游标落在已裁剪前缀之下的设备收到 `{"events": [], "resnapshot": true}`。设备通过 `POST /snapshot` 分页取得当前文件头，每页复核共享权限，按既有冲突规则
+应用更新的修订，然后从第一页的游标继续接收变更。
 
 [设计文档](docs/design.md)说明取舍；[验收报告](benchmarks/results.md)记录实际结果。
 
@@ -73,6 +72,6 @@ SyncWatcher 每轮默认最多扫描 10,000 个目录项，上传新建/修改�
 停服会取消轮询并等待活动请求。SQLite 仍串行写入，GC 可能阻塞；套接字期限不能
 强制取消文件系统/SQLite 调用。
 
-详见[章节核对](docs/chapter16-review.md)及[最新进程实测](benchmarks/review-2026-11-02.json)：
+详见[章节核对](docs/chapter16-review.md)及[最新进程实测](benchmarks/review-2026-11-19.json)：
 中间块修改只下载 4,096 字节，复用 8,192 字节，API 重启后设备进度保持。小样本
 不代表生产容量；云复制、数据库高可用、原生移动端和十 GiB 实物测试仍有边界。
