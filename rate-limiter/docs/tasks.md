@@ -106,3 +106,11 @@
 
 See [the current review](open-source-review_cn.md). Multi-region quotas, Redis
 HA/Cluster and per-rule/external monitoring remain explicit gaps.
+
+## 2026-11-17 review
+
+- [x] Audit chapter5 against CodeGraph and GitHub sources.
+- [x] TDD identity preflight, global request quotas and bounded policy metrics.
+- [x] TDD FIFO callback reentrancy/shutdown races/concurrent closers and explicit Flask endpoint rules.
+- [x] Pass 299 tests; 94.4% statements / 82.2% branches / 92% combined coverage; independent review addressed.
+- [x] Verify real Redis with four processes, global subjects and two HTTP instances; update docs and live source guide.

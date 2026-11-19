@@ -37,7 +37,7 @@ class RateLimitRule:
         window: Time window in seconds.
         algorithm: Which rate limiting algorithm to use.
         key_func: Optional custom key resolver function.
-        key_type: Type of key to use ("ip", "user_id", "custom").
+        key_type: Subject selector: ip, user_id, path, method, global or custom.
         path_pattern: Optional URL path pattern to match (for middleware).
         name: Optional human-readable rule name for identification.
     """
@@ -60,7 +60,7 @@ class RateLimitRule:
             raise ValueError("algorithm must be an Algorithm enum member")
         if self.key_func is not None and not callable(self.key_func):
             raise ValueError("key_func must be callable")
-        if self.key_type not in {"ip", "user_id", "path", "method", "custom"}:
+        if self.key_type not in {"ip", "user_id", "path", "method", "global", "custom"}:
             raise ValueError("unknown key_type")
         if self.key_type == "custom" and self.key_func is None:
             raise ValueError("custom key_type requires key_func")

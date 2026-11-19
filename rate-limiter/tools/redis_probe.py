@@ -51,15 +51,25 @@ class SkewedClientStorage(RedisStorage):
 
 
 def worker(arguments):
-    url, namespace, name, skew = arguments
+    url, namespace, name, skew, global_subjects = arguments
     storage = SkewedClientStorage(url, skew)
-    limiter = RateLimiter(
-        RateLimiterConfig(key_prefix=namespace, fail_open=False), storage=storage
+    rule = RateLimitRule(
+        17 if global_subjects else 25,
+        3600,
+        Algorithm(name),
+        key_type="global" if global_subjects else "ip",
     )
-    rule = RateLimitRule(25, 3600, Algorithm(name))
+    limiter = RateLimiter(
+        RateLimiterConfig(rules=[rule], key_prefix=namespace, fail_open=False),
+        storage=storage,
+    )
     try:
         _barrier.wait(timeout=20)
-        results = [limiter.check("shared-subject", rule) for _ in range(32)]
+        results = [
+            limiter.check_request(f"client-{skew}-{index}")
+            if global_subjects else limiter.check("shared-subject", rule)
+            for index in range(32)
+        ]
         return {
             "pid": os.getpid(),
             "allowed": sum(result.allowed for result in results),
@@ -92,12 +102,16 @@ def probe(url):
             initializer=initialize_worker,
             initargs=(context.Barrier(4),),
         ) as pool:
-            for algorithm in Algorithm:
+            for algorithm, global_subjects in (
+                (algorithm, global_subjects)
+                for global_subjects in (False, True)
+                for algorithm in Algorithm
+            ):
                 results = list(
                     pool.map(
                         worker,
                         [
-                            (url, namespace, algorithm.value, skew)
+                            (url, namespace, algorithm.value, skew, global_subjects)
                             for skew in (-1e8, 0, 1e8, 9e8)
                         ],
                     )
@@ -105,17 +119,20 @@ def probe(url):
                 count = sum(result["allowed"] for result in results)
                 errors = sum(result["errors"] for result in results)
                 processes = len({result["pid"] for result in results})
-                assert count == 25 and errors == 0 and processes == 4, (
+                quota = 17 if global_subjects else 25
+                assert count == quota and errors == 0 and processes == 4, (
                     algorithm,
                     count,
                     errors,
                     processes,
                 )
-                report["algorithms"][algorithm.value] = {
+                group = "global_algorithms" if global_subjects else "algorithms"
+                report.setdefault(group, {})[algorithm.value] = {
                     "requests": 128,
                     "processes": processes,
                     "allowed": count,
                     "storage_errors": errors,
+                    "distinct_subjects": 128 if global_subjects else 1,
                 }
         report["bucket_capacity"] = {}
         for algorithm in (Algorithm.TOKEN_BUCKET, Algorithm.LEAKING_BUCKET):

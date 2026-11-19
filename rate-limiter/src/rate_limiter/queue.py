@@ -27,6 +27,7 @@ class LeakyBucketQueue:
         self._interval = 1 / rate
         self._stop = threading.Event()
         self._lock = threading.Lock()
+        self._close_lock = threading.RLock()
         self._thread = None
 
     def start(self):
@@ -60,7 +61,13 @@ class LeakyBucketQueue:
                 if self._stop.wait(max(0, next_start - time.monotonic())):
                     future.cancel()
                     continue
-                if not future.set_running_or_notify_cancel():
+                with self._lock:
+                    stopped = self._stop.is_set()
+                    running = not stopped and future.set_running_or_notify_cancel()
+                if stopped:
+                    future.cancel()
+                    continue
+                if not running:
                     continue
                 next_start = time.monotonic() + self._interval
                 try:
@@ -71,6 +78,15 @@ class LeakyBucketQueue:
                 self._queue.task_done()
 
     def close(self):
+        if self._thread is threading.current_thread():
+            raise RuntimeError("close must be called by the queue owner")
+        # Serialize independent owners, while synchronous cancellation callbacks
+        # on this owner thread may safely reenter close().
+        with self._close_lock:
+            self._close()
+
+    def _close(self):
+        pending = []
         with self._lock:
             self._stop.set()
             while True:
@@ -78,10 +94,13 @@ class LeakyBucketQueue:
                     future, _, _, _ = self._queue.get_nowait()
                 except queue.Empty:
                     break
+                pending.append(future)
+        # Future.cancel() invokes application callbacks synchronously.
+        for future in pending:
+            try:
                 future.cancel()
+            finally:
                 self._queue.task_done()
-        if self._thread is threading.current_thread():
-            raise RuntimeError("close must be called by the queue owner")
         if self._thread is not None:
             self._thread.join()
 

@@ -1,0 +1,45 @@
+{
+  "date": "2026-11-17",
+  "python": "3.14.8",
+  "tests": {
+    "passed": 299,
+    "skipped": 0,
+    "seconds": 15.17,
+    "warnings_as_errors": true,
+    "filtered_warning": "starlette.exceptions.StarletteDeprecationWarning"
+  },
+  "coverage": {
+    "covered_lines": 1030,
+    "num_statements": 1091,
+    "percent_covered": 91.792656587473,
+    "percent_covered_display": "92",
+    "missing_lines": 61,
+    "excluded_lines": 0,
+    "percent_statements_covered": 94.40879926672777,
+    "percent_statements_covered_display": "94",
+    "num_branches": 298,
+    "num_partial_branches": 51,
+    "covered_branches": 245,
+    "missing_branches": 53,
+    "percent_branches_covered": 82.21476510067114,
+    "percent_branches_covered_display": "82"
+  },
+  "lint": "ruff --isolated --select E4,E7,E9,F",
+  "codegraph": {
+    "initial_files": 50,
+    "initial_nodes": 925,
+    "initial_edges": 2070,
+    "sync_changed_files": 8,
+    "sync_nodes": 168,
+    "resolved_pending_references": 21,
+    "check_request_impact_depth": 2,
+    "impact_before": {
+      "nodes": 32,
+      "edges": 39
+    },
+    "impact_after": {
+      "nodes": 39,
+      "edges": 46
+    }
+  }
+}

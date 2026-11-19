@@ -9,18 +9,19 @@
 A runnable study of five rate limiting algorithms, atomic memory/Redis storage,
 request policy selection and Flask/FastAPI integration. [中文](README_CN.md).
 
-The chapter review found missing policy selection and file reloads, clock
-regression bugs, unstable cross-process identity hashes and inconsistent HTTP
-responses. The latest review passes 265 tests, fixes string-key validation and
-deep-JSON reload recovery, and reuses Redis script objects.
+The 2026-11-17 review passes 299 tests with 92% combined line/branch coverage.
+It adds JSON-configurable global quotas and bounded per-policy metrics, validates
+all request identities before charging, and fixes FIFO shutdown races/deadlocks
+and Flask route policies using shared storage.
 See [open-source comparison and current coverage (Chinese)](docs/open-source-review_cn.md).
 See [coverage and migration](docs/chapter05-review.md), [design](docs/design.md)
 and [measurements](benchmarks/REPORT.md).
 
 ## Run
 
-Python 3.9+ source syntax; execution verified on Python 3.13.9. Runtime dependency:
-redis-py (verified 6.4.0); frameworks and test tools are optional dev dependencies.
+Python 3.9+ source syntax; latest execution: Python 3.14.8 / redis-py 8.1.0 /
+Redis 8.0.6 / Flask 3.1.3 / FastAPI 0.163.1. Runtime dependency: redis-py;
+frameworks and test tools are optional dev dependencies.
 
 ```sh
 pip install -e ".[dev]"
@@ -30,13 +31,11 @@ python examples/policy_demo.py
 python tools/benchmark.py --output benchmarks/local.json
 ```
 
-The review environment disables unrelated pytest plugin autoload, uses
-`-p no:cacheprovider`, and selects a fresh `--basetemp` inside `.test-tmp` because
-its existing default cache/temp directories are inaccessible. With installed
-Starlette 1.8.0 and httpx, its TestClient emits a compatibility warning about
-optional httpx2; the review uses `-W error` with only
-`-W ignore::starlette.exceptions.StarletteDeprecationWarning`. No project tests
-are skipped. These are environment workarounds, not application requirements.
+Verification disables unrelated pytest plugins, uses `-p no:cacheprovider` and
+a fresh temporary directory. Tests run with `-W error`, filtering only Starlette
+1.10.0's optional-httpx2 compatibility warning. HTTP/async tests need an environment
+that permits asyncio cross-thread socketpair wakeups; the review sandbox blocks
+these writes, so the complete suite ran outside it. No tests were skipped.
 
 ## Configure and check
 
@@ -58,13 +57,14 @@ result = limiter.check("account-123", RateLimitRule(10, 60))
 ```
 
 Rules apply case-sensitive `fnmatch` globs to the URL path, excluding its query.
-`key_type` supports `ip`, `user_id`, `path`, `method` and `custom` (requires
+`key_type` supports `ip`, `user_id`, `path`, `method`, `global` and `custom` (requires
 `key_func`). A custom function takes precedence. Rule names, paths, selectors,
 algorithm, window, limit and optional capacity isolate counters. Identical rules
 within a request are evaluated once. Give different custom closures distinct
 stable names; a function's qualified name cannot identify captured values.
 
-All matching rules are charged sequentially; any denial wins, using the longest
+All matching identities are resolved and validated before charging. Rules are then
+charged sequentially; any denial wins, using the longest
 retry delay. There is no transaction spanning multiple rules. `config` returns
 a copy. `update_rules()` validates/copies before atomically publishing a whole
 rule set; a request keeps its original snapshot while storage I/O proceeds
@@ -183,3 +183,29 @@ also change behavior. See [the review](docs/chapter05-review.md).
 
 Global multi-region quotas, edge routing, Redis HA/Cluster, durable execution
 queues and adaptive/ML policy tuning remain deployment/design extensions.
+
+## Global quotas and policy metrics
+
+A rule with `key_type="global"` uses one quota for all `check_request()` contexts,
+including strings, within its policy and key prefix. For example, a rule file can
+contain `{"rules":[{"limit":100,"window":60,"key_type":"global","name":"all-api"}]}`.
+Use a shared storage object or Redis for sharing across limiter instances.
+A custom resolver overrides the global selector on request objects; `check(key, rule)`
+always uses its explicit key and bypasses request selectors.
+
+`limiter.rule_metrics()` returns copies with `policy_id`, `name`, `algorithm`,
+`checks`, `allowed`, `denied` and `storage_errors`. Subjects are aggregated without
+identity labels. The 100 most recently evaluated policies are retained, oldest
+first; eviction/restart resets those local policy counters. Aggregate `metrics()`
+totals remain unaffected. Names are operator metadata and must not contain secrets.
+Use an external collector for distributed dashboards and alerts.
+
+Flask's route decorator now always applies its declared rule with a supplied
+limiter, scoped by the full registered endpoint (including blueprints), rather
+than using the limiter's configured rule list. This changes route keys and resets
+those quotas; coordinate deployment across instances. Its legacy fixed429 body
+and lack of rate-limit headers remain; use `RateLimitExtension` for the complete
+HTTP response policy. Queue shutdown cancels pending work outside its state mutex,
+serializes independent closers and atomically distinguishes pending/running work.
+Callbacks, including Future completion callbacks, must finish without waiting on
+another thread closing the queue. Worker callbacks cannot call `close()`.

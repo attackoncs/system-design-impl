@@ -10,15 +10,15 @@
 [English](README.md) · [章节复审与迁移](docs/chapter05-review.md) ·
 [设计](docs/design_cn.md) · [实测](benchmarks/REPORT.md)。
 
-本轮修复路径/键类型未生效、时钟回退绕过配额、跨进程身份哈希不稳定、
-漏桶小数占用越界、HTTP响应不一致，并补充文件规则更新和监控计数。
-最新开源对照复核后265项测试通过；修正字符串键校验和深层JSON恢复，
-复用Redis脚本缓存。见[本轮章节覆盖、开源参考和验证](docs/open-source-review_cn.md)。
+2026-11-17复核后299项测试通过，行/分支综合覆盖率92%。本轮补充JSON可配的
+全局额度、容量有界的逐策略指标，修复身份解析失败时部分扣额、FIFO关闭死锁/
+竞态、共享limiter下Flask路由参数失效及工厂视图额度碰撞。见[本轮章节覆盖、开源参考和验证](docs/open-source-review_cn.md)。
 既有真实Redis多进程及实际HTTP实验见实测报告。
 
 ## 运行
 
-源码语法兼容Python3.9+，实际在3.13.9验证；Redis客户端实测6.4.0。
+源码语法兼容Python3.9+；本轮Python3.14.8、redis-py8.1.0、Redis8.0.6、
+Flask3.1.3及FastAPI0.163.1验证通过。
 运行依赖redis-py，框架、fakeredis及pytest在dev可选依赖中。
 
 ```sh
@@ -29,11 +29,9 @@ python examples/policy_demo.py
 python tools/benchmark.py --output benchmarks/local.json
 ```
 
-本机既有pytest缓存和默认临时目录权限异常，复审关闭无关插件自动加载、
-使用`-p no:cacheprovider`并为`--basetemp`指定`.test-tmp`内的新目录。
-以`-W error`执行，仅过滤已安装Starlette1.8.0因可选httpx2未安装而产生的
-`starlette.exceptions.StarletteDeprecationWarning`；没有跳过项目测试。
-这些属于复审环境处理，不是应用运行要求。
+复审关闭无关pytest插件、使用`-p no:cacheprovider`和新临时目录；以`-W error`
+执行，仅过滤Starlette1.10.0关于可选httpx2的兼容提示，无跳过。沙箱阻止asyncio
+跨线程socketpair唤醒写入，全量HTTP/异步测试在允许该操作的沙箱外执行。
 
 ## 配置与检查
 
@@ -53,12 +51,12 @@ result = limiter.check("account-123", RateLimitRule(10, 60))
 
 `path_pattern`按大小写敏感的`fnmatch`匹配URL路径，不包含查询参数；
 纯字符串上下文没有路径，跳过带路径筛选的规则。
-`key_type`支持ip/user_id/path/method/custom；custom必须指定key_func，
+`key_type`支持ip/user_id/path/method/global/custom；custom必须指定key_func，
 自定义函数优先。规则名、路径、键类型、函数标识、算法、窗口、限额和容量
 共同隔离计数。同一请求内完全重复的规则只扣一次。
 不同闭包须使用不同的稳定规则名，函数限定名不能区分捕获的变量。
 
-匹配规则依次扣额，有一条拒绝则整体拒绝，采用最长重试时间；
+匹配规则的全部主体先解析、校验、去重，失败时不扣任何额度；随后依次扣额，有一条拒绝则整体拒绝，采用最长重试时间；
 多规则之间没有统一回滚事务。配置在入口复制，`config`返回副本；
 `update_rules`完整校验后原子替换，每个请求持有自己的规则快照，
 不在配置锁内等待存储IO。
@@ -154,3 +152,23 @@ python tools/redis_probe.py --url redis://127.0.0.1:6379/0 --output benchmarks/r
 语义也有变化，见[复审记录](docs/chapter05-review.md)。
 边缘部署、多地域全局限流、Redis HA/Cluster、持久执行队列和自适应规则
 仍属于部署/设计扩展，未宣称已实现。
+
+## 全局额度与逐策略指标
+
+`key_type="global"`使`check_request()`对所有请求共享同一策略/前缀下的桶，
+包括字符串上下文。JSON示例：
+`{"rules":[{"limit":100,"window":60,"key_type":"global","name":"all-api"}]}`。
+不同limiter实例需共享存储对象或Redis；请求对象上的自定义key_func仍优先。
+`check(key, rule)`始终使用显式主体，不经过请求选择器。
+
+`limiter.rule_metrics()`返回独立副本，每项含policy_id/name/algorithm和
+checks/allowed/denied/storage_errors，不保留主体标签。最多保留最近评估的100个
+策略，按最久未用淘汰；进程重启/淘汰会重置该策略的局部计数，累计metrics()
+不受影响。名称是应用元数据，不应含秘密；外部采集、分布式看板和告警需另行部署。
+
+Flask路由装饰器现在始终应用声明的规则，即使传入共享limiter；按完整注册端点
+（含蓝图名）隔离，工厂视图和长端点名不碰撞。该变化会重置这些路由的旧额度，
+多实例应协调升级。路由装饰器仍保留固定429正文、无额度头的旧约定；完整HTTP
+响应策略请使用RateLimitExtension。FIFO关闭在状态锁外取消等待Future，串行化
+多个关闭者，并原子判断pending/running。任务和Future完成回调须有界执行，
+不能等待另一线程关闭该队列；worker内调用close会抛出RuntimeError。

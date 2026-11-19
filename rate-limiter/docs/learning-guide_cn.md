@@ -37,11 +37,11 @@ flowchart LR
 ## 六站阅读路线
 
 1. [RateLimitRule.__post_init__](../src/rate_limiter/config.py#L54)：先确认持续速率和capacity含义，非法规则应在接收请求前失败。
-2. [RateLimiter.check](../src/rate_limiter/core.py#L141)：输入主体字符串与规则，输出判定；规则被复制，调用方后续修改不影响这次检查。
-3. [RateLimiter._state_key](../src/rate_limiter/core.py#L158)：同主体但不同规则参数必须隔离状态。读完后再观察Redis或内存中的实际键。
+2. [RateLimiter.check](../src/rate_limiter/core.py#L143)：输入主体字符串与规则，输出判定；规则被复制，调用方后续修改不影响这次检查。
+3. [RateLimiter._state_key](../src/rate_limiter/core.py#L160)：同主体但不同规则参数必须隔离状态。读完后再观察Redis或内存中的实际键。
 4. [TokenBucketAlgorithm.check](../src/rate_limiter/algorithms/token_bucket.py#L126)：计算capacity、refill_rate，把算法参数交给存储；此处还没有直接扣额度。
 5. [MemoryStorage.execute_algorithm](../src/rate_limiter/storage/memory.py#L100)：在锁内取得时间水位并调用算法实现；这一步把并发读改写变成一个整体。
-6. [_memory_token_bucket_script](../src/rate_limiter/algorithms/token_bucket.py#L67)：读令牌、补令牌、决定是否扣1并写回；返回后再看 [RateLimiter._evaluate](../src/rate_limiter/core.py#L173) 的异常策略和指标。
+6. [_memory_token_bucket_script](../src/rate_limiter/algorithms/token_bucket.py#L67)：读令牌、补令牌、决定是否扣1并写回；返回后再看 [RateLimiter._evaluate](../src/rate_limiter/core.py#L175) 的异常策略和指标。
 
 ## 微观一：额度与时间必须在同一把锁内
 
@@ -107,7 +107,7 @@ flowchart TD
 
 额度不足是正常业务拒绝。存储异常则由 `_evaluate` 依据 `fail_open` 决定放行还是拒绝，同时增加 `storage_errors`。放行策略提高可用性，也可能让依赖故障期间失去限流约束；它不是算法计算出的“额度足够”。
 
-多规则检查 [RateLimiter.check_request](../src/rate_limiter/core.py#L214) 会组合结果，但不是跨规则事务。即使最终被某条规则拒绝，其他规则的原子检查也可能已消耗额度。
+多规则检查 [RateLimiter.check_request](../src/rate_limiter/core.py#L235) 先解析校验所有匹配主体，再扣额并组合结果；解析失败不扣任何额度，但正常扣额不是跨规则事务。即使最终被某条规则拒绝，其他规则的原子检查也可能已消耗额度。
 
 - [test_shared_memory_has_exact_concurrent_admission](../tests/test_chapter05_review.py#L102)：多个线程并发检查同一主体，允许数量应恰好等于额度。
 - [test_clock_regression_never_resets_quota](../tests/test_chapter05_review.py#L67)：时钟回退不能凭空恢复已消耗额度。
@@ -130,6 +130,16 @@ flowchart TD
 服务器丢失脚本缓存与丢失额度状态是两件事。前者可以重新加载代码；后者可能恢复配额，不在硬限额保证内。[test_script_cache_loss_preserves_shared_quota](../tests/test_open_source_review.py#L77) 验证重新加载代码仍只允许原额度；[test_script_timeout_is_not_retried](../tests/test_open_source_review.py#L100) 验证超时不重放可能已经发生的扣额。首次使用和恢复需要额外往返，稳态每条规则只发送一次EVALSHA。
 
 完整的开源对照与章节边界见 [open-source-review_cn.md](../docs/open-source-review_cn.md)，包含本轮参考仓库和未实现能力。
+
+## 全局桶、逐规则观测与关闭边界
+
+`key_type="global"`让 [RateLimiter.check_request](../src/rate_limiter/core.py#L235) 将不同请求映射到固定主体；规则仍各自隔离，跨进程需共享Redis。直接 `check(key, rule)` 使用显式key。[test_global_quota_is_atomic_under_concurrent_subjects](../tests/test_policy_observability.py#L57) 验证不同身份并发竞争同一桶。
+
+[RateLimiter.rule_metrics](../src/rate_limiter/core.py#L379) 返回最近100个策略的局部计数副本，不保留主体标签；被淘汰策略再次出现会重新计数，累计 `metrics()` 不受影响。外部采集仍由应用负责。
+
+[LeakyBucketQueue.close](../src/rate_limiter/queue.py#L80) 区分状态锁与关闭锁：前者保护停止/启动边界，后者串行化关闭；取消Future时不能持有状态锁，因为完成回调可以重入submit/close。[test_close_allows_cancel_callbacks_to_reenter_queue](../tests/test_queue_lifecycle.py#L15) 在子进程内用超时捕获原来的死锁。
+
+Flask路由装饰器即使传入共享limiter，也使用显式路由规则并按完整注册端点隔离；它保留固定429/无额度头约定。完整HTTP头策略使用RateLimitExtension。
 
 ## 自查与练习
 

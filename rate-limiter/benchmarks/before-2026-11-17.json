@@ -1,0 +1,107 @@
+{
+  "python": "3.14.8",
+  "platform": "Linux-6.18.58.1-microsoft-standard-WSL2-x86_64-with-glibc2.44",
+  "source": "/tmp/ch05-before-src",
+  "measurements": [
+    {
+      "algorithm": "token_bucket",
+      "clients": 1,
+      "checks": 1000,
+      "elapsed_seconds": 0.016165128000011464,
+      "checks_per_second": 61861.55779275554,
+      "p50_ms": 0.014526999962072296,
+      "p95_ms": 0.02060899987554876,
+      "p99_ms": 0.0545539999166067
+    },
+    {
+      "algorithm": "leaking_bucket",
+      "clients": 1,
+      "checks": 1000,
+      "elapsed_seconds": 0.016620442999965235,
+      "checks_per_second": 60166.86799516064,
+      "p50_ms": 0.015103999999155349,
+      "p95_ms": 0.019688000065798406,
+      "p99_ms": 0.04553600001599989
+    },
+    {
+      "algorithm": "fixed_window",
+      "clients": 1,
+      "checks": 1000,
+      "elapsed_seconds": 0.01410278000003018,
+      "checks_per_second": 70908.00537183875,
+      "p50_ms": 0.012909500014757214,
+      "p95_ms": 0.01707299998088274,
+      "p99_ms": 0.04180900009487232
+    },
+    {
+      "algorithm": "sliding_window_log",
+      "clients": 1,
+      "checks": 1000,
+      "elapsed_seconds": 0.021825871000146435,
+      "checks_per_second": 45817.18640201304,
+      "p50_ms": 0.020428500079106016,
+      "p95_ms": 0.02699099991332332,
+      "p99_ms": 0.06061499993847974
+    },
+    {
+      "algorithm": "sliding_window_counter",
+      "clients": 1,
+      "checks": 1000,
+      "elapsed_seconds": 0.014477045999910843,
+      "checks_per_second": 69074.86513520496,
+      "p50_ms": 0.013115000001562294,
+      "p95_ms": 0.016872000060175196,
+      "p99_ms": 0.04445499985195056
+    },
+    {
+      "algorithm": "token_bucket",
+      "clients": 8,
+      "checks": 1000,
+      "elapsed_seconds": 0.03579383000010239,
+      "checks_per_second": 27937.77586799567,
+      "p50_ms": 0.015108000070540584,
+      "p95_ms": 0.04112799979338888,
+      "p99_ms": 0.10029000009126321
+    },
+    {
+      "algorithm": "leaking_bucket",
+      "clients": 8,
+      "checks": 1000,
+      "elapsed_seconds": 0.0346680049999577,
+      "checks_per_second": 28845.040261221264,
+      "p50_ms": 0.015744999927846948,
+      "p95_ms": 0.04856200007452571,
+      "p99_ms": 0.1421700001174031
+    },
+    {
+      "algorithm": "fixed_window",
+      "clients": 8,
+      "checks": 1000,
+      "elapsed_seconds": 0.031196851000004244,
+      "checks_per_second": 32054.51729727029,
+      "p50_ms": 0.01331549992755754,
+      "p95_ms": 0.042030000031445525,
+      "p99_ms": 0.05911199991714966
+    },
+    {
+      "algorithm": "sliding_window_log",
+      "clients": 8,
+      "checks": 1000,
+      "elapsed_seconds": 0.08652310400020724,
+      "checks_per_second": 11557.606624903388,
+      "p50_ms": 0.06549449994963652,
+      "p95_ms": 0.0985180001862318,
+      "p99_ms": 0.2010519999657845
+    },
+    {
+      "algorithm": "sliding_window_counter",
+      "clients": 8,
+      "checks": 1000,
+      "elapsed_seconds": 0.03088802999991458,
+      "checks_per_second": 32375.00093087081,
+      "p50_ms": 0.013505499964594492,
+      "p95_ms": 0.043602999994618585,
+      "p99_ms": 0.6997399998454057
+    }
+  ]
+}

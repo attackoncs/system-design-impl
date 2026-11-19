@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import dataclasses
 import functools
+import hashlib
 from typing import Optional
 
 import flask
@@ -158,18 +160,25 @@ def rate_limit(
         ```
     """
 
+    rule = build_rule(limit, window, algorithm, key_type)
+
     def decorator(func):
         # Keep one backend for the lifetime of the decorated route. Creating
         # a backend per request resets every counter and silently disables limits.
         local_limiter = limiter
         if local_limiter is None:
-            rule = build_rule(limit, window, algorithm, key_type)
             config = rate_limiter_config.RateLimiterConfig(rules=[rule])
             local_limiter = rate_limiter_core.RateLimiter(config)
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            result = local_limiter.check_request(flask.request)
+            # Flask endpoint names distinguish factory views and blueprints.
+            # Hash the full endpoint so long names never collide by truncation.
+            endpoint = flask.request.endpoint or f"{func.__module__}.{func.__qualname__}"
+            scoped_rule = dataclasses.replace(
+                rule, name="flask:" + hashlib.sha256(endpoint.encode()).hexdigest()
+            )
+            result = local_limiter.check_request(flask.request, rules=[scoped_rule])
             if not result.allowed:
                 # Route-level decorator keeps its historical fixed-429 body.
                 response = flask.jsonify(

@@ -1,5 +1,77 @@
 # 第5章：章节覆盖与开源代码对照
 
+## 2026-11-17 当前复核
+
+重新阅读原书第5章（Design A Rate Limiter，923–1507行）。五算法已有实现，
+本轮重点补齐全局规则与逐规则观测，并修复可复现的并发和接入错误；未重写算法。
+
+| 原书主题 | 当前实现与边界 |
+|---|---|
+| 五算法、突发容量 | 全部已有；滑动日志只记录接纳请求，滑动计数为近似，固定窗口有边界突发。 |
+| IP/用户/接口/全局桶 | `global`可从JSON声明，跨身份共享同一策略/前缀的额度；跨实例需共享存储。直接check仍使用显式key。 |
+| 规则、文件与worker | 严格加载/失败保留/快照发布已有；新增所有匹配主体预校验，解析失败不扣任何额度。 |
+| 漏桶FIFO | 本地有界FIFO已有；修复取消回调重入死锁、pending启动与关闭竞态、并发close提前返回。 |
+| 429与响应头 | 两框架完整适配已有；Flask路由声明在共享limiter下不再失效，按完整注册端点摘要隔离。路由装饰器保留固定429/无额度头，完整策略使用扩展。 |
+| Redis竞争与同步 | 单Redis主节点下服务端时间+原子脚本；四进程验证五算法及全局主体共享，无粘性会话。 |
+| 监控规则是否有效 | 新增最近100个策略的局部LRU计数副本，无主体标签；累计指标不受淘汰影响。采集/看板/告警仍需外部系统。 |
+| 地域/边缘/HA/其他网络层 | 未实现全球硬配额、地域最终一致同步、边缘路由、Redis HA/Cluster、L3、持久分布式队列或客户端退避SDK。 |
+
+### 本轮GitHub源码参考
+
+实际读取了 [limits/strategies.py](https://github.com/alisaifee/limits/blob/master/limits/strategies.py)
+（文件blob摘要`e1754f5277e501dfe42fb44fc0d8fde4b4b87a1b`）、
+[Flask-Limiter的规则作用域](https://github.com/alisaifee/flask-limiter/blob/master/flask_limiter/_limits.py)
+（`66512905a0875a8683a0c27961fd6f180e9175c8`）及
+[Envoy RateLimit的Redis连接配置](https://github.com/envoyproxy/ratelimit/blob/main/src/redis/cache_impl.go)
+（`11c4b7ff38c32194a54a214c2c8a1fb979afe873`）。前者用于核对窗口算法/存储职责分离，
+第二个用于核对端点作用域与共享规则的区别，后者用于核对独立连接池/超时等资源边界。
+分支链接会变化，摘要用于标识查阅的文件内容；未安装运行上游项目，未复制其源码。
+本项目继续使用现有Python接口与依赖，不引入整个网关服务。
+
+### 验证证据
+
+- 新增34项测试：主体预校验/全局额度/策略指标15项，Flask路由15项，FIFO生命周期4项。
+  核心15项首次全部失败；FIFO原3项失败、并发关闭后补1项失败；Flask首次11项失败，
+  工厂/长端点再补2项失败，修复后全部通过。独立审查发现的两项问题均有RED→GREEN证据。
+- 全量299项通过，无跳过，15.17秒；Python3.14.8 / redis-py8.1.0 / Redis8.0.6 /
+  Flask3.1.3 / FastAPI0.163.1 / Starlette1.10.0。语法兼容目标仍为Python3.9+，并未在所有版本运行。
+- coverage：语句94.4%，分支82.2%，综合91.8%（显示92%），阈值80%通过；
+  Ruff独立E4/E7/E9/F检查通过。仓库默认广泛风格规则存在历史告警，未进行无关全库格式改写。
+- 真实Redis探针：五算法分别4进程/128请求、额度25、恰好放行25；全局策略分别128个
+  不同主体/额度17、恰好放行17；均无存储错误。双真实HTTP服务共32次，放行9/拒绝23。
+  [完整原始记录](../benchmarks/redis-2026-11-17.json)。探针可用仓库tools/redis_probe.py复现，
+  只清理自己的命名空间；本轮服务器独立下载解压至/tmp，自行启动并在验证后终止。
+- 内存微基准未显示吞吐提升；新增观测与预校验有成本，见[同环境前后对照](../benchmarks/REPORT.md)。
+
+完整验证命令（工作目录rate-limiter，先安装`.[dev]`及coverage）：
+
+```sh
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m coverage run --branch --source=src/rate_limiter -m pytest -q -W error -W ignore::starlette.exceptions.StarletteDeprecationWarning -p no:cacheprovider --basetemp=/tmp/ch05-review-tests tests
+python -m coverage report --fail-under=80
+python tools/redis_probe.py --url redis://127.0.0.1:6379/0 --output benchmarks/redis-local.json
+```
+
+本机沙箱允许创建socketpair但拒绝asyncio跨线程唤醒写入；不带项目代码的AnyIO最小
+复现同样停滞，沙箱外立即成功。完整测试在沙箱外执行，没有为绕过限制修改应用代码。
+
+### CodeGraph和迁移
+
+Windows启动器在WSL路径下失败；直接用Linux Node执行已有codegraph.js。
+根索引有Windows/WSL SQLite锁冲突，改为独立`CODEGRAPH_DIR=.codegraph-wsl`，
+没有修改用户配置或安装Git hooks。初次索引50文件/925节点/2070边；增量同步8文件、
+168节点、解析21条待定引用。`check_request`深度2影响分析从32节点/39边变为39节点/46边，
+定位到core的键解析/规则/算法调用以及Flask、FastAPI和测试依赖。静态图会受动态分派、
+同名定义和查询深度限制，结果不是完整运行时证明；源码与真实测试共同核验。
+
+现有核心v2键及五算法语义不变；新增global是独立策略。Flask路由装饰器由原先忽略
+显式参数/不隔离端点，改为执行声明规则并使用完整端点摘要，因此这些路由的额度会重置，
+多实例需协调升级。指标容量淘汰仅影响局部观测，不影响存储额度；名称不得放秘密。
+FIFO完成回调和任务须有界，不可等待另一个关闭者，worker不能自行close。
+
+## 2026-10-31 历史复核
+
+以下为上轮记录，测试数量与缺口以本文当前复核为准。
+
 复核日期：2026-10-31。依据仓库内《System Design Interview.md》第5章
 （923–1507行），先阅读原文，再通过 CodeGraph 追踪核心、算法、存储和
 接入层，并查询、阅读下面的 GitHub 仓库及相关源码。

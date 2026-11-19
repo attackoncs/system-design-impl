@@ -111,3 +111,12 @@ counts accepted requests; HA/global quotas/durable queues remain out of scope.
   the mutation. Redis ACL requirements and cold-cache round trips must be documented.
 - GitHub references, chapter coverage and outstanding deployment/monitoring
   boundaries must be recorded in the [review](open-source-review_cn.md).
+
+## 2026-11-17 policy and lifecycle supplement
+
+- Preflight every matching identity and deduplicate state keys before storage I/O. Invalid subjects/resolver failures charge nothing; ordinary denials still charge sequentially without multi-rule rollback.
+- `key_type="global"` is JSON-configurable and shares one request quota per policy/prefix, including string contexts. Custom request resolvers take precedence; direct `check` uses its explicit key.
+- `rule_metrics()` retains at most 100 recently evaluated policy records, never subject labels. Copies expose policy_id/name/algorithm and checks/allowed/denied/storage_errors. Eviction/restart resets local policy counters; aggregate totals remain unaffected. External monitoring is separate.
+- FIFO cancellation callbacks run outside the state mutex; shutdown and pending-to-running are mutually exclusive. A separate reentrant close lock serializes cancellation/join across owners. Worker self-close is rejected before acquiring it; callbacks must not wait for another closer.
+- Flask route declarations remain effective with supplied limiters; full registered endpoint hashes isolate factory/blueprint/long names. Route quota keys change on upgrade. Fixed429/no-header route responses are retained; the extension provides the full HTTP contract.
+- No new runtime dependencies or claims of Redis HA/Cluster, multi-region quotas, durable delivery or external monitoring.

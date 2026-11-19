@@ -10,7 +10,7 @@ import fnmatch
 import hashlib
 import json
 import threading
-from collections import Counter
+from collections import Counter, OrderedDict
 from functools import lru_cache
 from typing import Any, Optional
 
@@ -46,6 +46,7 @@ _ALGORITHM_TYPES: dict[rate_limiter_config.Algorithm, type] = {
 }
 
 _MAX_KEY_LENGTH = 8192
+_MAX_RULE_METRICS = 100
 
 
 def _checked_key(key: Any, message: str) -> str:
@@ -96,6 +97,7 @@ class RateLimiter:
         """
         self._lock = threading.RLock()
         self._metrics = Counter()
+        self._rule_metrics = OrderedDict()
         self._config = dataclasses.replace(config, rules=self._copy_rules(config.rules))
         self._storage = storage if storage is not None else self._create_storage()
         self._algorithms = self._load_algorithms()
@@ -186,11 +188,30 @@ class RateLimiter:
                 type(e).__name__,
             )
             result = self._failure_result(rule)
-        with self._lock:
-            self._metrics["checks"] += 1
-            self._metrics["allowed" if result.allowed else "denied"] += 1
-            self._metrics["storage_errors"] += int(failed)
+        self._record_metrics(key, rule, result, failed)
         return result
+
+    def _record_metrics(self, state_key, rule, result, failed):
+        """Record process-local counts with bounded policy cardinality."""
+        changes = {
+            "checks": 1,
+            "allowed": int(result.allowed),
+            "denied": int(not result.allowed),
+            "storage_errors": int(failed),
+        }
+        # _state_key always ends with the policy digest, never the subject.
+        policy_id = state_key.rsplit(":", 1)[-1]
+        with self._lock:
+            self._metrics.update(changes)
+            previous = self._rule_metrics.pop(policy_id, {})
+            self._rule_metrics[policy_id] = {
+                "policy_id": policy_id,
+                "name": rule.name,
+                "algorithm": rule.algorithm.value,
+                **{name: previous.get(name, 0) + value for name, value in changes.items()},
+            }
+            if len(self._rule_metrics) > _MAX_RULE_METRICS:
+                self._rule_metrics.popitem(last=False)
 
     def _failure_result(self, rule) -> algorithms_base.RateLimitResult:
         """Apply the configured fail-open/fail-closed policy to one rule."""
@@ -242,18 +263,18 @@ class RateLimiter:
         else:
             rules = self._copy_rules(rules)
 
-        results = []
-        seen = set()
+        prepared = {}
         for rule in rules:
             if not self._rule_applies(request_context, rule):
                 continue
             # The state key includes policy identity, so different rules are
             # isolated and identical rules are charged once per request.
             full_key = self._state_key(self._resolve_key(request_context, rule), rule)
-            if full_key in seen:
-                continue
-            seen.add(full_key)
-            results.append(self._evaluate(full_key, rule))
+            prepared.setdefault(full_key, rule)
+
+        # Fail on invalid identities before charging any applicable policy.
+        # Storage decisions below remain sequential, without cross-rule rollback.
+        results = [self._evaluate(key, rule) for key, rule in prepared.items()]
 
         # No applicable rules allows by default.
         return self._most_restrictive_result(results)
@@ -281,6 +302,11 @@ class RateLimiter:
         Returns:
             The resolved key string.
         """
+        # Global request policy uses one subject even with a plain string context.
+        # A custom resolver still takes precedence on framework request objects.
+        if rule.key_type == "global" and rule.key_func is None:
+            return rate_limiter_keys.global_key(request_context)
+
         # If request_context is a plain string, use it directly as the key
         if isinstance(request_context, str):
             return _checked_key(request_context, "key must have 1..8192 characters")
@@ -349,6 +375,16 @@ class RateLimiter:
                 name: self._metrics[name]
                 for name in ("checks", "allowed", "denied", "storage_errors")
             }
+
+    def rule_metrics(self) -> list[dict[str, Any]]:
+        """Snapshots for the 100 most recently evaluated policies, oldest first.
+
+        Subjects are aggregated, never retained as labels. Eviction or process
+        restart resets a policy's local counts; metrics() totals are unaffected.
+        Names are application-supplied metadata and should not contain secrets.
+        """
+        with self._lock:
+            return [dict(entry) for entry in self._rule_metrics.values()]
 
     @property
     def config(self) -> rate_limiter_config.RateLimiterConfig:

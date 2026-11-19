@@ -162,12 +162,18 @@ def method_key(request: Any) -> str:
     return "UNKNOWN"
 
 
+def global_key(request: Any) -> str:
+    """One subject for all requests under the same policy and storage prefix."""
+    return "global"
+
+
 # Built-in resolvers selected by RateLimitRule.key_type ("custom" uses key_func).
 KEY_TYPE_FUNCTIONS: dict[str, KeyFunc] = {
     "ip": ip_key,
     "user_id": user_id_key,
     "path": path_key,
     "method": method_key,
+    "global": global_key,
 }
 
 
