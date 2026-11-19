@@ -11,6 +11,7 @@ import logging
 import math
 
 import chat_system.models
+from chat_system.concurrency import _wait_owned
 
 try:
     import websockets.asyncio.server
@@ -54,6 +55,42 @@ class WebSocketChatServer:
         if operation is None:
             operation = getattr(self.service, name)
         return await resolve(operation(*args))
+
+    async def _login(self, websocket, request, deadline):
+        """Bound admission by the read deadline and own any late result."""
+
+        async def connect():
+            return await resolve(
+                self.service.connect(request["token"], request["device_id"])
+            )
+
+        admission = asyncio.create_task(connect())
+        try:
+            remaining = max(0, deadline - asyncio.get_running_loop().time())
+            done, _ = await asyncio.wait({admission}, timeout=remaining)
+            if not done or asyncio.get_running_loop().time() >= deadline:
+                # Close before waiting for cancellation-resistant backend I/O.
+                await websocket.close(code=1008, reason="login timeout")
+                raise asyncio.TimeoutError
+            return admission.result()
+        except BaseException:
+
+            async def release():
+                admission.cancel()
+                try:
+                    session = await admission
+                except (Exception, asyncio.CancelledError):
+                    return
+                # Generic adapters may finish successfully despite cancellation.
+                await resolve(self.service.disconnect(session))
+
+            await _wait_owned(asyncio.create_task(release()))
+            raise
+
+    @staticmethod
+    async def _stop_events(pump):
+        pump.cancel()
+        await _wait_owned(asyncio.gather(pump, return_exceptions=True))
 
     async def dispatch(self, session, request):
         op = request["op"]
@@ -142,20 +179,28 @@ class WebSocketChatServer:
                     self.send_timeout,
                 )
 
-        async def events():
+        async def deliver(event):
             try:
-                while True:
-                    event = await session.queue.get()
-                    await write(event)
-                    if event["type"] == "closed":
-                        await websocket.close(code=1000, reason="reconnect and sync")
-                        return
+                await write(event)
+                if event["type"] == "closed":
+                    await websocket.close(code=1000, reason="reconnect and sync")
+                    return False
+                return True
             except websockets.exceptions.ConnectionClosed:
-                return
+                return False
             except Exception:  # pylint: disable=broad-exception-caught
                 # A failed event writer must also wake the request reader.
                 logging.getLogger(__name__).exception("Chat event delivery failed")
                 await websocket.close(code=1011, reason="reconnect and sync")
+                return False
+
+        async def events():
+            while True:
+                event = await session.queue.get()
+                # Once dequeued, finish the bounded write and its failure close
+                # before cancellation can stop this pump or a replacement starts.
+                if not await _wait_owned(asyncio.create_task(deliver(event))):
+                    return
 
         try:
             while True:
@@ -188,15 +233,18 @@ class WebSocketChatServer:
                             raise chat_system.models.AuthenticationError(
                                 "login required"
                             )
-                        session = await resolve(
-                            self.service.connect(request["token"], request["device_id"])
-                        )
+                        session = await self._login(websocket, request, deadline)
                         self._owned_sessions.add(session)
                         result = {
                             "user_id": session.user_id,
                             "device_id": session.device_id,
                         }
                     else:
+                        if request["op"] == "logout" and pump is not None:
+                            # disconnect queues a closed event before Redis I/O
+                            # completes. Reply before that event can close us.
+                            await self._stop_events(pump)
+                            pump = None
                         result = await self.dispatch(session, request)
                     await write(
                         {
@@ -208,8 +256,6 @@ class WebSocketChatServer:
                     )
                     if request["op"] == "logout":
                         return
-                    if pump is None:
-                        pump = asyncio.create_task(events())
                 except (
                     chat_system.models.ChatError,
                     KeyError,
@@ -224,6 +270,8 @@ class WebSocketChatServer:
                             "error": "invalid or unauthorized request",
                         }
                     )
+                except asyncio.TimeoutError:
+                    raise
                 # Isolate this operation; record failures before continuing.
                 except Exception:  # pylint: disable=broad-exception-caught
                     # Shared backend errors must not masquerade as successful
@@ -239,6 +287,12 @@ class WebSocketChatServer:
                             "error": ("service unavailable; rediscover and retry"),
                         }
                     )
+                if session is not None and pump is None:
+                    if getattr(session, "closed", False):
+                        await websocket.close(code=1000, reason="reconnect and sync")
+                        return
+                    # A rejected logout leaves the session usable.
+                    pump = asyncio.create_task(events())
         except asyncio.TimeoutError:
             if session is None:
                 await websocket.close(code=1008, reason="login timeout")
@@ -250,11 +304,7 @@ class WebSocketChatServer:
             pass
         finally:
             if pump is not None:
-                pump.cancel()
-                with contextlib.suppress(
-                    asyncio.CancelledError, websockets.exceptions.ConnectionClosed
-                ):
-                    await pump
+                await self._stop_events(pump)
             # Preserve online grace for transport loss. The cleanup loop expires
             # this session.
 

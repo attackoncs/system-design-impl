@@ -453,6 +453,10 @@ class DistributedChatService:
         await self.validate_session(session)
         return await self.store.sync(session.user_id, after, limit)
 
+    async def async_sync(self, session, after=0, limit=100):
+        await self.validate_session(session)
+        return await self.store.sync_bounded(session.user_id, after, limit)
+
     async def history(self, session, channel_id, after=0, limit=100):
         """Return an ascending page of an accessible channel's messages.
 
@@ -467,6 +471,12 @@ class DistributedChatService:
         """
         await self.validate_session(session)
         return await self.store.history(channel_id, session.user_id, after, limit)
+
+    async def async_history(self, session, channel_id, after=0, limit=100):
+        await self.validate_session(session)
+        return await self.store.history_bounded(
+            channel_id, session.user_id, after, limit
+        )
 
     async def get_message(self, session, message_id):
         """Read an original recipient's message by ID for random access."""

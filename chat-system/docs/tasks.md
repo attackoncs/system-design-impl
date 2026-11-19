@@ -1,5 +1,14 @@
 # Implementation Plan: Chat System
 
+## 2026-11-17 review verification
+
+- [x] Re-read the book and pinned Tinode/Zulip code, trace the current CodeGraph and verify actual execution paths.
+- [x] Add bounded Redis body reads and distributed network adapters while preserving count-only APIs, inbox authorization and join watermarks.
+- [x] Cover asynchronous login admission with the absolute deadline, drain late sessions, order logout replies and preserve in-flight/rejected-logout events.
+- [x] Drain notification groups despite repeated cancellation and preserve their original failure.
+- [x] Preserve existing tests/tools; add 11 regressions (10 RED, one compatibility guard). Owned Redis: 213 passed / one skip; separate fresh Sentinel: one passed, 214 distinct cases in total. Source coverage 85.27%; statement 87.81%, branch 77.06%. Original 20-connection/100-message node-fault tool and examples passed.
+- [x] Synchronize bilingual docs, guide, graph and [verification evidence](../benchmarks/verification-2026-11-17.json). Historical checkpoints below retain their original dates; deployment work stays open.
+
 ## 2026-11-06 review verification
 
 - [x] Compare fixed Tinode/Zulip source with the existing send/inbox/device/push paths; retain the implemented business boundaries.

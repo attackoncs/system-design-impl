@@ -9,9 +9,13 @@
 基于《System Design Interview》第 13 章实现的 Python 聊天系统参考库。
 核心仅依赖标准库，可选 WebSocket 适配层提供真实网络收发。
 
-2026-11-06收尾已完成[Tinode/Zulip固定源码对照](docs/open-source-review_cn.md)。
-本轮主套202项通过、1项Sentinel跳过，随后在全新六进程实验中单独通过该项，合计覆盖203个不同用例。
-故障恢复2.319秒，已确认消息保留、重试0重复；Windows运行时识别、实验就绪与资源清理修复及精确范围见[验证报告](benchmarks/results.md)。
+2026-11-17已对照原书、CodeGraph及[Tinode/Zulip固定源码](docs/open-source-review_cn.md)复核。
+最终自建Redis主套**213项通过、1项Sentinel跳过**，独立六进程lab单独通过该项，共覆盖**214个不同用例**。
+Sentinel恢复2.417秒、已确认消息保留且重试0重复；原节点故障工具、中英README SQLite示例也通过，见[章节记录](docs/chapter13-review.md)和[验证报告](benchmarks/results.md)。
+
+本轮补齐Redis网络读取的1.8MB UTF-8 JSON预算（正文最多8条一批、保留底层按条数接口），以及异步登录期限、晚到会话回收、登出响应/在途事件所有权和通知组重复取消排空。短页需按实际返回游标继续；超期先关闭socket，后端清理仍可延迟handler退出。已有投递/复制保证不变。
+
+原测试和benchmark源码保留，仅新增11项针对性回归；主套/Sentinel累积源码覆盖85.27%（语句87.81%、分支77.06%），子进程CLI运行未汇总进覆盖数据。[汇总证据](benchmarks/verification-2026-11-17.json)记录精确执行范围。
 
 ## 功能
 
@@ -89,7 +93,7 @@ python examples/websocket_server.py
 完整字段说明见 [英文文档](./README.md#websocket-demo)。
 
 建议每五秒发送应用层心跳，默认三十秒超时。WebSocket 协议 ping
-不能替代应用心跳。意外断网保留在线宽限期，显式退出立即关闭会话。
+不能替代应用心跳。意外断网保留在线宽限期，显式退出先排空在途事件写入，执行后关闭会话且不保留心跳宽限。
 
 每台设备独立记录已处理完的同步游标。重连后分页拉取并处理消息，再保存
 返回的 `next_cursor`。不能只因收到一条较新的实时消息，就跳过此前尚未处理的消息。

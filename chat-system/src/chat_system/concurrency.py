@@ -27,10 +27,17 @@ async def run_blocking(function, *args, **kwargs):
 
 async def gather_owned(*coroutines):
     tasks = [asyncio.create_task(coro) for coro in coroutines]
+    group = asyncio.gather(*tasks)
     try:
-        return await asyncio.gather(*tasks)
-    finally:
+        # Deliver cancellation once, then retain ownership of child cleanup.
+        return await asyncio.shield(group)
+    except BaseException:
         for task in tasks:
             if not task.done():
                 task.cancel()
-        await _wait_owned(asyncio.gather(*tasks, return_exceptions=True))
+        try:
+            # A group can finish before every child's finally block has exited.
+            await _wait_owned(asyncio.gather(*tasks, group, return_exceptions=True))
+        except asyncio.CancelledError:
+            pass
+        raise

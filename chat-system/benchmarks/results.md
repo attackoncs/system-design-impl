@@ -1,3 +1,19 @@
+# Chapter 13 verification: 2026-11-17
+
+Original owned-Redis baseline: 202 passed / 1 Sentinel skip in 10.86s. The final strict suite collected 214 cases: **213 passed, one skipped in 12.10s** (JUnit 11.831s). A fresh six-process Sentinel lab covered that skipped case separately: **one passed in 13.68s** (JUnit 13.689s), recovery 2.417s, confirmed messages preserved, zero retry duplicates, and unconfirmed retries rejected when replicas were paused. These runs cover **214 distinct cases**, not one 214-pass run. Both owned Redis/lab environments stopped.
+
+The 11 new regressions cover bounded Redis pages, login/logout and in-flight event ownership, and repeated cancellation of notification groups; 10 failed before their fixes, one guards existing event recovery after a rejected logout. Existing tests and benchmark source were preserved. Combined source coverage is 85.27%: statements 87.81%, branches 77.06%; 27 protocol-stub lines use coverage's default exclusions, with no business module excluded. Child-process CLI execution is tested but is not merged into coverage. See the [chapter audit](../docs/chapter13-review.md) and [verification record](verification-2026-11-17.json).
+
+The original node-fault harness also passed with 20 real WebSocket connections, 100 messages, four publishers and 128-byte payloads: all 100 sends acknowledged, zero errors, zero missing durable messages and zero duplicate live deliveries. One live hint was lost during node termination and recovered by inbox sync; reconnect took 0.031s. This run used no WAIT replica confirmation; the Sentinel experiment tests confirmation separately. The original basic example and both README SQLite examples passed.
+
+This is a small correctness run on Linux/WSL, Python3.14.8, Redis8.0.6 and websockets16.1.1. It does not repeat the historical 1,000-connection capacity measurements or establish a speedup, production SLO or 50-million-DAU capacity.
+
+- [Owned Redis suite](review-2026-11-17.json)
+- [Separate Sentinel case](sentinel-review-2026-11-17.json)
+- [Existing node-fault tool output](node-fault-review-2026-11-17.json)
+
+---
+
 # History scan efficiency fix: 2026-11-09
 
 Adding a group member now records the highest message ID at that moment (SQLite

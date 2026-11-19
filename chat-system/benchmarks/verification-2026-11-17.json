@@ -1,0 +1,116 @@
+{
+  "date": "2026-11-17",
+  "chapter": 13,
+  "book_lines": [
+    3855,
+    4288
+  ],
+  "environment": {
+    "python": "3.14.8",
+    "platform": "Linux/WSL",
+    "redis": "8.0.6",
+    "websockets": "16.1.1"
+  },
+  "baseline": {
+    "passed": 202,
+    "skipped": 1,
+    "pytest_display_seconds": 10.86,
+    "junit_seconds": 10.601
+  },
+  "main_suite": {
+    "collected": 214,
+    "passed": 213,
+    "skipped": 1,
+    "failures": 0,
+    "errors": 0,
+    "pytest_display_seconds": 12.1,
+    "junit_seconds": 11.831,
+    "raw_file": "review-2026-11-17.json",
+    "warnings": "error",
+    "owned_redis_shutdown": true
+  },
+  "sentinel": {
+    "passed": 1,
+    "skipped": 0,
+    "pytest_display_seconds": 13.68,
+    "junit_seconds": 13.689,
+    "recovery_seconds": 2.417,
+    "raw_file": "sentinel-review-2026-11-17.json",
+    "owned_lab_stopped": true
+  },
+  "counting": "213 main passes plus one separately passed Sentinel case cover 214 distinct cases; not one 214-pass suite run",
+  "regressions": {
+    "new_cases": 11,
+    "confirmed_failing_before_fix": 10,
+    "existing_behavior_guards": 1,
+    "files": [
+      "../tests/test_owned_group_review.py",
+      "../tests/test_redis_page_budget_review.py",
+      "../tests/test_transport_lifecycle_review.py"
+    ]
+  },
+  "coverage": {
+    "covered_lines": 1585,
+    "num_statements": 1805,
+    "percent_covered": 85.27295810410494,
+    "percent_covered_display": "85",
+    "missing_lines": 220,
+    "excluded_lines": 27,
+    "percent_statements_covered": 87.81163434903047,
+    "percent_statements_covered_display": "88",
+    "num_branches": 558,
+    "num_partial_branches": 94,
+    "covered_branches": 430,
+    "missing_branches": 128,
+    "percent_branches_covered": 77.06093189964157,
+    "percent_branches_covered_display": "77"
+  },
+  "coverage_scope": "Combined main and Sentinel runs; 14 production Python modules, 27 default-excluded Protocol stub lines; no business module exclusions; child-process CLI execution is tested but not merged into coverage",
+  "commands": {
+    "owned_redis": "CHAT_REDIS_BINARY=<owned redis-server> LD_LIBRARY_PATH=<runtime libraries> python tools/run_redis_review.py --output benchmarks/review-2026-11-17.json",
+    "instrumented_main": "Temporary wrapper reused tools/run_redis_review.py unchanged and replaced only its pytest subprocess invocation with: python -W error -m coverage run --branch --source=src/chat_system -m pytest tests -q -p no:cacheprovider --basetemp=<owned folder> --junitxml=<owned folder>/tests.xml. Absolute project src PYTHONPATH inherited by child nodes.",
+    "sentinel": "Existing tools/redis_lab.py in a unique temporary directory with six owned loopback ports; CHAT_TEST_REDIS_LAB=<owned lab> python -W error -m coverage run --branch --source=src/chat_system -m pytest -q -p no:cacheprovider tests/test_ha.py::test_sentinel_promotes_replica_and_preserves_confirmed_messages",
+    "node_fault": "python -W error tools/load_test.py --connections 20 --messages 100 --concurrency 4 --kill-node --output benchmarks/node-fault-review-2026-11-17.json (CHAT_REDIS_URL set only to the owned Redis)",
+    "example": "python -W error examples/basic_chat.py; both README examples executed in separate temporary SQLite directories"
+  },
+  "node_fault": {
+    "raw_file": "node-fault-review-2026-11-17.json",
+    "scope": "20 connections, 100 messages, no WAIT; correctness smoke, no speedup/capacity claim",
+    "live_hints_lost": 1,
+    "durable_messages_missing": 0
+  },
+  "existing_test_source_changed": false,
+  "benchmark_source_changed": false,
+  "checks": [
+    "Ruff E/F/I ignoring E501 and formatter on changed files",
+    "Python3.9 AST for 14 source files",
+    "README examples/basic example passed",
+    "generated learning guide matches canonical template",
+    "local Markdown links validated",
+    "independent review HIGH fixed and re-reviewed with no remaining blocker"
+  ],
+  "codegraph": {
+    "files": 35,
+    "python_files": 33,
+    "yaml_files": 2,
+    "nodes": 860,
+    "edges": 2400,
+    "state": "complete",
+    "pending_changes": 0,
+    "directory": ".codegraph-wsl",
+    "limitations": "Static/dynamic call edges are supporting navigation evidence, not test coverage"
+  },
+  "references": [
+    "https://github.com/tinode/chat/blob/eb90ef83acae6542f52719377ee5a76d267a5618/server/topic.go",
+    "https://github.com/zulip/zulip/blob/7380849ee6db900ba5e2ce84aed13156a471e33d/zerver/actions/message_send.py",
+    "https://github.com/zulip/zulip/blob/7380849ee6db900ba5e2ce84aed13156a471e33d/zerver/tornado/django_api.py"
+  ],
+  "remaining_boundaries": [
+    "SQLite local durability and Redis single hash-slot topology",
+    "Sentinel/WAIT is not consensus or all-fault zero-loss replication",
+    "external push remains at-least-once; real mobile credentials/TLS/user profiles/contact integration remain deployment work",
+    "no sharding/multiregion or 50-million-DAU capacity acceptance",
+    "byte budget limits returned payload; bounded batches may read ahead up to eight bodies",
+    "socket timeout precedes backend cleanup; slow cleanup/close handshakes can delay handler exit"
+  ]
+}

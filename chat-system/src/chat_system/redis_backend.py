@@ -10,10 +10,9 @@ import secrets
 import string
 import uuid
 
-from chat_system.redis_scripts import _APPEND, _ADMIT, _SESSION, _ONLINE
-
 import chat_system.discovery
 import chat_system.models
+from chat_system.redis_scripts import _ADMIT, _APPEND, _ONLINE, _SESSION
 
 try:
     import redis.asyncio
@@ -375,6 +374,40 @@ class RedisBackend:
         ):
             raise chat_system.models.ChatError("invalid cursor or page size")
 
+    @staticmethod
+    def _page_bytes(byte_limit):
+        if byte_limit is not None and (type(byte_limit) is not int or byte_limit < 1):
+            raise chat_system.models.ChatError("invalid page byte limit")
+
+    async def _read_page_ids(self, ids, byte_limit, used=2):
+        """Read at most eight bodies ahead of the byte budget decision."""
+        messages = []
+        batch_size = len(ids) if byte_limit is None else 8
+        for start in range(0, len(ids), batch_size):
+            rows = await self.redis.hmget(
+                self.key("messages"), ids[start : start + batch_size]
+            )
+            for raw in rows:
+                message = message_from_json(raw)
+                if byte_limit is not None:
+                    size = (
+                        len(
+                            json.dumps(
+                                dataclasses.asdict(message), ensure_ascii=False
+                            ).encode("utf-8")
+                        )
+                        + 2
+                    )
+                    if used + size > byte_limit:
+                        if used == 2:
+                            raise chat_system.models.ChatError(
+                                "message exceeds page byte limit"
+                            )
+                        return messages, used, True
+                    used += size
+                messages.append(message)
+        return messages, used, False
+
     async def get_message(self, message_id):
         raw = await self.redis.hget(self.key("messages"), str(message_id))
         if raw is None:
@@ -402,7 +435,14 @@ class RedisBackend:
         return message_from_json(raw)
 
     async def sync(self, user_id, after=0, limit=100):
+        return await self._sync_page(user_id, after, limit, byte_limit=None)
+
+    async def sync_bounded(self, user_id, after=0, limit=100, *, byte_limit=1_800_000):
+        return await self._sync_page(user_id, after, limit, byte_limit=byte_limit)
+
+    async def _sync_page(self, user_id, after, limit, *, byte_limit):
         self._page(after, limit)
+        self._page_bytes(byte_limit)
         ids = await self.redis.zrangebyscore(
             self.user_key("inbox", user_id),
             f"({after}",
@@ -412,11 +452,24 @@ class RedisBackend:
         )
         if not ids:
             return []
-        rows = await self.redis.hmget(self.key("messages"), ids)
-        return [message_from_json(row) for row in rows]
+        messages, _, _ = await self._read_page_ids(ids, byte_limit)
+        return messages
 
     async def history(self, channel_id, user_id, after=0, limit=100):
+        return await self._history_page(
+            channel_id, user_id, after, limit, byte_limit=None
+        )
+
+    async def history_bounded(
+        self, channel_id, user_id, after=0, limit=100, *, byte_limit=1_800_000
+    ):
+        return await self._history_page(
+            channel_id, user_id, after, limit, byte_limit=byte_limit
+        )
+
+    async def _history_page(self, channel_id, user_id, after, limit, *, byte_limit):
         self._page(after, limit)
+        self._page_bytes(byte_limit)
         if user_id not in (await self.get_channel(channel_id)).members:
             raise chat_system.models.ChatError("not a channel member")
         # Messages up to the sequence recorded when this user was added were
@@ -425,6 +478,7 @@ class RedisBackend:
         # creation-time members have no record and start from 0.
         joined = await self.redis.hget(self.key("joined:" + channel_id), user_id)
         found = []
+        used = 2
         cursor = max(after, int(joined or 0))
         while len(found) < limit:
             ids = await self.redis.zrangebyscore(
@@ -446,10 +500,12 @@ class RedisBackend:
                 if score is not None
             ]
             if visible:
-                rows = await self.redis.hmget(
-                    self.key("messages"), visible[: limit - len(found)]
+                messages, used, full = await self._read_page_ids(
+                    visible[: limit - len(found)], byte_limit, used
                 )
-                found.extend(message_from_json(row) for row in rows)
+                found.extend(messages)
+                if full:
+                    break
             cursor = int(ids[-1])
         return found
 

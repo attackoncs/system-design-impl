@@ -1,5 +1,13 @@
 # Requirements Document: Chat System
 
+## Verification and acceptance update: 2026-11-17
+
+- R4/R7: network sync/history use an encoded UTF-8 JSON message budget of 1,800,000 bytes before response assembly. Redis reads at most eight bodies per bounded HMGET, rather than all 1,000 possible bodies; metadata IDs remain count-bounded. Low-level count-only APIs remain available. Oversized first messages fail explicitly, and cursors never advance past returned messages. Membership, inbox authorization and join watermarks remain required.
+- R1/R5/R7: login's absolute deadline includes asynchronous admission; expiry closes the socket before draining backend cancellation/late-session cleanup. Cleanup may outlive that deadline. Logout success must reach the client before this connection's closed event; rejected logout must preserve live event delivery, including an in-flight write.
+- R6: repeated caller cancellation must drain every owned notification child and preserve the group's original failure. In-flight event writes retain their own send timeout and cleanup ownership.
+
+Latest execution evidence and remaining deployment limits are in the [chapter review](chapter13-review.md); earlier dated results below are historical.
+
 ## Verification update: 2026-11-06
 
 The existing optional Sentinel verification waits for three Sentinels to discover two peers/two replicas and pass CKQUORUM before the owned primary is killed. A listening port alone is insufficient readiness. Use typed redis-py command responses, finite deadlines and cleanup that closes all services/backend even when Redis is unavailable. Windows runtime discovery must not reject executable WSL Linux symlinks through native stat. These are validation requirements; messaging behavior and production-scale boundaries remain unchanged. See [current verification](chapter13-review.md).
@@ -69,7 +77,7 @@ design target, not a throughput claim for this single-process reference package.
 
 1. Presence SHALL aggregate all devices and use an injectable monotonic clock.
 2. Missing heartbeats for the configurable timeout (default 30 seconds) SHALL expire the device.
-3. Explicit logout SHALL close immediately; abrupt transport loss SHALL retain presence until timeout.
+3. Explicit logout SHALL close the session without heartbeat grace when executed; the transport first drains any in-flight event write. Abrupt transport loss SHALL retain presence until timeout.
 4. A client SHALL subscribe to at most 100 user IDs and receive online/offline transitions.
 5. Presence subscription authorization is delegated to the embedding application's contact policy; the demo does not contain a social graph.
 

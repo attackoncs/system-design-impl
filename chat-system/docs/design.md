@@ -1,5 +1,13 @@
 # Design: Chat System
 
+## 2026-11-17 read and connection ownership
+
+Network `sync`/`history` reads use the same UTF-8 JSON page budget in SQLite and Redis. Redis exposes bounded variants through distributed `async_sync`/`async_history` adapters, while its low-level count-only methods remain available. Bodies are bounded while reading, before the WebSocket response is assembled; the response cursor always refers to the last returned message. A short byte-limited page is not end-of-history. Current membership, original-recipient inbox checks and the join watermark still apply.
+
+The authentication deadline covers both receiving login and asynchronous session admission. On expiry the socket closes first; the handler then retains ownership of cancellation/late-session cleanup. Slow backend cleanup can delay handler exit, so closing the connection does not imply that arbitrary backend work was forcibly stopped. Normal logout drains the connection's event pump before disconnecting and writing its response, preventing a queued `closed` event from racing the successful reply. Failed operations restore event delivery for a still-live session.
+
+Owned notification groups receive cancellation once, then drain every child and observe the original gather result despite further cancellation. A fast child cannot hide a sibling's unfinished cleanup, and cleanup interruption does not replace the group's original failure. These local lifecycle fixes do not change delivery, persistence or replication guarantees. See the [chapter record](chapter13-review.md).
+
 ## 2026-11-06 validation boundary
 
 The messaging and replica-confirmation architecture is unchanged. The owned Redis runner checks Linux-link existence without making Windows follow the WSL target; the executable is still validated by starting real Redis. The Sentinel fault test waits for each of three Sentinels to report two peers/two replicas and successful CKQUORUM. Its full `SENTINEL MASTER` command name invokes redis-py's typed callback without wrapper-specific options. Failure cleanup drains all service closes and closes the backend even if namespace scanning fails, preserving the original test failure. See [current evidence](chapter13-review.md); this does not add consensus, cross-region sharding or a real push provider.
@@ -106,7 +114,7 @@ processed cursor. They must not advance that cursor just because a later live ev
 arrived: earlier committed messages may not have been delivered live.
 
 The service expires sessions using a monotonic clock. Transport cleanup runs
-periodically. Explicit logout closes immediately; unexpected connection loss leaves
+periodically. Explicit logout closes without heartbeat grace after draining any in-flight event write; unexpected connection loss leaves
 the session to expire after the heartbeat grace period. A user remains online while
 any device is fresh. Presence subscriptions publish only transitions; authorization
 of which contacts can be observed belongs to the embedding application.

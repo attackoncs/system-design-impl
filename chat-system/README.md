@@ -10,12 +10,12 @@ A Python reference implementation of Chapter 13, **Design A Chat System**, from
 *System Design Interview*. The core uses only the standard library; an optional
 WebSocket adapter provides actual network communication.
 
-The 2026-11-06 review includes a [fixed-source Tinode/Zulip comparison](docs/open-source-review_cn.md).
-The 11-05 real-Redis suite recorded **202 passed and one Sentinel skip**; a fresh
-six-process Sentinel lab passed that case separately on 11-06, covering **203 distinct
-cases across the two runs**. Recovery took 2.319 seconds; confirmed messages survived
-with zero retry duplicates. See the [verification report](benchmarks/results.md) for
-the runtime-discovery, lab-readiness and cleanup fixes and their validation limits.
+Reviewed against Chapter 13, [fixed Tinode/Zulip source](docs/open-source-review_cn.md)
+and CodeGraph on 2026-11-17. The final owned-Redis suite passed **213 tests with one
+Sentinel skip**; a fresh six-process lab passed that case separately, covering
+**214 distinct cases**. The original node-fault tool and both README SQLite examples
+also passed. See the [chapter record](docs/chapter13-review.md) and
+[verification report](benchmarks/results.md) for exact counts and deployment limits.
 
 ## Features
 
@@ -36,12 +36,19 @@ the runtime-discovery, lab-readiness and cleanup fixes and their validation limi
 中文文档：[README_CN.md](./README_CN.md)。Architecture and guarantees:
 [docs/design.md](./docs/design.md). Chapter coverage and this review: [chapter13-review.md](./docs/chapter13-review.md).
 
-The 2026-11-06 review compares [fixed Tinode/Zulip source](docs/open-source-review_cn.md)
-and verifies 203 distinct cases: the owned Redis suite ran 202 with one Sentinel
-skip, then a fresh six-process lab passed that case separately. Failover recovered
-in 2.319 seconds with confirmed messages preserved and no retry duplicates.
-The Windows runner and Sentinel-test readiness/cleanup fixes, exact results and
-remaining limits are recorded in the [verification report](benchmarks/results.md).
+Network reads apply a 1.8 MB UTF-8 JSON message budget while loading bodies;
+Redis fetches at most eight bodies per bounded batch. Count-only library reads
+remain available. Continue short pages from the returned cursor. Login's absolute
+deadline includes asynchronous admission: expiry closes the socket before owned
+backend cleanup, which may still delay handler exit. Logout drains in-flight event
+writes before replying, and rejected logout restores live delivery. Repeated
+cancellation drains all notification children. These changes preserve existing
+delivery/replication guarantees; see [design](docs/design.md).
+
+Combined suite/Sentinel source coverage is 85.27% (statements 87.81%, branches
+77.06%); child-process CLI execution is tested but not merged into coverage.
+Existing tests and benchmark source were preserved; 11 focused regressions were
+added. Raw evidence is in [verification JSON](benchmarks/verification-2026-11-17.json).
 
 ## Installation and tests
 

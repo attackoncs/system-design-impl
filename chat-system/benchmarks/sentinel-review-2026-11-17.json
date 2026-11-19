@@ -1,0 +1,17 @@
+{
+  "date": "2026-11-17",
+  "pytest_exit_code": 0,
+  "tests": 1,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "seconds": 13.689,
+  "scope": "One original Sentinel case in fresh owned three-Redis/three-Sentinel lab, separate from main suite",
+  "old_primary": 45756,
+  "new_primary": 45758,
+  "recovery_seconds": 2.417,
+  "confirmed_messages_preserved": true,
+  "retry_duplicates": 0,
+  "unconfirmed_retry_rejected": true,
+  "owned_lab_stopped": true
+}

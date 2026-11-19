@@ -1,0 +1,35 @@
+{
+  "connections": 20,
+  "requested_messages": 100,
+  "acknowledged_messages": 100,
+  "payload_bytes": 128,
+  "admission_seconds": 0.08,
+  "send_seconds": 0.298,
+  "messages_per_second": 335.63,
+  "send_latency": {
+    "p50_ms": 8.747,
+    "p95_ms": 12.046,
+    "p99_ms": 20.406
+  },
+  "live_delivery_latency": {
+    "p50_ms": 13.04,
+    "p95_ms": 20.351,
+    "p99_ms": 26.684
+  },
+  "live_missing_deliveries": 1,
+  "live_duplicate_deliveries": 0,
+  "durable_missing_deliveries": 0,
+  "unexpected_durable_messages": 0,
+  "errors": [],
+  "retry_attempts": 0,
+  "node_killed": true,
+  "reconnect_seconds": 0.031,
+  "replica_confirmation": 0,
+  "environment": {
+    "platform": "Linux-6.18.58.1-microsoft-standard-WSL2-x86_64-with-glibc2.44",
+    "python": "3.14.8",
+    "logical_cpus": 16,
+    "chat_node_processes": 2
+  },
+  "passed": true
+}
