@@ -1,0 +1,76 @@
+{
+  "date": "2026-11-17",
+  "python": "3.14.8",
+  "grpcio": "1.85.1",
+  "protobuf": "7.36.2",
+  "baseline": {
+    "passed": 428,
+    "seconds": 13.92
+  },
+  "red": {
+    "causal_gossip_config_failed": 18,
+    "legal_weak_quorum_passed": 1,
+    "sstable_failed": 7,
+    "middle_index_failed": 2
+  },
+  "final": {
+    "passed": 456,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 16.4,
+    "warnings_as_errors": true
+  },
+  "coverage": {
+    "generated_protobuf_excluded": true,
+    "covered_lines": 2734,
+    "num_statements": 3008,
+    "percent_covered": 88.81408596582082,
+    "percent_covered_display": "89",
+    "missing_lines": 274,
+    "excluded_lines": 9,
+    "percent_statements_covered": 90.89095744680851,
+    "percent_statements_covered_display": "91",
+    "num_branches": 854,
+    "num_partial_branches": 130,
+    "covered_branches": 696,
+    "missing_branches": 158,
+    "percent_branches_covered": 81.49882903981265,
+    "percent_branches_covered_display": "81"
+  },
+  "gossip_rpc": {
+    "nodes": 3,
+    "all_remote_members_forced_down": true,
+    "seed_polling_disabled": true,
+    "manual_rounds": 3,
+    "alive_per_node": [
+      3,
+      3,
+      3
+    ],
+    "all_quorum_write_read": true,
+    "network_partition_injected": false
+  },
+  "repair_demo": {
+    "message_limit_bytes": 65536,
+    "application_bytes": 196608,
+    "pages": 5,
+    "pulled_records": 24,
+    "pushed_records": 25,
+    "second_round_pages": 0,
+    "roots_equal": true,
+    "tombstone_preserved": true
+  },
+  "existing_test_files_modified": false,
+  "benchmark_code_modified": false,
+  "static_checks": {
+    "ruff_selection": "E,F,I; ignore E501",
+    "formatted_files": 6,
+    "python_310_source_ast_files": 33
+  },
+  "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=src:../consistent-hashing/src COVERAGE_FILE=/tmp/ch07-coverage-final-20261117 /tmp/ch05-review-venv/bin/python -m coverage run --branch --source=src/kv_store --omit='*/kvstore_pb2*' -m pytest -q -W error -p pytest_asyncio.plugin -p no:cacheprovider -o asyncio_default_fixture_loop_scope=function --basetemp=/tmp/ch07-final-20261117 tests",
+  "limits": [
+    "Loopback RPC; same process, separate node directories.",
+    "No physical power loss, WAN or production capacity experiment.",
+    "SSTable structural validation has no new checksum; some RPCs classify local ValueError as INVALID_ARGUMENT."
+  ]
+}

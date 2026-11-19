@@ -151,4 +151,18 @@ Drain local commits on cancellation, fsync/atomically publish SSTables before
 WAL truncation, close WAL even on failed shutdown, fence hint ACK against the
 original payload and reject corrupt final tables instead of silently skipping.
 Record raw performance regressions and disclose unimplemented load-based scaling,
-safe drain/topology consensus, large-data streaming/caching and cross-DC safeguards.
+safe drain/topology consensus, capacity proof and cross-DC safeguards. Streaming
+compaction and bounded SSTable block caching were completed on 2026-11-09.
+
+## 2026-11-17 acceptance
+
+- Treat missing clock counters as zero; explicit zero components cannot cause
+  mutually dominant clocks or delete all causal siblings.
+- Validate integer N>=1 and 1<=W,R<=N at configuration construction, allowing
+  legitimate nonintersecting quorums.
+- Recover contact with known DOWN peers without requiring a reachable seed;
+  send at most fanout+1 peer requests concurrently and drain cancelled sends.
+- Reject malformed/truncated SSTable data, index boundaries and record counts;
+  abort partial compaction output while retaining input files. Preserve formats.
+- Preserve existing tests and benchmarks; record full regression, branch
+  coverage and real gRPC recovery evidence in the dated chapter review.

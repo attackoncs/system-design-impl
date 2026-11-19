@@ -33,6 +33,12 @@ class ReplicationConfig:
     vector_clock_max_entries: int = 10  # bounded causal context
 
     def __post_init__(self):
+        if type(self.n_replicas) is not int or self.n_replicas < 1:
+            raise ValueError("n_replicas must be a positive integer")
+        for field in ("w_quorum", "r_quorum"):
+            count = getattr(self, field)
+            if type(count) is not int or not 1 <= count <= self.n_replicas:
+                raise ValueError(f"{field} must be an integer between 1 and n_replicas")
         if (
             type(self.vector_clock_max_entries) is not int
             or not 1 <= self.vector_clock_max_entries <= 256

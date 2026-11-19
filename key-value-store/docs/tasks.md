@@ -1,6 +1,6 @@
 # Tasks: Distributed Key-Value Store
 
-The numbered scaffolding plan below retains its original partial statuses and implementation sketches as history. Current accepted behavior, 428-test evidence and unfinished deployment goals are recorded in the [2026-10-31 review](open-source-review_cn.md) and the dated acceptance sections at the end; a historical `[~]` does not by itself mean that today's runtime path remains unreviewed.
+The numbered scaffolding plan below retains its original partial statuses and implementation sketches as history. Current accepted behavior, 456-test evidence and unfinished deployment goals are recorded in the [latest chapter review](chapter07-review.md) and the dated acceptance sections at the end; a historical `[~]` does not by itself mean that today's runtime path remains unreviewed.
 
 ## Task Dependency Graph
 
@@ -561,3 +561,13 @@ Task 1 (Project Scaffolding)
 - [x] Compaction is a k-way `heapq.merge` (`sstable.merge_newest`) with identical newest-timestamp/tie/tombstone semantics; inputs `retire()` before unlink, readers retry.
 - [x] `StorageEngine.scan(visit=...)` streams newest records; Merkle rebuild keeps digests only. On-disk format unchanged.
 - [ ] Load-driven provisioning/safe drain, topology consensus and real multi-DC operation (unchanged boundaries); disk quotas and large-data capacity proof.
+
+## 2026-11-17 causal, Gossip and SSTable integrity review
+
+- [x] Compare chapter 7 with LevelDB/memberlist/Voldemort and refresh the chapter CodeGraph index.
+- [x] Preserve zero-counter siblings; strictly validate integer N/W/R while allowing weak quorums.
+- [x] Concurrent fanout plus one rotating DOWN probe, isolated snapshots and cancellation drain.
+- [x] Reject corrupt frames/index boundaries/counts; retain compaction inputs and abandon partial output.
+- [x] 456 tests pass; statement coverage 90.89%, branch coverage 81.50% (generated protobuf excluded); real 3-node recovery and both existing examples pass.
+- [x] Update bilingual documentation; preserve all existing tests and benchmark code.
+- [ ] Automatic provisioning/safe drain/topology consensus, disk quotas, capacity proof and cross-DC operation remain open.

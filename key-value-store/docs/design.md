@@ -77,6 +77,28 @@ does not clear it. A storage-engine restart applies recovered entries before
 serving traffic. An uncertain failed append may be recovered as a complete entry.
 See the [source comparison and failure sequence](open-source-review_cn.md).
 
+## Causal ordering, recovery and corrupt input (2026-11-17)
+
+Missing vector-clock components mean zero; an explicit zero cannot establish
+strict causality or delete a sibling. N/W/R are validated as integers with N>=1
+and 1<=W,R<=N when constructing ReplicationConfig; nonintersecting settings stay
+available. Configuration objects remain mutable and must not change during use.
+
+Gossip sends one independent membership snapshot per peer, concurrently up to
+fanout plus one known DOWN peer selected round-robin. This lets healed peers
+reconnect even without a reachable seed. Cancellation cancels outstanding sends
+and drains their cleanup, including repeated cancellation. DOWN members are
+retained; this is failure recovery, not consensus or safe topology removal.
+
+SSTable reads reject short reads, malformed records and invalid sparse indexes.
+Scans validate every block's first key, record count and ordering in their
+existing read-ahead chunk; a point lookup checks the next block boundary before
+reporting a miss at the current block's end. Normal hits still read one block.
+Iterator errors abort temporary compaction output and preserve source files.
+The format has no new checksums: structurally valid bit flips can go undetected.
+Local corruption raises ValueError; existing RPC handlers can still classify it
+as INVALID_ARGUMENT. Detection does not perform automatic recovery.
+
 ## Incremental Merkle tree
 
 The bucket digest still hashes sorted length-delimited key/value-hash components.

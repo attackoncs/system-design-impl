@@ -32,6 +32,7 @@ import collections
 import dataclasses
 import heapq
 import itertools
+import math
 import os
 import pathlib
 import struct
@@ -171,47 +172,47 @@ def _close_descriptor(box: List[Optional[int]]) -> None:
         os.close(descriptor)
 
 
-def _decode_entry(buffer: bytes, pos: int) -> Tuple[Optional[SSTableEntry], int]:
-    """Decode one data entry; ``(None, pos)`` if it is truncated or invalid."""
+def _decode_entry(buffer: bytes, pos: int) -> Tuple[SSTableEntry, int]:
+    """Decode a complete immutable record; corruption is never normal EOF."""
     end = len(buffer)
     try:
         if pos + 4 > end:
-            return None, pos
+            raise ValueError("Corrupt SSTable: truncated key length")
         key_len = struct.unpack_from("<I", buffer, pos)[0]
         pos += 4
         if pos + key_len > end:
-            return None, pos
+            raise ValueError("Corrupt SSTable: truncated key")
         key = buffer[pos : pos + key_len].decode("utf-8")
         pos += key_len
         if pos + 4 > end:
-            return None, pos
+            raise ValueError("Corrupt SSTable: truncated value length")
         value_len = struct.unpack_from("<I", buffer, pos)[0]
         pos += 4
         if pos + value_len > end:
-            return None, pos
+            raise ValueError("Corrupt SSTable: truncated value")
         value_bytes = buffer[pos : pos + value_len]
         pos += value_len
         if pos + 9 > end:
-            return None, pos
+            raise ValueError("Corrupt SSTable: truncated record metadata")
         timestamp, tombstone_flag = struct.unpack_from("<dB", buffer, pos)
         pos += 9
-    except (struct.error, UnicodeDecodeError):
-        return None, pos
+    except (struct.error, UnicodeDecodeError) as error:
+        raise ValueError("Corrupt SSTable: invalid record encoding") from error
+    if not math.isfinite(timestamp) or not 0 <= timestamp <= 1e12:
+        raise ValueError("Corrupt SSTable: invalid timestamp")
+    if tombstone_flag not in (0, 1) or (tombstone_flag == 1 and value_len):
+        raise ValueError("Corrupt SSTable: invalid tombstone")
     is_tombstone = tombstone_flag == 1
     value = None if is_tombstone else value_bytes
     return SSTableEntry(key, value, timestamp, is_tombstone), pos
 
 
-def _decode_entries(buffer: bytes) -> Tuple[List[SSTableEntry], bool]:
-    """Decode consecutive entries; the flag is False if decoding stopped early."""
-    entries = []
+def _decode_entries(buffer: bytes) -> Iterator[SSTableEntry]:
+    """Stream consecutive records, propagating malformed input to the caller."""
     pos = 0
     while pos < len(buffer):
         entry, pos = _decode_entry(buffer, pos)
-        if entry is None:
-            return entries, False
-        entries.append(entry)
-    return entries, True
+        yield entry
 
 
 def _parse_index_block(index_data: bytes) -> Tuple[List[str], List[int]]:
@@ -219,11 +220,13 @@ def _parse_index_block(index_data: bytes) -> Tuple[List[str], List[int]]:
     keys: List[str] = []
     offsets: List[int] = []
     pos = 0
-    while pos + 4 <= len(index_data):
+    while pos < len(index_data):
+        if pos + 4 > len(index_data):
+            raise ValueError("Corrupt SSTable: truncated index key length")
         key_len = struct.unpack_from("<I", index_data, pos)[0]
         pos += 4
         if pos + key_len + 8 > len(index_data):
-            break
+            raise ValueError("Corrupt SSTable: truncated index entry")
         keys.append(index_data[pos : pos + key_len].decode("utf-8"))
         pos += key_len
         offsets.append(struct.unpack_from("<Q", index_data, pos)[0])
@@ -267,7 +270,9 @@ class SSTable:
         self._descriptor: List[Optional[int]] = [None]
         weakref.finalize(self, _close_descriptor, self._descriptor)
         try:
-            self._descriptor[0] = os.open(file_path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+            self._descriptor[0] = os.open(
+                file_path, os.O_RDONLY | getattr(os, "O_BINARY", 0)
+            )
         except FileNotFoundError:
             raise FileNotFoundError(f"SSTable file not found: {file_path}") from None
         try:
@@ -333,11 +338,25 @@ class SSTable:
             raise ValueError("Magic number mismatch in footer")
         if pos != len(footer):
             raise ValueError("Footer size mismatch")
+        if entry_count == 0 or min_key > max_key or not math.isfinite(created_at):
+            raise ValueError("Corrupt SSTable: invalid footer metadata")
 
         index_data = self._read(data_block_size, index_block_size)
         bloom_data = self._read(data_block_size + index_block_size, bloom_filter_size)
         self._bloom_filter = storage_bloom_filter.BloomFilter.deserialize(bloom_data)
         self._index_keys, self._index_offsets = _parse_index_block(index_data)
+        if (
+            len(self._index_keys)
+            != (entry_count + _INDEX_INTERVAL - 1) // _INDEX_INTERVAL
+            or not self._index_keys
+            or self._index_keys[0] != min_key
+            or self._index_keys[-1] > max_key
+            or self._index_offsets[0] != 0
+            or self._index_offsets[-1] >= data_block_size
+            or any(a >= b for a, b in zip(self._index_keys, self._index_keys[1:]))
+            or any(a >= b for a, b in zip(self._index_offsets, self._index_offsets[1:]))
+        ):
+            raise ValueError("Corrupt SSTable: invalid sparse index")
         self._data_block_size = data_block_size
         self._metadata_obj = SSTableMetadata(
             file_path=self._file_path,
@@ -356,16 +375,23 @@ class SSTable:
             descriptor = self._descriptor[0]
             if descriptor is None:
                 descriptor = self._reopen()
-            return _pread(descriptor, size, offset)
+            data = _pread(descriptor, size, offset)
+            if len(data) != size:
+                raise ValueError(f"Corrupt SSTable: truncated read at {offset}")
+            return data
 
     def _reopen(self) -> int:
         """Reopen after close(); refuse retired or replaced files."""
         if self._retired:
             raise SSTableRetiredError(f"SSTable was retired: {self._file_path}")
         try:
-            descriptor = os.open(self._file_path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+            descriptor = os.open(
+                self._file_path, os.O_RDONLY | getattr(os, "O_BINARY", 0)
+            )
         except FileNotFoundError:
-            raise SSTableRetiredError(f"SSTable was removed: {self._file_path}") from None
+            raise SSTableRetiredError(
+                f"SSTable was removed: {self._file_path}"
+            ) from None
         if os.fstat(descriptor).st_size != self._file_size:
             os.close(descriptor)
             raise SSTableRetiredError(f"SSTable was replaced: {self._file_path}")
@@ -409,6 +435,14 @@ class SSTable:
             data = self._read(start, size)
             self._block_cache.put(cache_key, data)
         return data
+
+    def _check_block_key(self, data: bytes, block: int) -> None:
+        """Check the routing index against the first key actually on disk."""
+        if len(data) < 4:
+            raise ValueError("Corrupt SSTable: missing block key")
+        end = 4 + struct.unpack_from("<I", data)[0]
+        if end > len(data) or data[4:end] != self._index_keys[block].encode("utf-8"):
+            raise ValueError("Corrupt SSTable: index key does not match data")
 
     # ------------------------------------------------------------- writing
 
@@ -468,18 +502,28 @@ class SSTable:
         """Walk one block comparing raw key bytes (UTF-8 byte order equals
         str order); only the matching entry is fully decoded."""
         data = self._read_block(block)
+        self._check_block_key(data, block)
         target = key.encode("utf-8")
         pos = 0
-        while pos + 4 <= len(data):
+        while pos < len(data):
+            if pos + 4 > len(data):
+                raise ValueError("Corrupt SSTable: truncated key length")
             key_end = pos + 4 + struct.unpack_from("<I", data, pos)[0]
             if key_end + 4 > len(data):
-                return None
+                raise ValueError("Corrupt SSTable: truncated key")
             candidate = data[pos + 4 : key_end]
+            record_end = key_end + 4 + struct.unpack_from("<I", data, key_end)[0] + 9
+            if record_end > len(data):
+                raise ValueError("Corrupt SSTable: truncated record")
             if candidate == target:
                 return _decode_entry(data, pos)[0]
             if candidate > target:
                 return None
-            pos = key_end + 4 + struct.unpack_from("<I", data, key_end)[0] + 9
+            pos = record_end
+        # An index key shifted upwards can send a present key to the previous
+        # block. Verify that boundary before reporting a miss; hits pay no I/O.
+        if block + 1 < self._block_count():
+            self._check_block_key(self._read_block(block + 1), block + 1)
         return None
 
     def may_contain(self, key: str) -> bool:
@@ -498,21 +542,47 @@ class SSTable:
 
         Reads whole blocks grouped into chunks of about 256 KiB, bypassing the
         block cache, so memory stays bounded by one chunk plus one block.
-        Decoding stops at the first invalid entry, as it always has.
+        Invalid/truncated records raise ValueError, preventing scans or
+        compaction from publishing an incomplete view of the input.
         """
         count = self._block_count()
         first = 0
+        seen = 0
+        previous = None
         while first < count:
             start = self._block_start(first)
             last = first
-            while last + 1 < count and self._block_end(last + 1) - start <= _SCAN_READ_BYTES:
+            while (
+                last + 1 < count
+                and self._block_end(last + 1) - start <= _SCAN_READ_BYTES
+            ):
                 last += 1
             chunk = self._read(start, max(0, self._block_end(last) - start))
-            entries, complete_chunk = _decode_entries(chunk)
-            yield from entries
-            if not complete_chunk:
-                return
+            for block in range(first, last + 1):
+                data = chunk[
+                    self._block_start(block) - start : self._block_end(block) - start
+                ]
+                self._check_block_key(data, block)
+                block_entries = 0
+                for entry in _decode_entries(data):
+                    if previous is not None and entry.key <= previous:
+                        raise ValueError("Corrupt SSTable: unordered data keys")
+                    previous = entry.key
+                    block_entries += 1
+                    seen += 1
+                    yield entry
+                expected = min(
+                    _INDEX_INTERVAL,
+                    self._metadata_obj.entry_count - block * _INDEX_INTERVAL,
+                )
+                if block_entries != expected:
+                    raise ValueError("Corrupt SSTable: block record count mismatch")
             first = last + 1
+        if (
+            seen != self._metadata_obj.entry_count
+            or previous != self._metadata_obj.max_key
+        ):
+            raise ValueError("Corrupt SSTable: record count mismatch")
 
     @property
     def metadata(self) -> SSTableMetadata:
@@ -533,7 +603,9 @@ class _SSTableWriter:
 
     def __init__(self, stream, expected_items: int):
         self._stream = stream
-        self._bloom = storage_bloom_filter.BloomFilter(expected_items=max(expected_items, 1))
+        self._bloom = storage_bloom_filter.BloomFilter(
+            expected_items=max(expected_items, 1)
+        )
         self._index = bytearray()
         self._created_at = time.time()
         self._offset = 0
@@ -541,9 +613,13 @@ class _SSTableWriter:
         self._min_key: Optional[str] = None
         self._last_key: Optional[str] = None
 
-    def add(self, key: str, value: Optional[bytes], timestamp: float, is_tombstone: bool) -> None:
+    def add(
+        self, key: str, value: Optional[bytes], timestamp: float, is_tombstone: bool
+    ) -> None:
         if self._last_key is not None and key <= self._last_key:
-            raise ValueError("SSTable keys must be written in strictly increasing order")
+            raise ValueError(
+                "SSTable keys must be written in strictly increasing order"
+            )
         key_bytes = key.encode("utf-8")
         value_bytes = value if value is not None else b""
         if self._count % _INDEX_INTERVAL == 0:
@@ -620,7 +696,9 @@ def merge_newest(sources: List[Iterable]) -> Iterator:
     Memory is one pending entry per source.
     """
     previous = object()
-    for key, _, _, entry in heapq.merge(*(_ranked(rank, source) for rank, source in enumerate(sources))):
+    for key, _, _, entry in heapq.merge(
+        *(_ranked(rank, source) for rank, source in enumerate(sources))
+    ):
         if key != previous:
             previous = key
             yield entry

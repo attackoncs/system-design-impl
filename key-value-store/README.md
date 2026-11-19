@@ -10,12 +10,17 @@ A Dynamo-inspired learning implementation with real asynchronous gRPC replicatio
 causal siblings/tombstones, quorum responses, gossip, durable hinted handoff,
 Merkle repair and WAL/MemTable/SSTable storage. [中文](README_CN.md).
 
-The latest review passes **428 tests**, including actual loopback RPC, fault and
+The 2026-11-17 review passes **456 tests**, including actual loopback RPC, fault and
 restart cases. [Open-source comparison and latest coverage (Chinese)](docs/open-source-review_cn.md),
 [earlier review](docs/chapter07-review.md),
 [design](docs/design.md), [raw measurements](benchmarks/REPORT.md).
 Automatic load-based provisioning and full multi-datacenter operation remain
 unfinished; this is not a claim that every deployment requirement is complete.
+
+The latest fixes preserve zero-counter causal siblings, validate N/W/R, recover
+Gossip after every peer was marked DOWN, and send bounded peer requests in
+parallel. Corrupt SSTable frames/index boundaries now fail scans and compaction
+instead of silently publishing partial data. File and RPC formats are unchanged.
 
 ## Install and run
 

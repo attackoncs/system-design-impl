@@ -11,8 +11,12 @@
 [English](README.md) · [章节复审](docs/chapter07-review.md) ·
 [设计](docs/design_cn.md) · [实测](benchmarks/REPORT.md)。
 
-本轮**428项测试通过**，覆盖实际RPC、故障与重启。见[开源对照与最新覆盖](docs/open-source-review_cn.md)。负载驱动自动供给节点、
+2026-11-17复核**456项测试通过**，覆盖实际RPC、故障与重启。见[开源对照与最新覆盖](docs/open-source-review_cn.md)。负载驱动自动供给节点、
 完整跨机房运行保障等仍未完成，不能标记为“原书所有部署要求均已实现”。
+
+本轮修复零计数时钟导致siblings丢失、非法N/W/R、所有对端DOWN后停止发现的问题；
+Gossip有界并发发送并排空取消。SSTable坏帧/索引边界明确报错，中止残缺压缩输出，
+磁盘和RPC格式保持兼容。完整证据见[本轮章节记录](docs/chapter07-review.md)。
 
 ## 安装与运行
 

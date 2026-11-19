@@ -16,6 +16,8 @@ import random
 import time
 from typing import Awaitable, Callable, Optional
 
+from kv_store.async_work import complete
+
 
 class NodeStatus(enum.Enum):
     """Status of a node in the cluster."""
@@ -88,11 +90,14 @@ class GossipProtocol:
 
         self._running = False
         self._task: Optional[asyncio.Task] = None
+        self._down_probe_cursor = 0
 
     def advertise(self, address: str) -> None:
         """Publish the bound listening address (including an ephemeral port)."""
         self._address = address
-        self._members[self._node_id].address = address
+        self._members[self._node_id] = dataclasses.replace(
+            self._members[self._node_id], address=address
+        )
 
     @property
     def node_id(self) -> str:
@@ -102,7 +107,7 @@ class GossipProtocol:
     @property
     def members(self) -> dict[str, MemberInfo]:
         """Current membership table."""
-        return dict(self._members)
+        return {node: dataclasses.replace(info) for node, info in self._members.items()}
 
     async def start(self) -> None:
         """Start the gossip background task."""
@@ -141,38 +146,50 @@ class GossipProtocol:
             await asyncio.sleep(self._gossip_interval)
 
     async def _gossip_round(self) -> None:
-        """Execute a single gossip round.
-
-        1. Increment own heartbeat counter
-        2. Select random peers (up to fanout)
-        3. Send membership list to selected peers
-        4. Check for timed-out nodes
-        """
-        # Increment own heartbeat
+        """Exchange a fixed membership view concurrently, then detect failures."""
         self_info = self._members[self._node_id]
-        self_info.heartbeat_counter += 1
-        self_info.last_updated = time.time()
-        self_info.status = NodeStatus.ALIVE
-
-        # Select random peers
+        self._members[self._node_id] = dataclasses.replace(
+            self_info,
+            heartbeat_counter=self_info.heartbeat_counter + 1,
+            last_updated=time.time(),
+            status=NodeStatus.ALIVE,
+        )
         peers = self._select_peers()
+        # A healed partition must recover even when every remembered peer is DOWN
+        # and no configured seed is reachable. Probe just one, rotating fairly.
+        down = [
+            node
+            for node, info in self._members.items()
+            if node != self._node_id and info.status is NodeStatus.DOWN
+        ]
+        if down:
+            peers.append(down[self._down_probe_cursor % len(down)])
+            self._down_probe_cursor += 1
 
-        # Send membership to peers
         if self._gossip_func and peers:
-            membership_list = list(self._members.values())
-            for peer_id in peers:
-                try:
-                    await self._gossip_func(peer_id, membership_list)
-                # Isolate this operation; record failures before continuing.
-                except Exception:  # pylint: disable=broad-exception-caught
-                    # Peer unreachable, will be detected by timeout
-                    logging.getLogger(__name__).exception(
-                        "Failure isolated in %s", "_gossip_round"
-                    )
-                    pass
+            members = list(self.members.values())
+            tasks = [
+                asyncio.create_task(self._send_peer(peer, members)) for peer in peers
+            ]
+            group = asyncio.gather(*tasks, return_exceptions=True)
+            try:
+                await asyncio.shield(group)
+            finally:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                # Repeated stop/cancellation must not abandon transport cleanup.
+                await complete(group)
 
-        # Check for timed-out nodes
         self._check_timeouts()
+
+    async def _send_peer(self, peer: str, members: list[MemberInfo]) -> None:
+        try:
+            await self._gossip_func(
+                peer, [dataclasses.replace(info) for info in members]
+            )
+        except Exception:
+            logging.getLogger(__name__).exception("Gossip exchange failed: %s", peer)
 
     def _select_peers(self) -> list[str]:
         """Select random peers for gossip (up to fanout count).
@@ -203,12 +220,16 @@ class GossipProtocol:
             elapsed = now - info.last_updated
 
             if info.status == NodeStatus.ALIVE and elapsed > self._failure_timeout:
-                info.status = NodeStatus.SUSPECTED
+                self._members[node_id] = dataclasses.replace(
+                    info, status=NodeStatus.SUSPECTED
+                )
             elif (
                 info.status == NodeStatus.SUSPECTED
                 and elapsed > 2 * self._failure_timeout
             ):
-                info.status = NodeStatus.DOWN
+                self._members[node_id] = dataclasses.replace(
+                    info, status=NodeStatus.DOWN
+                )
 
     def merge_membership(self, remote_members: list[MemberInfo]) -> None:
         """Merge remote membership information with local state.
@@ -226,7 +247,9 @@ class GossipProtocol:
                 # the counter peers remember. Node IDs must be unique among live nodes.
                 own = self._members[self._node_id]
                 if remote.heartbeat_counter >= own.heartbeat_counter:
-                    own.heartbeat_counter = remote.heartbeat_counter + 1
+                    self._members[self._node_id] = dataclasses.replace(
+                        own, heartbeat_counter=remote.heartbeat_counter + 1
+                    )
                 continue
 
             local = self._members.get(remote.node_id)
@@ -241,14 +264,16 @@ class GossipProtocol:
                 )
             elif remote.heartbeat_counter > local.heartbeat_counter:
                 # Remote has newer info
-                local.heartbeat_counter = remote.heartbeat_counter
-                local.address = remote.address
-                local.last_updated = now
                 # If we had marked it suspected/down but it's still
                 # heartbeating,
                 # bring it back to alive
-                if local.status != NodeStatus.ALIVE:
-                    local.status = NodeStatus.ALIVE
+                self._members[remote.node_id] = dataclasses.replace(
+                    local,
+                    heartbeat_counter=remote.heartbeat_counter,
+                    address=remote.address,
+                    last_updated=now,
+                    status=NodeStatus.ALIVE,
+                )
 
         if self._on_membership_change is not None:
             self._on_membership_change()
@@ -260,7 +285,9 @@ class GossipProtocol:
             List of MemberInfo for alive nodes.
         """
         return [
-            info for info in self._members.values() if info.status == NodeStatus.ALIVE
+            dataclasses.replace(info)
+            for info in self._members.values()
+            if info.status == NodeStatus.ALIVE
         ]
 
     def get_node_status(self, node_id: str) -> Optional[NodeStatus]:

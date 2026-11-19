@@ -93,23 +93,20 @@ class VectorClock:
         Returns:
             True if this clock dominates the other.
         """
-        # If both are empty, neither dominates
-        if not self._entries and not other.to_dict():
-            return False
-
+        other_entries = other.to_dict()
         has_strictly_greater = False
 
         # Check all nodes in other: self must have >= for each
-        for node_id, other_counter in other.to_dict().items():
+        for node_id, other_counter in other_entries.items():
             self_counter = self._entries.get(node_id, 0)
             if self_counter < other_counter:
                 return False
             if self_counter > other_counter:
                 has_strictly_greater = True
 
-        # Check nodes in self that are not in other (they contribute > 0 vs 0)
-        for node_id in self._entries:
-            if node_id not in other.to_dict():
+        # Missing components mean zero; an explicit zero adds no causal event.
+        for node_id, counter in self._entries.items():
+            if counter > 0 and node_id not in other_entries:
                 has_strictly_greater = True
                 break
 

@@ -1,7 +1,7 @@
 # 第7章：原书、开源实现与本地代码对照
 
-复审日期：2026-10-31。原书范围为根目录 `System Design Interview.md` 第1735–2213行。
-本页记录本轮结果；[前次审查](chapter07-review.md)保留2026-10-27的历史证据。
+最近复核：2026-11-17；原书范围为根目录 `System Design Interview.md` 第1735–2213行。
+[本轮章节记录](chapter07-review.md)包含零计数因果版本、Gossip恢复/并发、N/W/R校验、SSTable损坏保护、CodeGraph边界及456项回归证据。下方2026-10-31失败序列及测量保留原值。
 
 ## GitHub参考
 
@@ -23,7 +23,7 @@ Voldemort的README明确说明已停止开发，适合作为历史实现阅读�
 | Gossip与短暂故障 | `GossipProtocol`、`HintJournal`、`HintedHandoffManager` | 支持故障怀疑、sloppy quorum和SQLite持久补送；不是成员拓扑共识。 |
 | 永久故障修复 | `AntiEntropyManager`、`MerkleTree` | 分层比较、差异桶分页、携带墓碑修复；持续变化会中止本轮并重试。 |
 | 写路径 | `StorageEngine.put/delete` → `WriteAheadLog.append` | fsync后发布MemTable，达到阈值生成SSTable；本轮补齐残尾恢复与I/O失败后停止写入。 |
-| 读路径与磁盘 | `StorageEngine.get`、Bloom filter、SSTable | 内存与候选表按物理记录时间选择；Bloom只排除不可能存在的键。整个SSTable缓存和压缩仍非流式。 |
+| 读路径与磁盘 | `StorageEngine.get`、Bloom filter、SSTable | 内存与候选表按物理记录时间选择；Bloom只排除不可能存在的键。2026-11-09已采用有界块缓存及流式压缩；2026-11-17补齐坏帧/索引边界报错，压缩不发布残缺输出。 |
 | 去中心化与跨机房 | 节点对等协调、`node_data_centers` | 对等节点与故障域放置已实现；真实WAN、机房灾难、TLS/认证未验证或未实现。 |
 | 根据流量自动增减服务器 | 成员发现、反熵补齐是已有基础 | 自动资源供给、安全缩容屏障、拓扑epoch/共识未实现。当前没有云资源控制面，不增加一个只有模拟动作的“自动扩缩容”接口。 |
 

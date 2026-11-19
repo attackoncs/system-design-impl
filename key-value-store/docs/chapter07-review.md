@@ -1,4 +1,27 @@
-# 第7章再次复审 — 2026-10-27
+# 第7章实现复审
+
+## 2026-11-17 原书、GitHub 与 CodeGraph 复核
+
+阅读原书1735–2213行，按“定位真实运行路径→复现缺陷→最小修复→完整回归→同步文档”执行。保留现有Dynamo风格的分层架构和磁盘/Protobuf格式，没有另建模拟自动扩缩容服务，也没有修改既有测试或benchmark代码。
+
+| 问题 | 本轮处理 |
+|---|---|
+| `{'a':0}`与`{'b':0}`互相支配，`reconcile`会删除全部版本 | 缺失分量按0比较，只有正计数才能构成严格增大；对方时钟只复制一次，避免循环内反复复制。 |
+| 全体对端DOWN后不再发送Gossip，网络恢复也无法重新发现 | 正常随机fanout之外，每轮最多额外轮转探测1个已知DOWN节点，不依赖可达种子。 |
+| Gossip按peer串行，慢peer拖延其他peer | 并发最多fanout+1个发送任务；每个peer获得独立固定快照；异常隔离，重复取消也排空传输清理。 |
+| N/W/R允许0、bool、小数或W/R>N | 构造时严格校验整数`N>=1`、`1<=W,R<=N`；允许合法的非交集弱一致配置。 |
+| 坏SSTable记录被当作正常EOF/缺失，压缩发布残缺输出 | 定位读校验完整长度；严格解析记录时间/墓碑/UTF-8、索引顺序/范围及每块首键/数量；错误沿迭代器传播，临时输出不发布，源文件保留。 |
+| 中间索引键被改大后现存键误路由到前一块 | 全扫在原读块内核对每块索引；点查走到块尾仍未命中时核对下一块边界，正常命中不增加读块。 |
+
+开源参考：[LevelDB压缩输出](https://github.com/google/leveldb/blob/main/db/db_impl.cc#L830-L870)先检查输入迭代错误再完成输出；[memberlist Gossip](https://github.com/hashicorp/memberlist/blob/master/state.go#L586-L618)会联系最近死亡节点。本地轮转联系所有保留的DOWN节点，取舍是额外最多一次RPC/轮，不照搬其死亡时间窗。[Voldemort版本比较](https://github.com/voldemort/voldemort/blob/master/src/java/voldemort/versioning/VectorClockUtils.java)用于核对因果分量；本地协议允许0，不能将“多一个节点”直接当作严格更新。实现独立编写。
+
+根`.codegraph`因Windows/WSL共享SQLite锁返回disk I/O error，改用本章独立`key-value-store/.codegraph`，没有清理原索引。最终70文件、1635节点、3944边；`entries`的调用覆盖压缩和引擎扫描，`_check_block_key`的调用覆盖点查与扫描，`dominates`影响21个符号。动态`other.clock.dominates`在图中漏掉，已阅读`records.reconcile`并用真实版本回归补核，图不替代行为验证。
+
+验证：基线428项/13.92秒；新回归中27项先在未修复逻辑上失败（18项因果/Gossip/配置、7项坏表、2项中段索引），另1项确认合法弱一致配置仍可用；最终**456项通过/16.40秒**，`-W error`，无跳过。分支覆盖和实际环境见[验证记录](../benchmarks/verification-2026-11-17.json)。两个既有示例通过；真实3节点关闭种子轮询、人工将所有对端置DOWN后，3轮Gossip恢复各3个ALIVE，ALL仲裁写读成功。Merkle示例仍为64KiB通道、5页/196608应用字节、墓碑保留、第二轮0页。
+
+边界：没有为旧SSTable增加校验和，结构合法的位翻转仍可能无法发现；检测损坏会报错而不会自动修复。局部`ValueError`在部分既有RPC路径仍可能映射为`INVALID_ARGUMENT`，未统一为专门的数据损坏状态。N/W/R只在构造时校验，运行中不要修改配置。已知DOWN成员不会自动遗忘。自动资源供给、安全下线、拓扑共识、身份/TLS、真实跨机房运行及大数据容量证明仍未实现。
+
+以下为历史复审记录，各次测试计数保留原值。
 
 ## 2026-11-09 有界SSTable读取与流式压缩
 
