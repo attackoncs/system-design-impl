@@ -27,21 +27,22 @@ flowchart LR
 | SQLite `id_sequence` | 单行 `value` | 协调发号事实，与映射创建共用事务 |
 | `URLMapping` | `short_code/long_url/redirect_type/created_at` | 不可变业务对象 |
 | `_cache` | short_code → mapping，维护最近使用顺序 | 可丢弃的读取加速 |
-| `_clicks` | short_code → ClickRecord列表 | 进程内观测，和映射事务不同 |
+| `_click_counts` | short_code → 精确总数 | 不受明细保留淘汰影响 |
+| `_clicks` | short_code →（单调到达时间, ClickRecord）有界deque | 进程内观测，和映射事务不同 |
 | 候选短码 | 策略函数的计算结果 | 未保存前不等于已接受链接 |
 
 ## 六站阅读路线
 
-1. [URLShortener.shorten](../src/url_shortener/shortener.py#L89)：输入长URL，输出完整短URL。先看最终的 `get_or_create`，理解原子性不在HTTP Handler里。
+1. [URLShortener.shorten](../src/url_shortener/shortener.py#L101)：输入长URL，输出完整短URL。先看最终的 `get_or_create`，理解原子性不在HTTP Handler里。
 2. [redirect_uri](../src/url_shortener/urls.py#L9)：由 `_validate_url` 调用；拒绝无效主机、端口、空白等，确认中文网址可编码。保存仍保留原串；HTTP层才使用转换后的URI。
 3. [Base62Strategy.generate](../src/url_shortener/strategies.py#L178)：理解策略只负责码的构造；切回服务代码看它如何被factory调用。
-4. [SQLiteStorage.get_or_create](../src/url_shortener/sqlite_storage.py#L60)：已存在先只读返回；未命中才在事务中重查、生成和保存。factory经 [SQLiteStorage.next_id](../src/url_shortener/sqlite_storage.py#L73) 发号；同一个存储对象会复用事务。
-5. [URLShortener.resolve](../src/url_shortener/shortener.py#L122)：输入短码，先查LRU，再查SQLite；成功后记录点击，输出 `(long_url, redirect_type)`。
+4. [SQLiteStorage.get_or_create](../src/url_shortener/sqlite_storage.py#L64)：已存在先只读返回；未命中才在事务中重查、生成和保存。factory经 [SQLiteStorage.next_id](../src/url_shortener/sqlite_storage.py#L77) 发号；同一个存储对象会复用事务。
+5. [URLShortener.resolve](../src/url_shortener/shortener.py#L134)：输入短码，先查LRU，再查SQLite；成功后记录点击，输出 `(long_url, redirect_type)`。
 6. [create_app](../src/url_shortener/http.py#L8)：最后再看如何把业务结果转换成HTTP状态和Location，避免把业务方法返回值误认为已经发出了重定向响应。
 
 ## 微观一：为什么不是先查再单独保存
 
-[sqlite_storage.py:60](../src/url_shortener/sqlite_storage.py#L60)
+[sqlite_storage.py:64](../src/url_shortener/sqlite_storage.py#L64)
 
 ```python
 def get_or_create(self, long_url, factory):
@@ -61,6 +62,8 @@ def get_or_create(self, long_url, factory):
 第一次只读查询命中即可返回；映射不可变，不需要写锁。未命中时才由 `_transaction` 执行 `BEGIN IMMEDIATE`，随后重查。factory、ID分配和 `save` 复用线程局部连接，第二个实例进入事务后会看到前一个实例已保存的URL。成功提交，异常回滚；事务内重查不能删除。
 
 这段代码保证本地共享SQLite文件的接受语义。默认进程内ID计数器仍不适合跨实例发号；持久场景应按上面的方式注入SQLite分配器。不能据此推导跨数据库集群全局唯一性。Base62超过七位时保留全部编码，绝不截断。
+
+SQLiteStorage在构造时固定绝对路径，之后每次重连都使用同一位置；进程切换cwd不会把映射和计数写进另一数据库。空字符串与`:memory:`在路径绝对化之前拒绝，临时数据用InMemoryStorage。
 
 ```mermaid
 sequenceDiagram
@@ -92,7 +95,7 @@ sequenceDiagram
 
 ## 微观二：锁只保护缓存结构，回源在锁外
 
-[shortener.py:139](../src/url_shortener/shortener.py#L139)
+[shortener.py:151](../src/url_shortener/shortener.py#L151)
 
 ```python
 with self._cache_lock:
@@ -113,9 +116,11 @@ if mapping is None:
 
 失败短码在点击记录之前抛 `ShortCodeNotFoundError`；缓存命中也仍会走后面的点击记录，因此不能把缓存命中等同于“无需记录解析”。
 
+明细保留期按单调经过时长判断，UTC时间只作为原始事件元数据；系统墙钟回拨或前跳不影响TTL。deque仍按到达顺序从左淘汰，计数上限、0条/不限策略和精确总数保持不变。返回值仍是ClickRecord，不暴露内部单调时间。
+
 ## 失败路径：冲突不能覆盖旧链接
 
-[SQLiteStorage.save](../src/url_shortener/sqlite_storage.py#L88) 使用INSERT与唯一约束；若同一个code已经属于另一条映射，不会执行覆盖。候选策略可在自身契约内尝试新码，最终仍不能悄悄改写旧链接的目标。
+[SQLiteStorage.save](../src/url_shortener/sqlite_storage.py#L94) 使用INSERT与唯一约束；若同一个code已经属于另一条映射，不会执行覆盖。候选策略可在自身契约内尝试新码，最终仍不能悄悄改写旧链接的目标。
 
 - [test_shared_database_atomic_creation_and_restart](../tests/test_chapter_review.py#L12)：并发共享数据库创建相同URL，检查相同返回以及重启后仍能读取。
 - [test_collision_never_overwrites_old_link](../tests/test_chapter_review.py#L27)：强制短码冲突，观察旧映射保持不变。

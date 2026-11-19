@@ -1,18 +1,22 @@
 """Transactional persistence shared by independent shortener instances."""
 
 import datetime
+import os
 import sqlite3
 import threading
 from contextlib import contextmanager
+
+from .models import RedirectType, URLMapping
 from .storage import StorageBackend
-from .models import URLMapping, RedirectType
 
 
 class SQLiteStorage(StorageBackend):
     def __init__(self, path):
-        self.path = str(path)
-        if self.path == ":memory:":
+        path = str(path)
+        if path in ("", ":memory:"):
             raise ValueError("use a file path for persistent storage")
+        # Every operation reconnects; cwd changes must never select another DB.
+        self.path = os.path.abspath(path)
         self._local = threading.local()
         with self._connection() as db:
             db.execute(
@@ -78,7 +82,9 @@ class SQLiteStorage(StorageBackend):
         allocator or a migration from arbitrary external IDs.
         """
         with self._transaction() as db:
-            current = db.execute("SELECT value FROM id_sequence WHERE singleton=1").fetchone()[0]
+            current = db.execute(
+                "SELECT value FROM id_sequence WHERE singleton=1"
+            ).fetchone()[0]
             if current >= 2**63 - 1:
                 raise OverflowError("SQLite ID sequence exhausted")
             next_id = current + 1

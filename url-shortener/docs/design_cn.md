@@ -46,7 +46,7 @@ Base62 字母表为 `0-9a-zA-Z`。编码左补零至至少7位，不截断；`62
 
 `resolve` 在缓存锁内查找并维护 LRU，未命中后在锁外读存储，再短暂持锁回填/淘汰。容量默认1024，0禁用。映射不支持修改或删除，因而实例缓存没有更新失效协议。
 
-不存在的短码抛 `ShortCodeNotFoundError`；成功后记录一次 ClickRecord，命中缓存也记录。点击统计由独立锁保护：每条链接一个精确计数器，明细追加到 `deque(maxlen=click_retention_max_records)`（默认1000，0不保留明细）。时间戳在锁内生成，deque 按时间有序，写入及读取前从左端弹出超过 `click_retention_max_age`（默认30天）的记录，每次点击均摊O(1)，无全量扫描。`get_click_records` 返回保留窗口的副本，`get_click_count` 始终精确；内存为 O(链接数 + 链接数×明细上限)。统计仅属于本实例，重启丢失；高流量部署应接入持久事件与聚合服务。
+不存在的短码抛ShortCodeNotFoundError；成功解析（包括缓存命中）在独立锁内增加精确点击计数。每条链接用有界deque保存（单调到达时间, 不可变ClickRecord），默认1000条、0不保留明细。max age默认30天，按time.monotonic经过时长判断，墙钟回拨/前跳不延长或缩短保留期；UTC时间仍为原始事件元数据，允许回拨。写入/读取时从最早到达端淘汰，均摊O(1)，不排序或全扫。get_click_records按到达顺序返回ClickRecord，get_click_count保持精确；实例内存O(链接数+链接数×明细上限)，重启丢失，集群分析须外接持久服务。
 
 ## URL 与 HTTP 边界
 

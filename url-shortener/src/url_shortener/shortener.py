@@ -4,9 +4,10 @@ Coordinates between hash strategies, storage backends, and click tracking to
 provide the full shorten/redirect flow.
 """
 
-from collections import OrderedDict, deque
 import datetime
 import threading
+from collections import OrderedDict, deque
+from time import monotonic
 from typing import Optional
 
 import url_shortener.exceptions
@@ -14,7 +15,6 @@ import url_shortener.storage
 import url_shortener.strategies
 from url_shortener import models
 from url_shortener.urls import redirect_uri
-
 
 # Raw click details are bounded per link; totals remain exact counters.
 DEFAULT_CLICK_RETENTION_MAX_RECORDS = 1000
@@ -35,8 +35,12 @@ class URLShortener:
         default_redirect_type: models.RedirectType = models.RedirectType.TEMPORARY,
         domain: str = "http://short.url",
         cache_capacity: int = 1024,
-        click_retention_max_records: Optional[int] = DEFAULT_CLICK_RETENTION_MAX_RECORDS,
-        click_retention_max_age: Optional[datetime.timedelta] = DEFAULT_CLICK_RETENTION_MAX_AGE,
+        click_retention_max_records: Optional[
+            int
+        ] = DEFAULT_CLICK_RETENTION_MAX_RECORDS,
+        click_retention_max_age: Optional[
+            datetime.timedelta
+        ] = DEFAULT_CLICK_RETENTION_MAX_AGE,
     ) -> None:
         """Initialize the URL shortener.
 
@@ -64,7 +68,9 @@ class URLShortener:
         self._cache_lock = threading.Lock()
         self._strategy = strategy or url_shortener.strategies.HashCollisionStrategy()
         self._storage = storage or url_shortener.storage.InMemoryStorage()
-        self._default_redirect_type = self._validate_redirect_type(default_redirect_type)
+        self._default_redirect_type = self._validate_redirect_type(
+            default_redirect_type
+        )
         self._domain = domain.rstrip("/")
         if click_retention_max_records is not None and (
             type(click_retention_max_records) is not int
@@ -77,14 +83,20 @@ class URLShortener:
             not isinstance(click_retention_max_age, datetime.timedelta)
             or click_retention_max_age <= datetime.timedelta(0)
         ):
-            raise ValueError("click_retention_max_age must be None or a positive timedelta")
+            raise ValueError(
+                "click_retention_max_age must be None or a positive timedelta"
+            )
         self._click_max_records = click_retention_max_records
-        self._click_max_age = click_retention_max_age
+        self._click_max_age_seconds = (
+            None
+            if click_retention_max_age is None
+            else click_retention_max_age.total_seconds()
+        )
         self._click_lock = threading.Lock()
         # Exact O(1) total per link; independent of detail retention.
         self._click_counts: dict[str, int] = {}
         # Retained raw details per link, oldest first (bounded deque).
-        self._clicks: dict[str, deque[models.ClickRecord]] = {}
+        self._clicks: dict[str, deque[tuple[float, models.ClickRecord]]] = {}
 
     def shorten(
         self,
@@ -160,31 +172,37 @@ class URLShortener:
     def _record_click(self, short_code: str, client_id: Optional[str]) -> None:
         """Count a click exactly and retain its detail within the policy.
 
-        The timestamp is taken under the lock so each per-link deque stays in
-        append (time) order; age pruning then only pops expired records from
-        the left, which is amortized O(1) per click and never scans.
+        Elapsed time is sampled under the lock to keep expiration in arrival
+        order even when the wall clock jumps. UTC timestamps remain unchanged
+        event metadata. Pruning from the left is amortized O(1) per click.
         """
         with self._click_lock:
-            now = datetime.datetime.now(datetime.timezone.utc)
             self._click_counts[short_code] = self._click_counts.get(short_code, 0) + 1
             if self._click_max_records == 0:
                 return
+            now = datetime.datetime.now(datetime.timezone.utc)
+            received = monotonic()
             records = self._clicks.get(short_code)
             if records is None:
                 # maxlen evicts the oldest record in O(1) when full.
                 records = deque(maxlen=self._click_max_records)
                 self._clicks[short_code] = records
             records.append(
-                models.ClickRecord(short_code=short_code, timestamp=now, client_id=client_id)
+                (
+                    received,
+                    models.ClickRecord(
+                        short_code=short_code, timestamp=now, client_id=client_id
+                    ),
+                )
             )
-            self._prune_expired(records, now)
+            self._prune_expired(records, received)
 
-    def _prune_expired(self, records: deque, now: datetime.datetime) -> None:
-        """Drop records older than the max age from the oldest end."""
-        if self._click_max_age is None:
+    def _prune_expired(self, records: deque, now: float) -> None:
+        """Drop details whose monotonic elapsed age exceeds the limit."""
+        if self._click_max_age_seconds is None:
             return
-        cutoff = now - self._click_max_age
-        while records and records[0].timestamp < cutoff:
+        cutoff = now - self._click_max_age_seconds
+        while records and records[0][0] < cutoff:
             records.popleft()
 
     def get_click_count(self, short_code: str) -> int:
@@ -213,14 +231,14 @@ class URLShortener:
             short_code: The short code to query.
 
         Returns:
-            List of ClickRecord objects, oldest first (empty if none retained).
+            List of ClickRecords in arrival order (empty if none retained).
         """
         with self._click_lock:
             records = self._clicks.get(short_code)
             if not records:
                 return []
-            self._prune_expired(records, datetime.datetime.now(datetime.timezone.utc))
-            return list(records)
+            self._prune_expired(records, monotonic())
+            return [record for _, record in records]
 
     def _validate_url(self, url: str) -> None:
         """Validate that a URL is well-formed.

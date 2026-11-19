@@ -39,3 +39,12 @@ python -W error -m pytest tests -q
 python tools/verify_concurrency.py --output benchmarks/local.json
 python -m examples.demo_server --port 8000 --database urls.db
 ```
+
+## 2026-11-17 acceptance
+
+- [x] Compare chapter lines 2426–2728, YOURLS/cachetools source and the independent CodeGraph index.
+- [x] Bind the persistent SQLite path; reject empty/:memory: inputs before absolutizing.
+- [x] Separate monotonic retention TTL from UTC event metadata; preserve totals/count bounds and support large valid durations.
+- [x] Pass 151 tests, statement coverage 97.33% and branch coverage 86.59%; run existing 4-process/real HTTP tooling and an 8-thread counter check.
+- [x] Update bilingual documentation and reading guides; preserve existing tests and benchmark code.
+- [ ] Cluster analytics, replication/sharding/failover, rate limiting and capacity acceptance remain deployment work.

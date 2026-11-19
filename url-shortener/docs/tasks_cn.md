@@ -39,3 +39,12 @@ python -W error -m pytest tests -q
 python tools/verify_concurrency.py --output benchmarks/local.json
 python -m examples.demo_server --port 8000 --database urls.db
 ```
+
+## 2026-11-17 acceptance / 验收
+
+- [x] 原书2426–2728、YOURLS/cachetools源码与独立CodeGraph核对。
+- [x] 固定SQLite持久路径，空路径与:memory:在绝对化前拒绝。
+- [x] 单调elapsed TTL与UTC事件时间分离，保持精确总数及数量上限；极大合法时长不溢出。
+- [x] 151项通过，语句97.33%/分支86.59%；原4进程/真实HTTP工具和8线程统计验证通过。
+- [x] 同步双语文档及学习导读；旧测试与benchmark代码未改。
+- [ ] 集群持久分析、复制/分片/容灾、限流及规模验收仍为部署边界。

@@ -6,7 +6,7 @@
 [Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
 <!-- LEARNING_GUIDE_END -->
 
-> Reviewed against Chapter 9, GitHub source and CodeGraph. Durable IDs, concurrent duplicate reads and international URL redirects are covered in the [review and validation record (Chinese)](docs/open-source-review_cn.md).
+> 2026-11-17: **151 tests** pass after Chapter 9, GitHub and CodeGraph review. Durable paths, clock-safe retention and real process/HTTP validation are recorded in the [review (Chinese)](docs/chapter09-review.md).
 
 A Python URL shortener library implementing the design from *System Design Interview* Chapter 9 "Design A URL Shortener". Features pluggable hash strategies (hash+collision resolution and base-62 conversion), a storage abstraction with in-memory default, click tracking analytics, and a stdlib HTTP demo server. Zero runtime dependencies.
 
@@ -192,9 +192,11 @@ short_url = shortener.shorten("https://example.org/guide")
 assert shortener.resolve(short_url.rsplit("/", 1)[1])[0] == "https://example.org/guide"
 ```
 
+SQLiteStorage fixes its absolute database path at construction; later cwd changes cannot switch databases. Empty paths and `:memory:` are rejected; use InMemoryStorage for ephemeral data. The `path` attribute now reports the absolute location.
+
 Pass the **same storage object** as mapping store and ID generator within each instance. Separate processes may create their own objects pointing to one SQLite file. ID allocation and mapping creation share a transaction; duplicates consume no IDs. Existing mappings use a read-only fast path; misses recheck under the writer reservation. Do not mix uncoordinated generators; arbitrary external-ID databases require sequence migration first.
 
-The instance LRU defaults to 1024 entries; 0 disables it. Immutable mappings survive restart with SQLite; click totals are exact per-link counters, while raw click details are bounded instance memory: by default the newest 1000 records per link, none older than 30 days (`click_retention_max_records` / `click_retention_max_age`, `None` disables a bound). Pruning happens on write in amortized O(1); details are not persisted. Library resolution preserves the original URL; HTTP Location uses IDNA and percent encoding. Invalid hosts, ports, whitespace and controls are rejected.
+The instance LRU defaults to 1024 entries; 0 disables it. Immutable mappings survive restart with SQLite; click totals are exact per-link counters, while raw click details are bounded instance memory: by default the newest 1000 records per link, none older than 30 days (`click_retention_max_records` / `click_retention_max_age`, `None` disables a bound). Retention uses monotonic elapsed time rather than UTC age; UTC event timestamps are unchanged and records remain in arrival order. Pruning on write/read is amortized O(1); details are not persisted. Library resolution preserves the original URL; HTTP Location uses IDNA and percent encoding. Invalid hosts, ports, whitespace and controls are rejected.
 
 Redirects preserve explicit empty `?` / `#` components and IPvFuture brackets. If stdlib IDNA would fold a Unicode hostname (for example `faß.de`), supply its explicit ASCII ACE name (such as `xn--fa-hia.de`); lossy conversion is rejected. See the [review](docs/open-source-review_cn.md).
 

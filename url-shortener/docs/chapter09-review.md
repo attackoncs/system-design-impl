@@ -1,5 +1,20 @@
 # 第 09 章核对与实现
 
+## 2026-11-17 原书、GitHub及CodeGraph复核
+
+原书2426–2728行的创建/去重、两类短码、持久化、缓存回源和301/302均有实现；原书明确链接不可改删，本轮不新增映射TTL或失效广播。先复现再修复两类实际问题，原测试与benchmark代码未改。
+
+- SQLiteStorage相对路径原先每次重连按当前cwd解释，可能把映射查询和持久ID分配切到另一文件。现在先拒绝空字符串与:memory:，再固定绝对路径，path属性返回该位置；表结构、事务内重查、ID分配和连接关闭保持不变。
+- 点击保留原先按UTC墙钟计算cutoff：回拨可延长保留、前跳可误删，合法timedelta.max还会触发datetime下溢，导致跳转失败。现在deque保存单调到达时间与原ClickRecord；按elapsed TTL修剪，UTC事件元数据不改、按到达顺序返回。保留计数上限/0/None策略、精确总数与均摊O(1)，无需排序或周期扫描。TTL含义明确改为单调经过时长。
+
+参考[YOURLS创建/去重/并发写入](https://github.com/YOURLS/YOURLS/blob/master/includes/functions-shorturls.php)，保留本地SQLite唯一约束与事务作为最终接受事实；参考[cachetools TTLCache](https://github.com/tkem/cachetools/blob/master/src/cachetools/__init__.py)默认单调计时原则，但没有引入依赖或移植其LRU结构。
+
+独立CodeGraph最终23文件、388节点、861边；_record_click影响20个符号，SQLiteStorage影响39个。沿resolve→缓存/存储→统计及_connection→查找/事务/保存核对，源码与实际行为补证。
+
+基线145项/1.90秒；新增6项中5项先在旧逻辑失败，另1项确认原有:memory:拒绝行为；最终151项/2.40秒，-W error，无跳过。语句覆盖97.33%、分支覆盖86.59%、综合95.40%，未排除业务模块；独立审查无重要遗留问题。8线程4000次点击分别验证0/1/None上限，总数准确。原有工具4进程1000次创建恰好501个唯一映射，重启全量解析及新ID不复用通过；真实HTTP为创建200、中文跳转302、非法URL400、未知404。见[验证](../benchmarks/verification-2026-11-17.json)与[原始运行](../benchmarks/review-2026-11-17.json)。
+
+仍是单SQLite写者和实例LRU/统计；没有持久集群点击、自动分片/复制/容灾、负载均衡或限流部署。没有证明3650亿链接规模或生产吞吐；未改短码/数据库/HTTP格式。以下历史UTC保留策略已由本节单调TTL取代。
+
 ## 2026-11-09 点击明细有界保留
 
 - 问题：`URLShortener` 每次解析向 `_clicks[code]` 列表追加 ClickRecord，计数用 `len(list)`，热门链接的明细无限增长。
@@ -37,4 +52,4 @@ Base62Strategy 的默认本地自增器不是分布式 ID 分配器。持久场�
 
 映射没有修改/删除接口，因而缓存不需要失效广播；手工修改数据库不属于该契约。点击明细仍在实例内存中、无持久化，保留策略见文首 2026-11-09 小节；301 浏览器缓存命中不会被服务统计。限流、全局分析和高可用部署属于待扩展项。
 
-当前145项测试通过；4进程1000次创建和真实HTTP验证见[原始结果](../benchmarks/review-2026-11-01.json)。演示统一使用 `python -m examples.demo_server --database urls.db`，创建路径为 `/api/v1/data/shorten`。
+2026-11-01历史记录为145项；2026-11-17本轮151项通过，4进程1000次创建和真实HTTP验证见[原始结果](../benchmarks/review-2026-11-01.json)。演示统一使用 `python -m examples.demo_server --database urls.db`，创建路径为 `/api/v1/data/shorten`。

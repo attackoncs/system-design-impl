@@ -1,6 +1,6 @@
 # 第9章：原书、开源实现与本地代码核对
 
-核对日期：2026-10-31；收尾复验：2026-11-01。原书范围为仓库《System Design Interview.md》第9章；通过 CodeGraph 跟踪 `shorten → get_or_create → strategy → save` 和 `resolve → cache/storage → HTTP`。下表区分已运行的本地行为与部署层讨论。
+最新复核：2026-11-17，151项通过；[本轮路径与点击时钟修复](chapter09-review.md)。下方2026-10-31/11-01变更与验证保留历史计数。原书范围为仓库《System Design Interview.md》第9章；通过 CodeGraph 跟踪 `shorten → get_or_create → strategy → save` 和 `resolve → cache/storage → HTTP`。下表区分已运行的本地行为与部署层讨论。
 
 ## GitHub 检索与参考范围
 
@@ -22,7 +22,7 @@ YOURLS 的 `yourls_add_new_link` 会检查重复长 URL、从数字 ID 构造候
 | 映射持久化、双向唯一索引 | SQLite 的 code/url 唯一约束、`BEGIN IMMEDIATE` 内二次查询 | SQLite 为单写者；操作结束关闭连接，无分片和主从复制 |
 | 重定向301/302 | WSGI `create_app`；302带 `Cache-Control: no-store` | 浏览器可能缓存301，因此服务端无法统计绕过自身的点击 |
 | 缓存旁路读取 | 有容量上限的实例内 LRU，默认1024，0禁用；数据库回源在缓存锁外 | 不跨进程共享；不可变映射不需要更新失效协议 |
-| 统计 | 每次成功 `resolve` 记录点击，命中缓存也记录 | 点击明细未持久化且无容量上限；高流量应接外部事件/统计系统 |
+| 统计 | 每次成功 `resolve` 记录点击，命中缓存也记录 | 点击明细未持久化，默认每链接1000条/单调经过30天；总数精确；高流量应接外部事件/统计系统 |
 | 限流、无状态 Web 扩展、负载均衡、分片、复制、可用性 | 说明接入位置和部署边界 | 没有伪装成已实现的生产集群；可接第5章限流器和生产 WSGI 服务 |
 | 可选 Bloom filter | 仍以存储唯一约束为准 | 本地没有 Bloom filter；当前规模增加它没有必要 |
 

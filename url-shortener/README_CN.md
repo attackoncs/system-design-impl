@@ -194,7 +194,9 @@ assert shortener.resolve(short_url.rsplit("/", 1)[1])[0] == "https://例子.中�
 
 同一实例中，存储和发号器必须传入**同一个 storage 对象**；不同进程分别创建对象，指向同一个 SQLite 文件。分配和保存复用事务，相同 URL 不重复发号，失败回滚。已有映射先只读返回，未命中才申请写锁并重查。不要与不协调的其他生成器混用；旧外部 ID 数据需先迁移序列。
 
-默认缓存容量1024，0禁用；映射不可变，SQLite 重启可恢复。点击总数是每条链接一个精确计数器；点击明细只在实例内存、未持久化，并按保留策略有界：默认每条链接保留最新1000条且不超过30天（`click_retention_max_records` / `click_retention_max_age`，传 `None` 关闭对应上限）。写入时均摊O(1)淘汰。库返回原始 URL，HTTP Location 则转换为 IDNA/百分号编码 URI；非法主机、端口、空白和控制字符被拒绝。
+SQLiteStorage构造时固定绝对数据库路径，之后切换cwd不会换库，path属性返回绝对位置；空路径和`:memory:`被拒绝，临时存储请用InMemoryStorage。
+
+默认缓存容量1024，0禁用；映射不可变，SQLite 重启可恢复。点击总数是每条链接一个精确计数器；点击明细只在实例内存、未持久化，并按保留策略有界：默认每条链接保留最新1000条且不超过30天（`click_retention_max_records` / `click_retention_max_age`，传 `None` 关闭对应上限）。保留期按单调经过时长计算，UTC事件时间保持原值，明细按到达顺序返回；写入/读取时均摊O(1)淘汰。库返回原始 URL，HTTP Location 则转换为 IDNA/百分号编码 URI；非法主机、端口、空白和控制字符被拒绝。
 
 重定向保留显式空 `?` / `#` 和IPvFuture方括号。标准库IDNA若有损折叠Unicode域名（例如 `faß.de`），会要求显式ASCII ACE域名（如 `xn--fa-hia.de`），避免静默改变目标站点；详见[核对说明](docs/open-source-review_cn.md)。
 

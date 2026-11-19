@@ -109,7 +109,7 @@ A Python URL shortener library implementing the design from System Design Interv
 
 6.2 THE URL_Shortener SHALL provide a method to retrieve the total click count for a given Short_Code.
 
-6.3 THE URL_Shortener SHALL provide a method to retrieve the list of Click_Records for a given Short_Code.
+6.3 THE URL_Shortener SHALL return retained Click_Records in arrival order, bounded by count (default 1000) and monotonic elapsed age (default 30 days). UTC timestamps remain event metadata; eviction does not alter exact totals. None disables a bound and 0 records keeps totals only.
 
 6.4 IF click tracking is requested for a Short_Code with no recorded clicks, THEN THE URL_Shortener SHALL return a count of zero and an empty list.
 
@@ -160,7 +160,7 @@ A Python URL shortener library implementing the design from System Design Interv
 10.3 `SQLiteStorage.next_id` persists IDs. The same object used as storage and allocator shares the mapping transaction and rollback. Instances/processes coordinate through one file; this is not cross-database global allocation.
 10.4 Duplicates consume no ID. Exhaustion after `2**63-1` raises OverflowError without wrapping. Arbitrary existing external IDs need explicit sequence migration.
 10.5 The instance LRU defaults to 1024 entries; 0 disables it. Database reads occur outside its lock.
-10.6 Click details are unbounded, nonpersistent instance memory. Cluster analytics, replication, sharding, load balancing and rate-limiter deployment are outside the running implementation.
+10.6 Click details are bounded, nonpersistent instance memory; SQLite paths bind at construction and empty/:memory: paths are rejected. Cluster analytics, replication, sharding, load balancing and rate-limiter deployment are outside the running implementation.
 
 ## Non-Functional Requirements
 
