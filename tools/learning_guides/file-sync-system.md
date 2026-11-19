@@ -57,6 +57,8 @@ flowchart TB
 
 这里的核心不是“加一把大锁”，而是**锁外验证慢内容，锁内重新判断提交资格**。
 
+同一事务还会判断路径是否能由各设备表示。{{symbol:src/file_sync/paths.py:live_path_conflict}} 通过索引区分同名、祖先和后代。例如已有文件 `Straße` 时，另一设备不能创建 `STRASSE/笔记`。已删除文件会释放对应的路径键。
+
 ## 微观二：并发冲突是一个保留策略
 
 ```mermaid
@@ -107,6 +109,18 @@ flowchart TD
   I -->|"完整或合法关闭定界"| P["解析并应用整页"]
   P --> A["持久游标并确认"]
 ```
+
+## 离线设备从哪一个游标继续
+
+假设第一页的事件水位是 H，设备刚写完 `a`，另一台设备又修改了 `a`。
+{{symbol:src/file_sync/service.py:Drive.snapshot}} 按工作区和路径继续查下一页，
+页与页之间允许写入。{{symbol:src/file_sync/client.py:DeviceClient.resnapshot}}
+应用全部页面后确认 H，下一次 pull 会读到修改 `a` 的事件。若中途断线，已经落盘的版本
+可在重试时跳过。已过期的事件通过再次取快照恢复。
+
+下载或提交发现坏块时，{{symbol:src/file_sync/service.py:Drive._read_block}} 把损坏标志写入匹配的块记录。
+比较 {{symbol:src/file_sync/service.py:Drive.upload_status}} 返回的 `missing` 与原清单，
+就能看到为什么同一块出现两次也只需补传一次。
 
 ## 用测试追踪数据变化
 

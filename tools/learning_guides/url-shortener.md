@@ -27,7 +27,8 @@ flowchart LR
 | SQLite `id_sequence` | 单行 `value` | 协调发号事实，与映射创建共用事务 |
 | `URLMapping` | `short_code/long_url/redirect_type/created_at` | 不可变业务对象 |
 | `_cache` | short_code → mapping，维护最近使用顺序 | 可丢弃的读取加速 |
-| `_clicks` | short_code → ClickRecord列表 | 进程内观测，和映射事务不同 |
+| `_click_counts` | short_code → 精确总数 | 不受明细保留淘汰影响 |
+| `_clicks` | short_code →（单调到达时间, ClickRecord）有界deque | 进程内观测，和映射事务不同 |
 | 候选短码 | 策略函数的计算结果 | 未保存前不等于已接受链接 |
 
 ## 六站阅读路线
@@ -46,6 +47,8 @@ flowchart LR
 第一次只读查询命中即可返回；映射不可变，不需要写锁。未命中时才由 `_transaction` 执行 `BEGIN IMMEDIATE`，随后重查。factory、ID分配和 `save` 复用线程局部连接，第二个实例进入事务后会看到前一个实例已保存的URL。成功提交，异常回滚；事务内重查不能删除。
 
 这段代码保证本地共享SQLite文件的接受语义。默认进程内ID计数器仍不适合跨实例发号；持久场景应按上面的方式注入SQLite分配器。不能据此推导跨数据库集群全局唯一性。Base62超过七位时保留全部编码，绝不截断。
+
+SQLiteStorage在构造时固定绝对路径，之后每次重连都使用同一位置；进程切换cwd不会把映射和计数写进另一数据库。空字符串与`:memory:`在路径绝对化之前拒绝，临时数据用InMemoryStorage。
 
 ```mermaid
 sequenceDiagram
@@ -82,6 +85,8 @@ sequenceDiagram
 首先在 `_cache_lock` 内取值并更新LRU顺序；未命中后，数据库读取发生在锁外。这样一个慢回源不会堵住另一个已经命中的键。拿到映射后再短暂持锁回填、淘汰，缓存容量为0时不回填。
 
 失败短码在点击记录之前抛 `ShortCodeNotFoundError`；缓存命中也仍会走后面的点击记录，因此不能把缓存命中等同于“无需记录解析”。
+
+明细保留期按单调经过时长判断，UTC时间只作为原始事件元数据；系统墙钟回拨或前跳不影响TTL。deque仍按到达顺序从左淘汰，计数上限、0条/不限策略和精确总数保持不变。返回值仍是ClickRecord，不暴露内部单调时间。
 
 ## 失败路径：冲突不能覆盖旧链接
 

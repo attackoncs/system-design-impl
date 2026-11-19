@@ -123,3 +123,9 @@ sequenceDiagram
 把max_pages改成1，预期第一批只尝试主页，child仍在持久队列；新建Crawler并用空种子继续，预期child仍可被处理。再将child内容改为不同字节，预期其结果变为SUCCESS且快照数增加。配置和运行方式见 {{file:README_CN.md}}。
 
 然后运行 {{file:tools/verify_http.py}} 的自有回环HTTP案例，观察base href、坏链接隔离、robots禁止与重启恢复；测量范围见 {{file:benchmarks/REPORT.md}}。原书和Scrapy的取舍记录在 {{file:docs/open-source-review_cn.md}}。
+
+## 2026-11-17：先统一主机身份，再谈礼貌和域名边界
+
+{{symbol:src/web_crawler/urls.py:host_for_url}}把URL校验和hostname规范化集中起来，名单、Crawler入队、持久队列与分片复用。port/userinfo不是另一个主机槽，IDNA和尾点也不能制造新身份；原URL路径/query不改。robots用{{symbol:src/web_crawler/urls.py:origin_for_url}}生成不带凭据的scheme/host/port键，并为每跳请求发送配置UA。
+
+{{symbol:src/web_crawler/state.py:SQLiteCrawlState._migrate_host_keys}}在owner保护下单次升级旧键，必须先合并所有别名和最长next_ready再派发，不能只改当前候选。已有任务在路由或下载前再次经过过滤，防止旧配置下接受的地址绕过新政策。旧手工自定义且与URL不一致的host须单独审计迁移，精确主机规则不等于通用SSRF防护。

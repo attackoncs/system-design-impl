@@ -1,5 +1,55 @@
 # 逐项目深入审查进度
 
+## 2026-11-19 第16章后续验收
+
+文件提交按索引检查 Unicode 路径冲突，2 万文件下的空文件提交中位数由 24.20 ms 降至 0.205 ms。62 秒有界保留实验完成 1,702 次修订，在线和离线设备最终游标一致。完整严格套件 133 项通过。[章节](file-sync-system/docs/chapter16-review.md) · [证据](file-sync-system/benchmarks/verification-2026-11-19.json)
+
+## 2026-11-18 第16章复核
+
+文件同步补齐大目录离线分页恢复、坏块补传、删除重放保护，消除普通元数据读取触发的长轮询广播。
+132 项严格测试通过，1,600 个文件头经 7 页真实 HTTP 恢复。原增量工具验证只下载变化的 4 KiB，重启后游标继续有效。[章节](file-sync-system/docs/chapter16-review.md) · [验证](file-sync-system/benchmarks/verification-2026-11-18.json)
+
+## 2026-11-18 第15章复核
+
+补齐发布前产物 SHA-256 校验、远端损坏记录隔离/修复重试、HTTP长度与校验字节一致性，
+并修复 PostgreSQL conninfo/SQLite路径识别。原生 FFmpeg8.1.2、独占 PostgreSQL18.6、
+Moto S3 下180项通过、无跳过，语句86.61%/分支76.71%，无排除行。
+原媒体示例/benchmark通过，旧测试和工具源码未改，双语文档与学习指南已同步。
+[章节](video-streaming-system/docs/chapter15-review.md)与
+[证据](video-streaming-system/benchmarks/verification-2026-11-18.json)记录实际来源、校验/冷HEAD成本和部署边界。
+
+## 2026-11-18 第14章复核
+
+修复相对数据库路径使聚合/构建读错同名有效库、SQLite持久ID越界导致HTTP无响应、持续慢请求头无限占槽。最终196项通过，语句93.37%/分支87.59%，无排除行；两个原示例与原10,000查询/10,000本地/500HTTP工具通过，旧测试和benchmark源码未改。[章节](search-autocomplete-system/docs/chapter14-review.md)与[证据](search-autocomplete-system/benchmarks/verification-2026-11-18.json)记录源码对照、期限作用域及部署边界。
+
+## 2026-11-17 第13章复核
+
+补齐Redis网络正文预算、登录绝对期限/晚到会话回收、登出响应及在途事件所有权、通知组重复取消排空。主套213项通过、1项Sentinel跳过；全新六进程lab单独通过该项，共覆盖214个不同用例。累积源码覆盖85.27%（语句87.81%/分支77.06%）；原20连接/100消息节点故障工具验证持久缺失0，示例通过，旧测试和benchmark源码未改。[章节](chat-system/docs/chapter13-review.md)及[汇总证据](chat-system/benchmarks/verification-2026-11-17.json)记录精确范围、实时提示恢复和部署边界。
+
+## 2026-11-17 第12章复核
+
+补齐重复取消后的线程/子任务/领取/池停止所有权，末次权限过滤后保留短页/空页续读游标，并统一UTC瞬间排序以处理回拨fold。最终323项通过，语句94.74%/分支84.63%；旧测试和benchmark源码未改，原热读工具仍每请求36次正文读取。[章节](news-feed-system/docs/chapter12-review.md)及[验证JSON](news-feed-system/benchmarks/verification-2026-11-17.json)记录原章覆盖、开源对照、取消等待和本地队列/真实通知/集群部署边界。
+
+## 2026-11-17 第11章复核
+
+补齐重复取消时SQLite串行提交、领取归还、Worker/pool和批量消费者清理，首次等待前快照请求字典，保证已开始受理的额度/去重记账完成，并固定持久数据库路径。最终475项通过，语句94.87%/分支84.14%；原测试和benchmark源码未改，原受理benchmark运行通过。[章节](notification-system/docs/chapter11-review.md)与[证据](notification-system/benchmarks/verification-2026-11-17.json)记录取消可能已入队、至少一次投递及真实渠道/集群部署边界。
+
+## 2026-11-17 第10章复核
+
+补齐robots UA/origin、共享规范hostname、域名/礼貌槽绕过保护、路由前重检及旧host状态原子迁移。最终275项通过，语句93.74%/分支83.76%；原真实HTTP和示例通过，旧测试和benchmark代码未改。[章节](web-crawler/docs/chapter10-review.md)及[证据](web-crawler/benchmarks/verification-2026-11-17.json)记录兼容与部署边界。
+
+## 2026-11-17 第9章复核
+
+按后续下一章指令继续第9章：固定SQLite绝对路径并拒绝临时路径，点击保留改用单调elapsed TTL、UTC事件时间保留原值。最终151项通过，语句97.33%/分支86.59%；原四进程1000次创建/501唯一映射、重启及真实HTTP验证通过，8线程精确计数/保留策略通过。旧测试与benchmark代码未改。见[章节](url-shortener/docs/chapter09-review.md)及[证据](url-shortener/benchmarks/verification-2026-11-17.json)；集群分析/分片/复制/容灾等边界保留。
+
+## 2026-11-17 第8章复核
+
+按用户后续“下一章”指令继续第8章，修复持久预留/范围失败提前清除重启屏障，以及相对高水位路径随cwd漂移导致重启重复ID。原有122项保留，最终126项通过；语句覆盖95.53%、分支覆盖90.91%。两个示例及原有真实时钟/4线程/4进程基准通过，原测试和benchmark代码未改。详见[章节记录](unique-id-generator/docs/chapter08-review.md)和[验证证据](unique-id-generator/benchmarks/verification-2026-11-17.json)。身份租约、跨进程锁、文件丢失/快照回滚恢复仍为边界。
+
+## 2026-11-17 第7章复核
+
+第7章补齐零计数因果版本保留、N/W/R严格配置校验、Gossip全DOWN恢复/有界并发与取消排空，以及SSTable坏帧/索引误路由保护。原有428项全部保留，最终456项通过；语句覆盖90.89%、分支覆盖81.50%（排除生成protobuf）。真实3节点恢复与既有示例通过，测试和benchmark旧代码未改。详见[章节记录](key-value-store/docs/chapter07-review.md)和[验证证据](key-value-store/benchmarks/verification-2026-11-17.json)。自动供给、安全下线、拓扑共识与真实跨机房仍为边界。
+
 ## 2026-11-09 效率复审与全仓回归
 
 本轮按原书核对后，针对**随历史/数据量增长的热路径成本**逐章排查并修复（每项先读代码与调用方确认，再用HEAD副本对照测量）：

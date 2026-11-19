@@ -70,7 +70,7 @@ flowchart TD
 
 额度不足是正常业务拒绝。存储异常则由 `_evaluate` 依据 `fail_open` 决定放行还是拒绝，同时增加 `storage_errors`。放行策略提高可用性，也可能让依赖故障期间失去限流约束；它不是算法计算出的“额度足够”。
 
-多规则检查 {{symbol:src/rate_limiter/core.py:RateLimiter.check_request}} 会组合结果，但不是跨规则事务。即使最终被某条规则拒绝，其他规则的原子检查也可能已消耗额度。
+多规则检查 {{symbol:src/rate_limiter/core.py:RateLimiter.check_request}} 先解析校验所有匹配主体，再扣额并组合结果；解析失败不扣任何额度，但正常扣额不是跨规则事务。即使最终被某条规则拒绝，其他规则的原子检查也可能已消耗额度。
 
 - {{symbol:tests/test_chapter05_review.py:test_shared_memory_has_exact_concurrent_admission}}：多个线程并发检查同一主体，允许数量应恰好等于额度。
 - {{symbol:tests/test_chapter05_review.py:test_clock_regression_never_resets_quota}}：时钟回退不能凭空恢复已消耗额度。
@@ -93,6 +93,16 @@ flowchart TD
 服务器丢失脚本缓存与丢失额度状态是两件事。前者可以重新加载代码；后者可能恢复配额，不在硬限额保证内。{{symbol:tests/test_open_source_review.py:test_script_cache_loss_preserves_shared_quota}} 验证重新加载代码仍只允许原额度；{{symbol:tests/test_open_source_review.py:test_script_timeout_is_not_retried}} 验证超时不重放可能已经发生的扣额。首次使用和恢复需要额外往返，稳态每条规则只发送一次EVALSHA。
 
 完整的开源对照与章节边界见 {{file:docs/open-source-review_cn.md}}，包含本轮参考仓库和未实现能力。
+
+## 全局桶、逐规则观测与关闭边界
+
+`key_type="global"`让 {{symbol:src/rate_limiter/core.py:RateLimiter.check_request}} 将不同请求映射到固定主体；规则仍各自隔离，跨进程需共享Redis。直接 `check(key, rule)` 使用显式key。{{symbol:tests/test_policy_observability.py:test_global_quota_is_atomic_under_concurrent_subjects}} 验证不同身份并发竞争同一桶。
+
+{{symbol:src/rate_limiter/core.py:RateLimiter.rule_metrics}} 返回最近100个策略的局部计数副本，不保留主体标签；被淘汰策略再次出现会重新计数，累计 `metrics()` 不受影响。外部采集仍由应用负责。
+
+{{symbol:src/rate_limiter/queue.py:LeakyBucketQueue.close}} 区分状态锁与关闭锁：前者保护停止/启动边界，后者串行化关闭；取消Future时不能持有状态锁，因为完成回调可以重入submit/close。{{symbol:tests/test_queue_lifecycle.py:test_close_allows_cancel_callbacks_to_reenter_queue}} 在子进程内用超时捕获原来的死锁。
+
+Flask路由装饰器即使传入共享limiter，也使用显式路由规则并按完整注册端点隔离；它保留固定429/无额度头约定。完整HTTP头策略使用RateLimitExtension。
 
 ## 自查与练习
 

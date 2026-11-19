@@ -110,12 +110,32 @@ flowchart TD
   F --> A
 ```
 
-## 用测试验证三条主线
+## 微观四：完成事件还不是可播放承诺
+
+{{excerpt:src/video_streaming/service.py:VideoService.handle_completions:21:14}}
+
+编码产物写入和处理 outbox 之间可能发生损坏。处理器先按对象键去重，再在锁外
+流式核对 SHA-256；只有匹配的资源集合才能推进 READY。缺失或明确的内容损坏
+保留待处理，原字节修复后可重试，同批健康视频继续发布。网络或存储服务故障仍
+抛出，避免把服务离线当成普通内容损坏。最终事务再次核对状态，下架仍优先。
+
+{{symbol:src/video_streaming/remote_storage.py:RemoteObject.stat}} 与 open 复用校验后的
+本地字节，所以 HTTP 长度和范围不会采用另一份远端正文的长度。代价是冷 HEAD
+也要下载校验；热缓存正确不证明远端正文仍正确，源站内容寻址键需保持不可变。
+
+{{symbol:src/video_streaming/database.py:is_postgres_dsn}} 识别 URI 和开头的关键词
+连接串。`dbname=...` 不能悄悄创建同名 SQLite 文件；`/data/host=archive/db.sqlite3`
+仍是文件路径。若文件名本身以 `keyword=` 开头，用 PathLike 明确选择 SQLite。
+
+## 用测试验证关键路径
 
 - {{symbol:tests/test_video.py:test_resumable_idempotent_parts_and_finalization}}：按1→0上传，分别观察缺失分片拒绝、相同内容幂等、不同内容冲突，以及重复finish只生成一套任务。
 - {{symbol:tests/test_video.py:test_dependencies_concurrent_claims_and_lease_fencing}}：八个领取者最初只有一个能拿到inspect；旧租约完成和失败均被拒绝，新租约完成后才释放下游。
 - {{symbol:tests/test_pipeline_reliability.py:test_long_running_task_renews_before_competing_worker_reclaims}}：再阅读持续处理时续租如何维持资格。
 - {{symbol:tests/test_storage_review.py:test_finish_without_checksum_rejects_corrupt_part_and_can_retry}}：上传后把分片改成等长坏数据，观察 finish 拒绝、无任务；原授权重传后再次完成成功。
+- {{symbol:tests/test_publication_integrity_review.py:test_corrupt_remote_asset_does_not_block_healthy_completion}}：冷缓存远端清单/分片损坏时坏视频保留 PROCESSING，同批好视频 READY；修复后重试成功。
+- {{symbol:tests/test_adapter_identity_review.py:test_warm_remote_media_size_matches_verified_bytes}}：远端坏正文与本地好缓存长度不同时，GET/HEAD/Range 仍描述实际读取的字节。
+- {{symbol:tests/test_adapter_identity_review.py:test_conninfo_without_host_uses_owned_postgres}}：用真实独占 PostgreSQL 检查缺省主机的连接串不会变成 SQLite 文件。
 
 本轮 {{file:docs/open-source-review_cn.md}} 对照 PeerTube、MediaCMS 的
 上传幂等、任务完成与视频发布、有限重试及取消传播；阅读时留意两者的并行粒度差异。

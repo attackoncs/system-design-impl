@@ -47,6 +47,7 @@ System Design Interview.md
 
 # Added by codegraph
 .codegraph/
+.codegraph-wsl/
 
 # Added by AI coding tools (MCP server configs, tool skills, graph caches)
 .atomcode/

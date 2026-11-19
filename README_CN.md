@@ -27,7 +27,7 @@
 | 13 | [Chat System](./chat-system/) | ✅ 核心已复审 | Tinode/Zulip源码对照；持久收件箱、多设备恢复与Redis隔离；修复WSL验证脚本及Sentinel就绪判断；主套202项＋独立切主1项通过；[本轮记录](./chat-system/docs/chapter13-review.md) |
 | 14 | [Search Autocomplete](./search-autocomplete-system/) | ✅ 核心链路已核对 | 采样日志、不可变Top 5 Trie、有界副本切换与响应完整性；188项测试；[开源对照](./search-autocomplete-system/docs/open-source-review_cn.md) |
 | 15 | [Video Streaming](./video-streaming-system/) | ✅ 核心链路已核对 | 分片组装校验与修复、有界租约DAG、真实HLS/PostgreSQL/S3验证；覆盖164项；[开源核对](./video-streaming-system/docs/open-source-review_cn.md) |
-| 16 | [File Sync](./file-sync-system/) | ✅ 核心链路已核对 | 加密增量同步、冲突/权限/GC栅栏、响应完整性与游标恢复；122项测试；[开源核对](./file-sync-system/docs/open-source-review_cn.md) |
+| 16 | [File Sync](./file-sync-system/) | ✅ 核心链路已核对  | 离线分页恢复、坏块补传与路径冲突索引，133 项测试通过。[章节核对](./file-sync-system/docs/chapter16-review.md) |
 | 17 | [附近商家服务](./proximity-service/) | ✅ 核心链路已核对 | geohash与距离、每日CAS发布、有界缓存/HTTP及副本切换；76项测试；[Tile38/Redis源码核对](./proximity-service/docs/open-source-review_cn.md) |
 | 18 | [附近好友](./nearby-friends-system/) | ✅ 核心链路已核对 | WS/Redis授权快照、TTL、有界工作与重订阅；76项测试、200/200投递；[开源源码核对](./nearby-friends-system/docs/open-source-review_cn.md) |
 | 19 | [地图系统](./maps-system/) | ✅ 核心链路已核对 | 导航指令/编码路径、分级路由瓦片、持久预生成、动态导航/SSE；113项测试；[Valhalla/OSRM核对](./maps-system/docs/open-source-review_cn.md) |

@@ -113,6 +113,14 @@ sequenceDiagram
 
 HTTP完整性检查不替代版本栅栏，也不让慢任务提前释放并发槽位。输入校验则复用 {{symbol:src/search_autocomplete/validation.py:finite_number}}；采集、Worker和协调器不会对同一种超大整数暴露不同的异常类型。
 
+持久快照/聚合ID还必须落在SQLite有符号64位正整数范围内。否则`version=9223372036854775808`会从SQLite绑定泄漏OverflowError、让HTTP无响应断开；现在是400。最大合法但不存在的代仍是503，不是把所有大ID一律当作可用性问题。
+
+## 微观四：固定数据库和请求头的生命周期
+
+{{symbol:src/search_autocomplete/store.py:Store.__init__}}在打开文件时固定绝对路径，{{symbol:src/search_autocomplete/store.py:Store._reader}}以后创建的新连接才不会随cwd漂移。只保持主连接还不够：另一目录若有同名有效库，旧实现会把其频次静默写进原库的聚合/快照。空SQLite临时路径不能跨新连接共享，显式拒绝；默认共享内存模式仍可用。回归见{{file:tests/test_storage_boundaries_review.py}}。
+
+入站HTTP的socket空闲timeout也不等于请求头总期限：每次超时前补一个字节，就可能一直占用槽位。处理器为请求行和头设置绝对期限，到期关闭连接；解析完成后先cancel/join定时器再运行service，避免把合法慢查询切断。回归见{{file:tests/test_header_deadline_review.py}}，协调器出站预算与这条入站边界分别负责。
+
 ## 并发失败：较早开始的构建较晚结束
 
 设构建A暂停，构建B读到更新数据并完成发布，随后A恢复。正确结果是仍保留B。应检查Store.build的条件发布，而不是仅靠单个进程的锁；项目测试使用两个连接制造这个交错。

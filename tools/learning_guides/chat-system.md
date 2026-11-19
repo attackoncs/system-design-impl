@@ -86,7 +86,17 @@ sequenceDiagram
 
 业务价值集中在两个边界：先检查当前Session仍有效，再由store按用户可见范围读取。不要因为这个函数只有三行就跳过它；这是实时连接与持久恢复的连接点。
 
+网络读取还要限制正文数据量，而非先加载1000条大消息再在响应末尾截断。SQLite与Redis的有界读取都在累加UTF-8 JSON页预算时停止，底层按条数的库契约仍保留；原始收件人和加入水位继续校验。客户端只使用实际返回页最后ID续读，不能因短页就断定历史结束。
+
+Redis网络入口为{{symbol:src/chat_system/distributed.py:DistributedChatService.async_sync}}及{{symbol:src/chat_system/distributed.py:DistributedChatService.async_history}}，正文读取复用{{symbol:src/chat_system/redis_backend.py:RedisBackend._read_page_ids}}：最多8条一批，累计JSON预算默认1.8MB，满页后不再启动下一批，仍可能已多读本批剩余正文。这约束一页返回和读取批次，不是全进程内存硬上限。
+
 ## 取消与断线的失败分支
+
+{{symbol:src/chat_system/concurrency.py:gather_owned}}先给通知子任务传递取消，再逐个等待全部清理并观察原聚合器；重复取消不能跳过慢finally，也不应覆盖组原先的失败。数据库`run_blocking`的取消契约继续保持，取消不代表已提交消息回滚。
+
+WebSocket登录绝对期限包含异步接入，超期先关闭连接，再回收晚到会话。正常logout先排空连接事件泵再回复，防止分布式disconnect先排入的closed事件使客户端重连重试；其他会话被替换/过期时仍保持原来的closed事件行为。慢后端清理可能延迟handler结束。
+
+停止事件泵不能直接丢掉已从queue取出的帧：当前逐事件投递任务拥有完整写入及失败后的1011关闭；取消泵先等它结束。否则登出被拒绝、连接仍可用时，重启泵也补不回已出队presence。门闩回归见{{file:tests/test_transport_lifecycle_review.py}}，通知组重复取消和Redis预算分别见{{file:tests/test_owned_group_review.py}}、{{file:tests/test_redis_page_budget_review.py}}。
 
 发送协程在数据库提交期间被取消时，同步线程可能仍在工作。服务必须等该工作完成，才能释放保护发送顺序的锁；否则下一条消息可能与前一条尚未结束的提交交错。
 
@@ -104,7 +114,7 @@ sequenceDiagram
 
 上面的消息/游标回归验证客户端恢复；Redis主库崩溃是另一层。{{symbol:tests/test_ha.py:test_sentinel_promotes_replica_and_preserves_confirmed_messages}}先等待三个哨兵各自发现两个同伴和两个副本并通过quorum，再确认消息复制、终止自建主库、等待新主，并检查恢复后重试不重复。端口能连接不等于哨兵拓扑已就绪，错误的实验起点会被误读为业务故障。
 
-{{symbol:tests/test_review_runner.py:test_wsl_runtime_existence_does_not_follow_linux_symlink}}保护Windows/WSL运行时识别边界；最终仍须启动真实Redis，不能只凭这个工具回归宣称网络验证通过。本轮203个不同用例由主套202项和独立Sentinel补测1项组成，精确范围见{{file:benchmarks/results.md}}；Tinode/Zulip的真实源码差异见{{file:docs/open-source-review_cn.md}}。
+{{symbol:tests/test_review_runner.py:test_wsl_runtime_existence_does_not_follow_linux_symlink}}保护Windows/WSL运行时识别边界；最终仍须启动真实Redis，不能只凭这个工具回归宣称网络验证通过。历史11月5/6日覆盖203个不同用例；2026-11-17最新主套213项通过、1项Sentinel跳过，独立lab再通过该项，共214个不同用例。精确范围见{{file:benchmarks/results.md}}，Tinode/Zulip源码差异见{{file:docs/open-source-review_cn.md}}。
 
 ## 自查与练习
 
