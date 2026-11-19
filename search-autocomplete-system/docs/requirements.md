@@ -35,6 +35,17 @@ Source: root `System Design Interview.md`, Chapter 14, Design A Search Autocompl
   validation. Reject booleans, non-finite values and unrepresentably large integers
   with ValueError, preserving each field's positive/nonnegative constraints.
 
+- R12: File-backed Stores bind their absolute path at construction. Later readers
+  and builds must not switch databases after cwd changes, including when another
+  directory contains a valid database with the same name. Reject empty paths and
+  preserve the default shared-memory mode. Durable snapshot/aggregation IDs must
+  fit a positive signed SQLite 64-bit integer; HTTP rejects overflow with 400 and
+  returns 503 for a missing generation within that range.
+- R13: Bound inbound request-line/header parsing by an absolute three-second
+  deadline, so trickled bytes cannot indefinitely retain a request slot. Cancel
+  and join the timer before invoking the service and on all parsing exits. Slow
+  service execution must not be cut off by the former header deadline.
+
 ## Validation and boundaries
 
 - Chapter target: under 100 ms response, about 24,000 average / 48,000 peak QPS and

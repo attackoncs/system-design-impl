@@ -16,7 +16,14 @@
 - [x] T13: Close HTTPError/SQLite test resources; retry transient Windows locks during owned demo-directory cleanup.
 - [x] T14: Update bilingual docs, reading guide, raw measurements and root index; [latest review](open-source-review_cn.md).
 
+- [x] T15: Bind disk Store paths at construction, reject unsupported temporary paths and preserve shared memory; verify two same-named valid databases across cwd changes.
+- [x] T16: Bound durable IDs to signed SQLite int64, return HTTP400 for overflow and retain503 for an absent in-range generation.
+- [x] T17: Apply an owned absolute request-line/header deadline, reclaim slots from trickled input and disarm the timer before slow service work.
+- [x] T18: Preserve old tests/tools; verify196 tests, source coverage93.37% statements/87.59% branches, examples, original benchmark, graph and bilingual docs. [Evidence](../benchmarks/verification-2026-11-18.json).
+
 ## Verification
+
+- 2026-11-18: 196 passed (188 existing + eight new, seven RED and one compatibility guard), 7.23s, strict warnings, no skips. Both examples and the unchanged benchmark passed; source coverage93.37%/87.59%. Earlier values below retain their dates.
 
 - 2026-11-02: 188 passed (170 existing + 18 new), strict warning mode; actual HTTP/process failure and both examples verified, including demo cleanup.
 - Local/HTTP latency measured; benchmarks/results.md records scale limitations.

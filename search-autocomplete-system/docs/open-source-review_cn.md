@@ -1,5 +1,11 @@
 # 第14章：原书、GitHub源码与本地实现核对
 
+## 2026-11-18复核
+
+重新读取下表固定提交的Sonic `core/src/executor/suggest.rs`全文（blob `3e8c2b19ab7074ec0a4fe111dbf86072fdfbcd19`），以及RediSearch `src/trie/trie_node_internal.h`（1–145行，blob `ccd5a851fd71a555e348b205af7235447a22f34a`）。Sonic持有FST读锁并传递候选上限；RediSearch显式保存`subtreeMaxScore`和Top-K堆阈值。它们支持稳定读取视图及排名上界剪枝的设计依据，排序/模糊匹配语义仍不替代本地历史频次/字典序。未复制、安装或运行上游。
+
+结合原书和CodeGraph，保留现有Trie/分片/过滤算法，仅补齐本地数据库绝对路径、SQLite ID边界及入站请求头总期限。原188项保留，新增8项后196项通过，旧测试与benchmark源码未改；[最新章节记录](chapter14-review.md)和[验证JSON](../benchmarks/verification-2026-11-18.json)保留精确范围，下方11月2日修复与数值为历史记录。
+
 原书范围：《System Design Interview.md》4289–4763行，Design A Search Autocomplete System。2026-11-01阅读原书与开源代码，2026-11-02完成实现和验证。通过CodeGraph追踪采集、聚合、构建发布、本地查询和HTTP副本路径。
 
 ## GitHub实现与参考范围

@@ -6,7 +6,7 @@
 [Learn through a concrete example: architecture, state changes and annotated source (Chinese)](docs/learning-guide_cn.md).
 <!-- LEARNING_GUIDE_END -->
 
-Reviewed against Chapter 14, GitHub source and CodeGraph on 2026-11-02. See the [source comparison and verification](docs/open-source-review_cn.md). This review fixes truncated-response failover, shared numeric validation and resource cleanup.
+Reviewed against Chapter 14, fixed GitHub source and CodeGraph on 2026-11-18. This review fixes database identity across cwd changes, SQLite ID overflow and trickled request headers. See the [source comparison](docs/open-source-review_cn.md) and [verification record](benchmarks/verification-2026-11-18.json).
 
 Chapter 14 reference implementation: completed-search logs, offline aggregation,
 atomic snapshots, cached top-five tries, filtering, balanced shards and HTTP replicas.
@@ -98,15 +98,24 @@ This intentionally omits the chapter's one-hour browser cache optimization.
 
 ## Validation and limits
 
+File paths bind to an absolute location when a Store is constructed. Changing cwd
+cannot redirect offline readers; empty paths are rejected, while the default
+shared-memory mode remains supported. Durable snapshot/aggregation IDs must fit
+positive SQLite int64 values: overflow returns HTTP 400, missing in-range versions
+return 503. Inbound request lines and headers share an absolute three-second budget;
+the timer is cancelled and joined before service execution. This does not impose
+a new hard execution deadline on SQLite or custom service code.
+
 The regression suite covers actual HTTP merge/fallback and independent-process
 termination, cross-instance event deduplication, nonblocking builds, publication
 races, sampled collection, worker retries, immutable tries and ranked filtering.
-**188 tests pass**. See the [chapter audit](docs/chapter14-review.md) for coverage.
-Run `python tools/benchmark.py --output .runtime/benchmark.json` after creating
-the output directory. The saved [latency report](benchmarks/results.md) measures
-10,000 queries, 10,000 local lookups and 500 actual HTTP requests. The latest audit
-run measured local P99 0.0416ms and HTTP P99 16.4731ms; this is a sequential local
-measurement, not a production SLO or concurrent throughput claim.
+**196 tests pass**, including the unchanged 188 existing cases and eight focused
+regressions. Source coverage is 93.37% statements / 87.59% branches, with no excluded
+lines. See the [chapter audit](docs/chapter14-review.md). Existing test and benchmark
+source was preserved. Both original examples, including process failover/removal,
+passed. The [latest report](benchmarks/results.md) records the original tool's
+10,000 queries, 10,000 local lookups and 500 real HTTP requests. It is a sequential
+local observation, without a paired baseline or production-capacity claim.
 
 SQLite log/snapshot/metadata storage is shared on one host. The query protocol
 supports separate replica processes, but this is not multi-host storage HA or a

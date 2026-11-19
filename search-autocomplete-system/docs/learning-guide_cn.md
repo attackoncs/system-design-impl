@@ -39,9 +39,9 @@ flowchart TB
 
 | 顺序 | 源码入口 | 输入→输出 | 重点 |
 |---|---|---|---|
-| 1 | [Store.record](../src/search_autocomplete/store.py#L180) | 事件ID、词、时间→接受结果 | 规范化、去重与内容冲突 |
-| 2 | [Store.aggregate](../src/search_autocomplete/store.py#L258) | 时间窗口→频次统计 | 事件时间和聚合边界 |
-| 3 | [Store.build](../src/search_autocomplete/store.py#L324) | 统计与分片配置→发布快照 | 慢构建与短发布事务分开 |
+| 1 | [Store.record](../src/search_autocomplete/store.py#L184) | 事件ID、词、时间→接受结果 | 规范化、去重与内容冲突 |
+| 2 | [Store.aggregate](../src/search_autocomplete/store.py#L262) | 时间窗口→频次统计 | 事件时间和聚合边界 |
+| 3 | [Store.build](../src/search_autocomplete/store.py#L328) | 统计与分片配置→发布快照 | 慢构建与短发布事务分开 |
 | 4 | [SnapshotWorker.run_once](../src/search_autocomplete/worker.py#L49) | 当前时间／窗口→一轮构建 | 后台推进与过滤清理 |
 | 5 | [Autocomplete.suggest](../src/search_autocomplete/service.py#L103) | prefix及可选版本→候选元组 | 固定一致视图，不读取半成品 |
 | 6 | [Trie.suggest](../src/search_autocomplete/trie.py#L143) | 规范化前缀→节点候选 | 前缀定位和缓存候选的收益 |
@@ -141,6 +141,14 @@ sequenceDiagram
 ```
 
 HTTP完整性检查不替代版本栅栏，也不让慢任务提前释放并发槽位。输入校验则复用 [finite_number](../src/search_autocomplete/validation.py#L6)；采集、Worker和协调器不会对同一种超大整数暴露不同的异常类型。
+
+持久快照/聚合ID还必须落在SQLite有符号64位正整数范围内。否则`version=9223372036854775808`会从SQLite绑定泄漏OverflowError、让HTTP无响应断开；现在是400。最大合法但不存在的代仍是503，不是把所有大ID一律当作可用性问题。
+
+## 微观四：固定数据库和请求头的生命周期
+
+[Store.__init__](../src/search_autocomplete/store.py#L93)在打开文件时固定绝对路径，[Store._reader](../src/search_autocomplete/store.py#L163)以后创建的新连接才不会随cwd漂移。只保持主连接还不够：另一目录若有同名有效库，旧实现会把其频次静默写进原库的聚合/快照。空SQLite临时路径不能跨新连接共享，显式拒绝；默认共享内存模式仍可用。回归见[test_storage_boundaries_review.py](../tests/test_storage_boundaries_review.py)。
+
+入站HTTP的socket空闲timeout也不等于请求头总期限：每次超时前补一个字节，就可能一直占用槽位。处理器为请求行和头设置绝对期限，到期关闭连接；解析完成后先cancel/join定时器再运行service，避免把合法慢查询切断。回归见[test_header_deadline_review.py](../tests/test_header_deadline_review.py)，协调器出站预算与这条入站边界分别负责。
 
 ## 并发失败：较早开始的构建较晚结束
 

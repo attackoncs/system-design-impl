@@ -122,6 +122,42 @@ def server(service, host="127.0.0.1", port=0, shard=None):
         def log_message(self, *_):
             pass
 
+        def handle_one_request(self):
+            # Socket timeouts only bound idle waits; trickled request lines and
+            # headers need one absolute parsing budget as well.
+            self._header_expired = threading.Event()
+
+            def interrupt():
+                self._header_expired.set()
+                with contextlib.suppress(OSError):
+                    self.connection.shutdown(socket.SHUT_RDWR)
+
+            self._header_timer = threading.Timer(self.timeout, interrupt)
+            self._header_timer.daemon = True
+            self._header_timer.start()
+            try:
+                super().handle_one_request()
+            finally:
+                self._finish_headers()
+
+        def _finish_headers(self):
+            self._header_timer.cancel()
+            self._header_timer.join()
+
+        def parse_request(self):
+            if self._header_expired.is_set():
+                self.close_connection = True
+                return False
+            try:
+                parsed = super().parse_request()
+            finally:
+                # Service work starts after parsing and has its own lifetime.
+                self._finish_headers()
+            if self._header_expired.is_set():
+                self.close_connection = True
+                return False
+            return parsed
+
         def do_GET(self):
             status = 200
             try:

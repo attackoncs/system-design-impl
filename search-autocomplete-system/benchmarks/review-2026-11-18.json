@@ -1,0 +1,25 @@
+{
+  "queries": 10000,
+  "local_requests": 10000,
+  "http_requests": 500,
+  "shards": 4,
+  "build_seconds": 0.045,
+  "cold_query_ms": 32.1028,
+  "local_latency": {
+    "p50_ms": 0.0127,
+    "p95_ms": 0.0234,
+    "p99_ms": 0.0411
+  },
+  "http_latency": {
+    "p50_ms": 3.6164,
+    "p95_ms": 4.4846,
+    "p99_ms": 5.1252
+  },
+  "local_requests_per_second": 64765.4,
+  "environment": {
+    "platform": "Linux-6.18.58.1-microsoft-standard-WSL2-x86_64-with-glibc2.44",
+    "python": "3.14.8",
+    "logical_cpus": 16
+  },
+  "scope": "single-host, sequential requests; HTTP service contains all shards"
+}

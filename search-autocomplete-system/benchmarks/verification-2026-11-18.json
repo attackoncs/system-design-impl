@@ -1,0 +1,106 @@
+{
+  "date": "2026-11-18",
+  "chapter": 14,
+  "book_lines": [
+    4289,
+    4763
+  ],
+  "python": "3.14.8",
+  "platform": "Linux/WSL",
+  "baseline": {
+    "passed": 188,
+    "seconds": 6.31,
+    "warnings": "error"
+  },
+  "final": {
+    "collected": 196,
+    "passed": 196,
+    "skipped": 0,
+    "failed": 0,
+    "pytest_display_seconds": 7.23,
+    "junit_seconds": 7.232,
+    "warnings": "error"
+  },
+  "regressions": {
+    "new_cases": 8,
+    "confirmed_failing_before_fix": 7,
+    "existing_behavior_guard_cases": 1,
+    "files": [
+      "../tests/test_storage_boundaries_review.py",
+      "../tests/test_header_deadline_review.py"
+    ]
+  },
+  "coverage": {
+    "covered_lines": 845,
+    "num_statements": 905,
+    "percent_covered": 91.9966301600674,
+    "percent_covered_display": "92",
+    "missing_lines": 60,
+    "excluded_lines": 0,
+    "percent_statements_covered": 93.37016574585635,
+    "percent_statements_covered_display": "93",
+    "num_branches": 282,
+    "num_partial_branches": 27,
+    "covered_branches": 247,
+    "missing_branches": 35,
+    "percent_branches_covered": 87.58865248226951,
+    "percent_branches_covered_display": "88"
+  },
+  "coverage_scope": "All 10 production Python modules, branch coverage enabled; zero excluded lines",
+  "commands": {
+    "suite": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=<absolute project src> COVERAGE_FILE=/tmp/ch14-coverage-final-20261118 python -m coverage run --branch --source=src/search_autocomplete -m pytest -q -W error -p no:cacheprovider --basetemp=/tmp/ch14-final-20261118 --junitxml=/tmp/ch14-final-tests-20261118.xml tests",
+    "benchmark": "PYTHONPATH=<absolute project src> python -W error tools/benchmark.py --output benchmarks/review-2026-11-18.json",
+    "examples": [
+      "PYTHONPATH=<absolute project src> python -W error examples/basic.py",
+      "PYTHONPATH=<absolute project src> python -W error examples/network_demo.py"
+    ]
+  },
+  "benchmark": {
+    "file": "review-2026-11-18.json",
+    "distinct_queries": 10000,
+    "local_requests": 10000,
+    "http_requests": 500,
+    "shards": 4,
+    "scope": "Single-host sequential observation; HTTP server holds all shards; no paired baseline, speedup, concurrent QPS or production SLO claim"
+  },
+  "examples": {
+    "basic": "passed; book top-five ranking and filtered refill",
+    "network": "passed; three owned shard processes plus one coordinator; first replica termination retains ranking, immediate removal works, processes/data cleaned"
+  },
+  "existing_test_source_changed": false,
+  "benchmark_source_changed": false,
+  "codegraph": {
+    "files": 24,
+    "nodes": 447,
+    "edges": 1286,
+    "state": "complete",
+    "pending_changes": 0,
+    "directory": ".codegraph-wsl",
+    "limitations": "Static call links supplement source/runtime checks; dynamic calls are not fully resolved"
+  },
+  "references": [
+    {
+      "url": "https://github.com/valeriansaliou/sonic/blob/f16560b6ea67fd223354c065f7157646931db1b2/core/src/executor/suggest.rs",
+      "blob_sha": "3e8c2b19ab7074ec0a4fe111dbf86072fdfbcd19",
+      "scope": "Read lock protects FST view and candidate limit; word/fuzzy semantics not copied"
+    },
+    {
+      "url": "https://github.com/RediSearch/RediSearch/blob/1fbe5191c925c710945a7ed526293d552e8e346a/src/trie/trie_node_internal.h",
+      "blob_sha": "ccd5a851fd71a555e348b205af7235447a22f34a",
+      "scope": "Subtree score upper bound and top-k threshold; preserve local frequency/lexical contract"
+    }
+  ],
+  "checks": [
+    "Ruff E/F/I ignoring E501 and formatter on changed files",
+    "Python3.9 AST for all 10 source files",
+    "canonical/generated learning guide and local Markdown links",
+    "independent reviewer found no blocking issue"
+  ],
+  "remaining_boundaries": [
+    "SQLite single-host shared storage, not multihost HA/consensus metadata",
+    "no 10-million-DAU/48000 peak QPS capacity validation",
+    "multilingual/country/trending/distributed collection remain extensions",
+    "header deadline ends before service execution; SQLite metadata/DNS/custom service work can outlive request budgets",
+    "historical source/snapshots/aggregations/receipts require operator retention policy"
+  ]
+}

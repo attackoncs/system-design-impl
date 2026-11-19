@@ -4,6 +4,7 @@ import contextlib
 import functools
 import hashlib
 import json
+import os
 import sqlite3
 import threading
 import time
@@ -29,7 +30,7 @@ def _window(start, end):
 
 
 def _identifier(value, name):
-    require_integer(value, 1, message=f"invalid {name}")
+    require_integer(value, 1, 2**63 - 1, message=f"invalid {name}")
 
 
 def _query_hash(query):
@@ -98,11 +99,14 @@ class Store:
         self._closed = False
         self._blocked_revision = None
         self._blocked_cache = frozenset()
-        self._memory = str(path) == ":memory:"
+        filename = str(path)
+        if not filename:
+            raise ValueError("invalid store path")
+        self._memory = filename == ":memory:"
         self._path = (
             f"file:autocomplete-{uuid.uuid4().hex}?mode=memory&cache=shared"
             if self._memory
-            else str(path)
+            else os.path.abspath(filename)
         )
         self.db = self._connect()
         try:
@@ -404,10 +408,7 @@ class Store:
             ).fetchall()
             self.db.executemany(
                 "INSERT OR IGNORE INTO purged_receipts(id, query_hash, at) VALUES (?, ?, ?)",
-                [
-                    (event_id, _query_hash(query), at)
-                    for event_id, query, at in rows
-                ],
+                [(event_id, _query_hash(query), at) for event_id, query, at in rows],
             )
             self.db.execute(
                 "DELETE FROM events WHERE query IN (SELECT query FROM blocked)"

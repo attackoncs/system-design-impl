@@ -1,5 +1,11 @@
 # Design: Search Autocomplete System
 
+## 2026-11-18 storage and request boundaries
+
+A file-backed Store binds its absolute path at construction, so every later WAL reader uses the same file after a working-directory change. Empty paths are rejected because SQLite temporary files cannot be shared by independently opened readers. The default `:memory:` mode retains its per-Store shared-memory URI. Snapshot and aggregation IDs are positive signed 64-bit SQLite integers; out-of-range IDs fail validation, with HTTP returning 400, while an absent in-range generation remains unavailable (503).
+
+The inbound HTTP handler applies one absolute deadline to the request line and headers, using its existing three-second timeout. Continuous trickled bytes cannot keep a request slot forever. An owned timer shuts down the socket at expiry and is cancelled/joined as soon as header parsing finishes, before service execution begins; cleanup also drains it on malformed input or early EOF. This is a header-read budget, not a new hard execution deadline for SQLite or user-provided service code. Existing outbound coordinator deadlines, capacity slots, ranking and filter fences remain unchanged.
+
 ## Chapter mapping
 
 The chapter separates collection/building from serving. This module implements that
